@@ -1,0 +1,5 @@
+fn bad() bool {
+print("bad")
+return true
+}
+print(false && bad(), true || bad())

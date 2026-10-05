@@ -1,0 +1,6 @@
+fn set(xs mut []int) {
+xs[0]=9
+}
+var xs=[1,2]
+set(xs)
+print(xs)

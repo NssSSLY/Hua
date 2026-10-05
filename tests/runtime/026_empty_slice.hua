@@ -1,0 +1,4 @@
+fn size(xs []int) int {
+return xs.len
+}
+print(size([]))

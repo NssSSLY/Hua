@@ -1,0 +1,4 @@
+fn unknown(){return "bad"}
+fn later() int{print("must not run")
+return 3}
+let a=[1,unknown(),later()]

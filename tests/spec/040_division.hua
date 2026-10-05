@@ -1,0 +1,4 @@
+let x=10 // 3 * 2
+var n=7
+n //= 2
+# whole-line comment

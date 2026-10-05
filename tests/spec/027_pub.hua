@@ -1,0 +1,4 @@
+pub struct User {
+name string
+}
+pub fn hello() {}

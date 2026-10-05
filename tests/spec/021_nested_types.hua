@@ -1,0 +1,2 @@
+unsafe fn f(p ptr<ref<byte>>) {}
+let x = a >> b

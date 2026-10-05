@@ -1,0 +1,9 @@
+struct Point {
+x float
+y float
+}
+fn Point.length() float {
+return sqrt(self.x**2+self.y**2)
+}
+let p=Point{x:3,y:4}
+print(p.length())

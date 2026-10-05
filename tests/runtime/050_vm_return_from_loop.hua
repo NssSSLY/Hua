@@ -1,0 +1,9 @@
+fn f(n int) int {
+    for i in 0..n {
+        for j in 0..n {if i+j==3 {return i*10+j}}
+    }
+    return -1
+}
+print(f(4),f(0))
+for i in 5..2 {print("never")}
+for i in [] {print("never")}

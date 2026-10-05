@@ -1,0 +1,9 @@
+struct User {
+name string
+}
+fn User.rename(name string) {
+self.name=name
+}
+var user=User{name:"A"}
+user.rename("B")
+print(user.name)

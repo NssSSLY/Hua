@@ -1,0 +1,5 @@
+fn f() int {
+return later
+}
+let first=f()
+let later=1

@@ -1,0 +1,5 @@
+fn set(xs mut []int) {
+xs[0]=2
+}
+let xs=[1]
+set(xs)

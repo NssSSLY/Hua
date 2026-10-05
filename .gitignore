@@ -1,0 +1,5 @@
+/build*/
+/.tools/
+/.hua/
+__pycache__/
+*.huab

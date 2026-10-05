@@ -1,0 +1,5 @@
+var total=0
+for i in 0..=10 by 2 {
+total+=i
+}
+print(total)

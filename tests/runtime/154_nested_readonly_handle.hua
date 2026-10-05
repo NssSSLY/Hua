@@ -1,0 +1,6 @@
+struct Box {
+xs []int
+}
+let b=Box{xs:[1]}
+var c=b
+c.xs[0]=2

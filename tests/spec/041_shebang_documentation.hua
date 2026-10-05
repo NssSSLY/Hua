@@ -1,0 +1,6 @@
+#!/usr/bin/env hua
+## function docs
+#** block docs #* ordinary nested *# **#
+fn f() {
+return 7//#* right operand *#2# result
+}

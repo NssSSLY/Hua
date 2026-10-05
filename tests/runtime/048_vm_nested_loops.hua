@@ -1,0 +1,17 @@
+var total=0
+for i in 0..4 {
+    for j in 0..4 {
+        if j==1 {continue}
+        if j==3 {break}
+        total+=i+j
+    }
+    if i==2 {break}
+}
+var k=0
+while k<5 {
+    k+=1
+    if k==2 {continue}
+    if k==4 {break}
+    total+=k
+}
+print(total)

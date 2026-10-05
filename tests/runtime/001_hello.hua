@@ -1,0 +1,4 @@
+fn main() {
+let name = "Hua"
+print(name)
+}

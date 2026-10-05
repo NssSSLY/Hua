@@ -1,0 +1,4 @@
+let name string = "Hua"
+var n int = 0
+const LIMIT = 10
+n += 1

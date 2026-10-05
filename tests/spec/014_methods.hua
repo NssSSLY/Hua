@@ -1,0 +1,4 @@
+fn Point.length() float {
+return sqrt(self.x**2 + self.y**2)
+}
+p.length()

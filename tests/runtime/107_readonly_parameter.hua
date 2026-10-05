@@ -1,0 +1,3 @@
+fn set(xs []int) {
+xs[0]=2
+}

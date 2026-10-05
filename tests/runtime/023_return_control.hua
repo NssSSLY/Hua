@@ -1,0 +1,7 @@
+fn first() int {
+for i in 1..10 {
+return i
+}
+return 0
+}
+print(first())

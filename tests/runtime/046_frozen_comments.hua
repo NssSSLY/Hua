@@ -1,0 +1,14 @@
+#!/usr/bin/env hua
+## Reserved single-line documentation
+#** Reserved block documentation #* nested regular *# **#
+let a = 7 / 2 # 3.5
+let b = 7 // 2 # 3
+let c = 7 % 2 # 1
+#* outer
+#* inner *#
+*#
+print(a,b,c,2**3)
+print(7//#* adjacent *#2,7/#* adjacent *#2,7%#* adjacent *#2)
+var n=7
+n//=2# compound assignment
+print(n)

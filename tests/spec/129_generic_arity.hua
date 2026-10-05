@@ -1,0 +1,1 @@
+unsafe fn f(p ptr<byte, int>) {}

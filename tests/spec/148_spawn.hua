@@ -1,0 +1,1 @@
+let task = spawn fetch()

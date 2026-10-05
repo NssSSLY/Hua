@@ -1,0 +1,4 @@
+let p = Point{}
+if ready {}
+while running {}
+for x in xs {}

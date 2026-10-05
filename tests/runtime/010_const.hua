@@ -1,0 +1,3 @@
+const A=2**5
+const B=A+10
+print(A,B)

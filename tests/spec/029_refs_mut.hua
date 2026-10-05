@@ -1,0 +1,4 @@
+fn f(user ref<User>, data mut []f32) {
+print(user.name)
+}
+let ref = &user

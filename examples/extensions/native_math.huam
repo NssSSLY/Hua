@@ -1,0 +1,6 @@
+HUA_NATIVE 1
+# Only interface metadata; the DLL is loaded when the program executes.
+pub fn add(a int,b int) int {}
+pub fn greeting(name string) string {}
+pub fn invert(value bool) bool {}
+pub fn twice(value float) float {}

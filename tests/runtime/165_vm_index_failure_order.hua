@@ -1,0 +1,4 @@
+fn source(){return 1}
+fn index() int{print("must not run")
+return 0}
+source()[index()]

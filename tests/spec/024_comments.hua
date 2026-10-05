@@ -1,0 +1,5 @@
+# whole-line comment
+let x = 1 #* inline *# + 2
+#* block
+comment *#
+let y = 3

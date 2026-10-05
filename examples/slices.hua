@@ -1,0 +1,12 @@
+fn sum(values []int) int {
+    var total = 0
+    for i, x in values {
+        total += x
+        print(i)
+    }
+    return total
+}
+
+let values = [1, 2, 3, 4]
+let part = values[1:3]
+print(sum(part))

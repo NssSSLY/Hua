@@ -1,0 +1,86 @@
+# Codex Hua 当前交接
+
+更新：2026-10-05（Asia/Shanghai）。项目：`C:\file\project\hua`。
+已完成前端、基础语义与解释器、VM/本地模块，以及本次 HUAB v1 / Native ABI v1 / WASM 加载里程碑。
+CLI 为 Hua 0.1.0-dev，spec 0.1，abi 1，bytecode 1。
+用户现已授权上传到 https://github.com/NssSSLY/Hua；本次接入 Git，沿用远端 main 的初始提交与 Apache 2.0 LICENSE。
+远端 origin 指向该地址，构建产物/工具包仍忽略；未修改其他项目或个人记忆。
+历史交接在 docs/history/PHASE1_HANDOFF.md、PHASE2_HANDOFF.md、PHASE3_HANDOFF.md；原始 Nova 规范未改。
+
+## 用户任务与完成条件
+
+用户要求继续 `.huab` 文件读写、Native/WASM 加载，后续要求继续未完成工作。
+已完成独立编译/保存/读取/校验/VM 执行，真实 Native 动态库和 Wasmtime 实例调用，源码与 HUAB 两条路径均验收。
+收尾已补写入端边界/旧产物保留、二进制文件路径诊断、.huam 源文件忽略规则、文档与版本同步。
+没有等待用户确认的当前决定；注释与运算符沿用已冻结规则。
+详细合同在 PHASE4_ARTIFACTS_EXTENSIONS.md，基础语义与模块合同在 Phase 2/3 文档。
+
+## 运算符与注释
+
+`/` 真除法；`//` int 向下整除；`%` 与 floor division 一致；`**` 幂，保留 `//=`。
+`#` 行注释、嵌套 `#* ... *#` 块；`##` / `#** ... **#` 文档标记预留；首行 #! shebang 忽略。
+各块按自己的标记闭合，注释换行保留；`//` 和 `/* */` 不作为注释。不要恢复此前临时 Go 注释方案。
+
+## 新增分层
+
+- include/hua/archive.hpp、src/archive.cpp：HUAB header/CRC/payload 编解码、无宿主地址元数据、静态栈/控制流验证、原子替换。
+- include/hua/native.h：可被 C 使用的公开 opaque 标量 ABI v1。
+- include/hua/external.hpp、src/external.cpp：接口注册、Native 装载/句柄封送、Wasmtime 校验/实例/fuel/store 生命周期。
+- module/sema/bytecode/VM/Interpreter：统一外部接口、ExternalInit 内部节点/指令、两个执行器共用调用合同。
+- main.cpp：build，check/run/bytecode 的 HUAB 输入，版本升级，中文输出和无来源文件时的位置诊断。
+- CMake：项目内 Wasmtime SDK 链接、运行 DLL 复制，Native/WASM 演示、bad1..bad5 测试动态库及第 9 项 CTest。
+- examples/extensions：真实 native_math.cpp/.huam、wasm_math.wat、main.hua；scripts/make_wasm.py 转换 WAT。
+- tests/archive_extension_tests.py：真实文件持久化、损坏文件、删除源码、DLL/WASM 边界检查。
+
+源码路径仍由 ModuleLoader 拥有 AST/Source；HUAB 路径由 BytecodeImage 拥有 Source/最小声明。
+保持对象生命周期直到执行结束；函数代码关联重新构建的声明指针，不重编译 AST，不回退 Interpreter。
+
+## 构建与验收
+
+```powershell
+Set-Location C:\file\project\hua
+.\scripts\build.ps1
+.\build\hua.exe build .\examples\modules\main.hua -o .\build\modules.huab
+.\build\hua.exe run .\build\modules.huab
+.\build\hua.exe run .\build\extensions\main.hua
+.\build\hua.exe build .\build\extensions\main.hua
+.\build\hua.exe run .\build\extensions\main.huab
+```
+
+复用项目内 LLVM-MinGW Clang 23.1.2、Android SDK CMake 3.22.1/Ninja、Python 3.12。
+本次增加官方 Wasmtime 49.0.2 Windows x64 C API SDK 到 `.tools`，无全局安装或 PATH 更改。
+默认 WASMTIME_ROOT 为该目录；其他平台/SDK 应显式传入 CMake 选项，当前仅 Windows 实测。
+Wasmtime SDK 的来源、LICENSE、zip SHA256 在 Phase 4 文档。
+运行目录需要 hua.exe + wasmtime.dll，携带 CMake 复制的 wasmtime-LICENSE.txt；示例产物在 build/extensions。
+
+```text
+CTest: 9/9 passed, 0 failures
+99 spec fixtures, 2405 checks
+119 semantic/runtime fixtures x 2 engines
+114 VM/module CLI checks
+38 CLI contract checks
+80 persisted runtime fixtures; 368 archive/Native/WASM CLI checks
+30 repaired-CRC randomized mutations (no crash/hang)
+```
+
+modules 示例：5，然后 4 6。扩展示例：42 42，然后 hello Hua true，再 5 7。
+覆盖删除完整源图与 manifest/WASM 后执行、原文诊断、确定性构建、失败不覆盖已有产物、中文路径。
+格式测试覆盖头/长度/CRC/版本/标记/尾随/计数/UTF-8/非法跳转与栈状态；写入拒绝 4097 参数或过长名称。
+Native 覆盖真实 ABI/签名/句柄/结果类型/UTF-8 错误，WASM 覆盖 start/全局状态/i32/f32/无返回/多返回/导入/trap/fuel/内存。
+最终测试原始记录在 build/Testing/Temporary/LastTest.log；生成测试数据在运行后清理。
+
+## 部署合同与后续边界
+
+HUAB 是完整程序，不能作为 import 模块；没有自动磁盘缓存。嵌入文本只用于诊断，CRC 不是签名。
+WASM 字节内嵌；Native 库不能省略，按相对原入口根的路径放到 HUAB 所在目录。-o 不复制依赖。
+源码 check/build 不装载 Native，但需要文件存在；HUAB check 不要求 DLL 存在，运行时才装载验证。
+Native 是可信的同进程代码，句柄/视图只在调用内有效，不承诺沙箱、跨版本 ABI 兼容或阻塞超时。
+WASM 无 host imports/WASI；只开放数值函数，fuel 每实例 1M 累积、线性内存 64 MiB，不是 Hua→WASM 后端。
+仍未实现包管理/标准模块命名空间/HUA_PATH、多返回/Result/Map/ref/ptr/通用 FFI/GC/async/LLVM 等能力。
+后续可按用户优先级补语言能力；继续保持两个执行器和持久化路径对照，不额外扩展任务范围。
+
+## Git 发布
+
+2026-10-05 用户授权首次上传完整项目。普通 Git HTTPS 连接失败，使用已登录 GitHub 接口提交，保留远端初始历史与许可证。
+本地仓库与远端 main 保持同一文件树和提交，后续常规 fetch/push 需要本机 GitHub 网络连接可用。
+不要把历史交接中的“不初始化 Git”视为本次用户授权后的限制。

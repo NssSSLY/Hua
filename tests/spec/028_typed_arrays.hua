@@ -1,0 +1,2 @@
+let xs [4]int = [1, 2, 3, 4]
+let users map[int]User = make_users()

@@ -1,0 +1,3 @@
+unsafe fn read(p ptr<byte>) byte {
+return p.load()
+}

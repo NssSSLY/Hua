@@ -1,0 +1,6 @@
+var numbers=[1,2,3]
+fn bump() int {numbers[0]+=2
+return numbers[0]}
+fn twice(x int) int{return x*2}
+numbers[0]+=twice(bump())
+print(numbers,twice(3)+twice(twice(4)))

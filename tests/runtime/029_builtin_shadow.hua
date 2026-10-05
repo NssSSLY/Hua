@@ -1,0 +1,4 @@
+fn len(a int) int {
+return a+1
+}
+print(len(3))

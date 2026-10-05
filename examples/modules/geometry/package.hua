@@ -1,0 +1,14 @@
+#** Public geometry API. Comments are skipped by both execution engines. **#
+pub struct Point {
+    x float
+    y float
+}
+
+pub fn Point.length() float {
+    return sqrt(self.x ** 2 + self.y ** 2)
+}
+
+pub fn Point.move(dx float, dy float) {
+    self.x += dx
+    self.y += dy
+}

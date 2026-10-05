@@ -1,0 +1,8 @@
+struct U {
+x int
+}
+fn U.set() {
+self.x=2
+}
+let u=U{x:1}
+u.set()

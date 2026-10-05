@@ -1,0 +1,3 @@
+fn load() Result<string, IOError> {
+return ok("text")
+}

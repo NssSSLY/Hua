@@ -1,0 +1,5 @@
+fn find() int? {
+return nil
+}
+let x=find()
+print(x==nil)

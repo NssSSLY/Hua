@@ -1,0 +1,8 @@
+#!/usr/bin/env hua
+## The newline inside this comment preserves a bare return.
+fn f(){return#*
+#* nested *#
+*#42}
+#** outer #* inner #** mixed **# *# **#
+print(f(),7/#* division *#2,7//#* floor *#2)
+print("# ## #* *# #** **# // /* */")# EOF line comment

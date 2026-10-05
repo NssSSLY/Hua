@@ -1,0 +1,6 @@
+fn give() {
+let xs=[1]
+return xs
+}
+var xs=give()
+xs[0]=2

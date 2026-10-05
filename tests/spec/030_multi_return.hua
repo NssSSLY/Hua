@@ -1,0 +1,3 @@
+fn values() (int, int) {
+return 1, 2
+}

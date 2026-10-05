@@ -1,0 +1,11 @@
+(Program
+  (Let x
+    (Binary +
+      (Integer 1)
+      (Binary *
+        (Integer 2)
+        (Integer 3)
+      )
+    )
+  )
+)

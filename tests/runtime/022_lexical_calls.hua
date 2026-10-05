@@ -1,0 +1,9 @@
+let x=1
+fn read() int {
+return x
+}
+fn caller() int {
+let x=9
+return read()
+}
+print(caller())

@@ -1,0 +1,5 @@
+var xs=[1]
+var ys=xs
+xs=[2]
+ys[0]=3
+print(xs,ys)

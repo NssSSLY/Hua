@@ -1,0 +1,12 @@
+struct User {
+    name string
+}
+
+# Phase 1 parses this declaration only; no pointer operation is executed.
+unsafe fn read(p ptr<byte>) byte {
+    return p.load()
+}
+
+fn inspect(user ref<User>) {
+    print(user.name)
+}

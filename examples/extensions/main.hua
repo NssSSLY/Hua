@@ -1,0 +1,8 @@
+import native_math as native
+import wasm_math as wasm
+
+fn main() {
+    print(native.add(20,22),wasm.add(10,32))
+    print(native.greeting("Hua"),native.invert(false))
+    print(native.twice(2.5),wasm.twice(3.5))
+}

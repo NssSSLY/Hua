@@ -1,0 +1,5 @@
+fn f() void {
+return
+}
+f()
+print("done")

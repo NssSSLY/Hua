@@ -1,0 +1,3 @@
+for i, value in xs {
+print(i, value)
+}

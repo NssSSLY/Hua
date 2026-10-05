@@ -1,0 +1,3 @@
+unsafe {
+let p ptr<byte> = memory.alloc(8)
+}

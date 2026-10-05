@@ -1,0 +1,6 @@
+struct P{x int
+y int}
+fn unknown(){return "bad"}
+fn later() int{print("must not run")
+return 3}
+let p=P{x:unknown(),y:later()}

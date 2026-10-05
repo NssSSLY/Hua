@@ -1,0 +1,4 @@
+let xs=[1,2,3]
+var part=clone(xs[1:])
+part[0]=9
+print(xs,part)
