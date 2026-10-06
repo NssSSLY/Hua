@@ -14,7 +14,7 @@ enum class TokenKind {
     Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, PercentAssign,
     PowerAssign, FloorAssign, Increment, Decrement,
     Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual,
-    And, Or, Not, BitAnd, BitOr, BitXor, BitNot, ShiftLeft, ShiftRight
+    And, Or, Not, BitAnd, BitOr, BitXor, BitNot, ShiftLeft, ShiftRight, Arrow
 };
 struct Token { TokenKind kind; std::string text; SourceSpan span; };
 std::string_view token_name(TokenKind kind);

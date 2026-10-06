@@ -1,0 +1,4 @@
+fn value(n int) int { print(n)
+return n }
+let m=map[string]int{"x":value(1),"x":value(2)}
+print(unwrap(m["x"]))

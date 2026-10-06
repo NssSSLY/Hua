@@ -1,0 +1,3 @@
+let ro=map[string]int{}
+var owned,alias=map[string]int{},ro
+alias["x"]=1

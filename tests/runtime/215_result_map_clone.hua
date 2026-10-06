@@ -1,0 +1,5 @@
+let r Result<map[string]int> = ok(map[string]int{"x":1})
+var c=clone(r)
+var m=unwrap(c)
+m["x"]=9
+print(unwrap(unwrap(r)["x"]),unwrap(m["x"]))

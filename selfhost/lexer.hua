@@ -1,0 +1,213 @@
+# Hua-written lexer: Stage 0 frontend seed, not a self-hosted compiler.
+import std.bytes as bytes
+import std.strings as strings
+import std.list as list
+
+pub struct Token {
+    kind string
+    text string
+    line int
+    column int
+}
+fn alpha(c int) bool { return c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 95 }
+fn decimal(c int) bool { return c >= 48 && c <= 57 }
+fn digit(c int) int {
+    if decimal(c) { return c - 48 }
+    if c >= 65 && c <= 70 { return c - 55 }
+    if c >= 97 && c <= 102 { return c - 87 }
+    return -1
+}
+fn failure(code string, line int, column int) string {
+    return code + "@" + str(line) + ":" + str(column)
+}
+pub fn scan(source string) Result<[]Token,string> {
+    var text = strings.replace(strings.replace(source, "\r\n", "\n"), "\r", "\n")
+    var data = unwrap(bytes.to_ints(bytes.from_text(text)))
+    if len(data) >= 3 && data[0] == 239 && data[1] == 187 && data[2] == 191 {
+        text = unwrap(strings.slice(text, 3, len(data)))
+        data = unwrap(bytes.to_ints(bytes.from_text(text)))
+    }
+    var empty []Token = []
+    var tokens = list.from_slice(empty)
+    let keyword_words = ["let", "var", "const", "fn", "return", "struct", "interface", "pub", "if", "else", "match", "enum", "for", "while", "break", "continue", "in", "import", "as", "async", "await", "spawn", "taskgroup", "parallel", "simd", "defer", "unsafe", "extern", "true", "false", "nil"]
+    let operator_words = ["..=", "**=", "//=", "..", "**", "//", "++", "--", "+=", "-=", "*=", "/=", "%=", "=>", "==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "(", ")", "[", "]", "{", "}", ",", ":", ".", "?", "@", "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "~"]
+    var keywords = map[string]bool{}
+    for word in keyword_words { keywords[word] = true }
+    var operators = map[string]bool{}
+    for word in operator_words { operators[word] = true }
+    var i = 0
+    var line = 1
+    var column = 1
+    let n = len(data)
+    while i < n {
+        let start = i
+        let start_line = line
+        let start_column = column
+        let c = data[i]
+        if c == 32 || c == 9 { i += 1
+column += 1
+continue }
+        if c == 10 {
+            unwrap(list.append(tokens, Token{kind:"newline",text:"\n",line:line,column:column}))
+            i += 1
+line += 1
+column = 1
+continue
+        }
+        if c == 35 {
+            if i + 1 < n && data[i+1] == 42 {
+                var comments_empty []bool = []
+                var comments = list.from_slice(comments_empty)
+                var doc = i + 2 < n && data[i+2] == 42
+                unwrap(list.append(comments, doc))
+                var width = 2
+                if doc { width = 3 }
+                i += width
+column += width
+                while i < n && list.len(comments) > 0 {
+                    if i+1 < n && data[i] == 35 && data[i+1] == 42 {
+                        doc = i+2 < n && data[i+2] == 42
+                        unwrap(list.append(comments, doc))
+                        width = 2
+                        if doc { width = 3 }
+                        i += width
+column += width
+                    } else {
+                        doc = unwrap(list.get(comments, list.len(comments)-1))
+                        var closing = i+1 < n && data[i] == 42 && data[i+1] == 35
+                        if doc { closing = i+2 < n && data[i] == 42 && data[i+1] == 42 && data[i+2] == 35 }
+                        if closing {
+                            unwrap(list.pop(comments))
+                            width = 2
+                            if doc { width = 3 }
+                            i += width
+column += width
+                        } else if data[i] == 10 {
+                            unwrap(list.append(tokens, Token{kind:"newline",text:"\n",line:line,column:column}))
+                            i += 1
+line += 1
+column = 1
+                        } else { i += 1
+column += 1 }
+                    }
+                }
+                if list.len(comments) > 0 { return err(failure("E1005", start_line, start_column)) }
+            } else {
+                while i < n && data[i] != 10 { i += 1
+column += 1 }
+            }
+            continue
+        }
+        if alpha(c) {
+            i += 1
+            while i < n && (alpha(data[i]) || decimal(data[i])) { i += 1 }
+            let value = unwrap(strings.slice(text, start, i))
+            var kind = "identifier"
+            if has(keywords,value) { kind = value }
+            unwrap(list.append(tokens, Token{kind:kind,text:value,line:start_line,column:start_column}))
+            column += i-start
+continue
+        }
+        if decimal(c) {
+            var kind = "integer"
+            var base = 10
+            var prefixed = false
+            if c == 48 && i+1 < n {
+                let prefix = data[i+1]
+                if prefix == 120 || prefix == 98 || prefix == 111 {
+                    prefixed = true
+                    base = 16
+                    if prefix == 98 { base = 2 }
+                    if prefix == 111 { base = 8 }
+                    i += 2
+                }
+            }
+            var segments = 0
+            var finished = false
+            while !finished {
+                var seen = false
+                var underscore = false
+                while i < n {
+                    let d = digit(data[i])
+                    if data[i] == 95 {
+                        if !seen || underscore { return err(failure("E1002", line, column+i-start)) }
+                        underscore = true
+i += 1
+                    } else if d >= 0 && d < base {
+                        seen = true
+underscore = false
+i += 1
+                    } else { break }
+                }
+                if !seen || underscore { return err(failure("E1002", line, column+i-start)) }
+                if !prefixed && segments == 0 && i+1 < n && data[i] == 46 && decimal(data[i+1]) {
+                    kind = "float"
+i += 1
+segments = 1
+                } else if !prefixed && segments < 2 && i < n && (data[i] == 101 || data[i] == 69) {
+                    kind = "float"
+i += 1
+segments = 2
+                    if i < n && (data[i] == 43 || data[i] == 45) { i += 1 }
+                } else { finished = true }
+            }
+            if i < n && (alpha(data[i]) || decimal(data[i])) { return err(failure("E1002", line, column+i-start)) }
+            unwrap(list.append(tokens, Token{kind:kind,text:unwrap(strings.slice(text,start,i)),line:start_line,column:start_column}))
+            column += i-start
+continue
+        }
+        if c == 34 {
+            i += 1
+            var segment = i
+            var value = ""
+            while i < n && data[i] != 34 {
+                if data[i] == 10 { return err(failure("E1003", start_line, start_column)) }
+                if data[i] == 92 {
+                    value += unwrap(strings.slice(text,segment,i))
+                    i += 1
+                    if i == n { return err(failure("E1003", start_line, start_column)) }
+                    let escaped = data[i]
+                    if escaped == 92 { value += "\\" }
+                    else if escaped == 34 { value += "\"" }
+                    else if escaped == 110 { value += "\n" }
+                    else if escaped == 114 { value += "\r" }
+                    else if escaped == 116 { value += "\t" }
+                    else if escaped == 48 { value += "\0" }
+                    else { return err(failure("E1004", line, column+i-start)) }
+                    i += 1
+segment = i
+                } else {
+                    if data[i] < 32 { return err(failure("E1003", line, column+i-start)) }
+                    i += 1
+                }
+            }
+            if i == n { return err(failure("E1003", start_line, start_column)) }
+            value += unwrap(strings.slice(text,segment,i))
+            i += 1
+column += i-start
+            unwrap(list.append(tokens, Token{kind:"string",text:value,line:start_line,column:start_column}))
+            continue
+        }
+        if c >= 128 { return err(failure("E1001", line, column)) }
+        var width = 0
+        var value = ""
+        if i+2 < n && data[i+1] < 128 && data[i+2] < 128 {
+            value = unwrap(strings.slice(text,i,i+3))
+            if has(operators,value) { width = 3 }
+        }
+        if width == 0 && i+1 < n && data[i+1] < 128 {
+            value = unwrap(strings.slice(text,i,i+2))
+            if has(operators,value) { width = 2 }
+        }
+        if width == 0 && c < 128 {
+            value = unwrap(strings.slice(text,i,i+1))
+            if has(operators,value) { width = 1 }
+        }
+        if width == 0 { return err(failure("E1001", line, column)) }
+        unwrap(list.append(tokens, Token{kind:value,text:value,line:start_line,column:start_column}))
+        i += width
+        column += width
+    }
+    unwrap(list.append(tokens, Token{kind:"end",text:"",line:line,column:column}))
+    return ok(list.snapshot(tokens))
+}

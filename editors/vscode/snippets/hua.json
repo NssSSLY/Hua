@@ -1,0 +1,43 @@
+{
+  "Main": {
+    "prefix": "main",
+    "body": [
+      "fn main() {",
+      "    $0",
+      "}"
+    ],
+    "description": "Hua entry point"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2}) ${3:int} {",
+      "    ${0:return 0}",
+      "}"
+    ]
+  },
+  "Async function": {
+    "prefix": "asyncfn",
+    "body": [
+      "async fn ${1:work}(${2}) ${3:int} {",
+      "    ${0:return 0}",
+      "}"
+    ]
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "    ${2:value} ${3:int}",
+      "}"
+    ]
+  },
+  "Task group": {
+    "prefix": "taskgroup",
+    "body": [
+      "taskgroup {",
+      "    $0",
+      "}"
+    ]
+  }
+}

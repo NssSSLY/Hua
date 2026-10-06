@@ -1,0 +1,21 @@
+# Map、多返回、Result 和 Optional 的完整入门例子。
+fn divmod(a int,b int) (int,int) { return a//b,a%b }
+fn divide(a int,b int) Result<int> {
+    if b==0 { return err("division by zero") }
+    return ok(a//b)
+}
+fn next(a int,b int) Result<int> { return ok(divide(a,b)?+1) }
+fn main() {
+    var scores=map[string]int{"Hua":10}
+    scores["VM"]=20
+    print(scores.len,has(scores,"Hua"),scores["missing"])
+    let score=scores["Hua"]
+    if score!=nil { print(score+1) }
+    let q,r=divmod(7,2)
+    var a,b=q,r
+    a,b=b,a
+    print(a,b)
+    print(next(8,2),next(8,0))
+    let result Result<int> = divide(9,2)
+    print(is_ok(result),unwrap_or(result,0),is_none(scores["missing"]))
+}

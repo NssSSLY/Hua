@@ -47,6 +47,7 @@ def records(data):
             if kind==1:byte()
             elif kind in (2,3):u32();u32()
             elif kind==4:string()
+            elif kind==15:string();byte();u32();u32()
             for _ in range(u32()):string()
             for _ in range(u32()):byte()
             out.append((start,op,arg,target))
@@ -71,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix="hua-artifacts-",dir=build) as temp:
             assert not artifact.exists();continue
         run("build",entry)
         assert artifact.read_bytes()[:8]==b"HUAB\r\n\x1a\n"
-        assert struct.unpack_from("<II",artifact.read_bytes(),8)==(1,1)
+        assert struct.unpack_from("<II",artifact.read_bytes(),8)==(6,1)
         entry.unlink()
         run("check",artifact,output="OK\n")
         if expected=="OK":run("run",artifact,output=stdout)
@@ -79,6 +80,62 @@ with tempfile.TemporaryDirectory(prefix="hua-artifacts-",dir=build) as temp:
             result=run("run",artifact,code=1,output=stdout,error=expected.split()[1])
             assert "main.hua:" in result.stderr and "^" in result.stderr
         count+=1
+    # Every new feature also crosses linked module and on-disk VM boundaries.
+    p=case();entry=p/"main.hua";module=p/"values.hua"
+    module.write_text("""pub struct Failure { code int }
+let base,extra=3,4
+pub fn pair() (int,int) { return base,extra }
+pub fn table() map[string]int { return map[string]int{"x":base} }
+pub fn read(fail bool) Result<int,Failure> {
+if fail { return err(Failure{code:7}) }
+return ok(base) }
+pub fn work(fail bool) Result<string,Failure> {
+let x=read(fail)?
+return ok(str(x)) }
+""",encoding="utf-8",newline="\n")
+    entry.write_text("""import values as lib
+fn main() {
+let a,b=lib.pair()
+let m=lib.table()
+let x=m["x"]
+if x!=nil { print(a,b,x+1) }
+let result Result<string,lib.Failure> = lib.work(true)
+print(unwrap(lib.work(false)),unwrap_err(result).code)
+}
+""",encoding="utf-8",newline="\n")
+    expected="3 4 4\n3 7\n";run("check",entry,output="OK\n")
+    for engine in ("run","interpret"):run(engine,entry,output=expected)
+    run("build",entry);artifact=entry.with_suffix(".huab");new=artifact.read_bytes()
+    run("build",entry);assert artifact.read_bytes()==new
+    entry.unlink();module.unlink();run("check",artifact,output="OK\n");run("run",artifact,output=expected)
+    def frame(data):return data[:16]+struct.pack("<QII",len(data)-32,zlib.crc32(data[32:]),0)+data[32:]
+    bad=p/"new_bad.huab"
+    # Version 1 cannot admit any of the new opcodes.
+    b=bytearray(new);struct.pack_into("<I",b,8,1);bad.write_bytes(b)
+    run("check",bad,code=1,error="E6002",silent=True)
+    for opcode in (34,35):
+        position=next(x for x in records(new) if x[1]==opcode)
+        b=bytearray(new);struct.pack_into("<I",b,position[2],1);bad.write_bytes(frame(b))
+        run("check",bad,code=1,error="E6002",silent=True)
+    b=bytearray(new);position=next(x for x in records(new) if x[1]==32);b[position[0]]=33
+    bad.write_bytes(frame(b));run("check",bad,code=1,error="E6002",silent=True)
+    b=bytearray(new);at=b.index(b"map<string,int>",position[0]);b[at:at+15]=b"map<double,int>"
+    bad.write_bytes(frame(b));run("check",bad,code=1,error="E6002",silent=True)
+    # This subset uses only the unchanged v1 payload layout and opcode range.
+    entry.write_text('print(7)\n',encoding="utf-8");run("build",entry)
+    legacy=bytearray(entry.with_suffix(".huab").read_bytes());assert all(x[1]<=31 for x in records(legacy))
+    struct.pack_into("<I",legacy,8,1);bad.write_bytes(legacy);entry.unlink()
+    run("check",bad,output="OK\n");run("run",bad,output="7\n")
+    p=case();entry=p/"main.hua";entry.write_bytes((root/"examples/values.hua").read_bytes())
+    expected="2 true nil\n11\n1 3\nok(5) err(division by zero)\ntrue 4 true\n"
+    run("check",entry,output="OK\n")
+    for engine in ("run","interpret"):run(engine,entry,output=expected)
+    run("build",entry);new=entry.with_suffix(".huab").read_bytes();entry.unlink()
+    run("check",entry.with_suffix(".huab"),output="OK\n");run("run",entry.with_suffix(".huab"),output=expected)
+    position=next(x for x in records(new) if x[1]==36);b=bytearray(new);struct.pack_into("<I",b,position[2],1)
+    bad=p/"bad.huab";bad.write_bytes(frame(b));run("check",bad,code=1,error="E6002",silent=True)
+    b=bytearray(new);b[records(new)[0][0]]=37;bad.write_bytes(frame(b))
+    run("check",bad,code=1,error="E6002",silent=True)
     p=case();shutil.copytree(root/"examples/modules",p/"source")
     entry=p/"source/main.hua";artifact=p/"模块 with spaces.huab"
     run("build",entry,"-o",artifact);original=artifact.read_bytes();run("build",entry,"-o",artifact)

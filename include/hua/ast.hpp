@@ -10,10 +10,10 @@ enum class NodeKind {
     Import, If, While, For, Return, Break, Continue, ExpressionStatement, Unsafe,
     Integer, Float, String, Boolean, Nil, Name, Unary, Binary, Assignment, Update,
     Call, Index, Slice, Member, Array, StructLiteral, FieldInit, Range, Omitted,
-    TypeName, SliceType, ArrayType, GenericType, OptionalType, MutableType, ExternalInit
+    TypeName, SliceType, ArrayType, GenericType, OptionalType, MutableType, ExternalInit, MapLiteral, MapEntry, Pack, BindingList, MultiBinding, MultiAssignment, Propagate, Defer, Attribute, GenericParameters, Specialize, Interface, Enum, Variant, Match, MatchArm
 };
 // Syntax only. Owned children and source spans form the interface to later semantic/runtime passes.
-// Child ordering is documented in docs/AST.md; no parser-side execution or evaluated values.
+// Child ordering is documented in docs/语法树与源码位置.md; no parser-side execution or evaluated values.
 struct Node {
     NodeKind kind;
     SourceSpan span;

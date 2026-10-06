@@ -1,0 +1,4 @@
+fn take(m map[string]int?) { print(m.len) }
+fn apply(f,m) { f(m) }
+let m=map[string]int{"x":1}
+apply(take,m)

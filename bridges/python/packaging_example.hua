@@ -1,0 +1,21 @@
+# Install packaging into a project directory; pass that directory after --.
+import python as py
+import std.json as json
+import std.os as os
+
+fn main() {
+    let args=os.args()
+    if len(args)!=1 { print("usage: hua run packaging_example.hua -- package-directory")
+        return }
+    unwrap(py.init(""))
+    unwrap(py.add_path(args[0]))
+    let module=unwrap(py.import_module("packaging.version"))
+    let constructor=unwrap(py.getattr(module,"Version"))
+    let text=unwrap(py.from_value("1.2.3"))
+    let version=unwrap(py.call(constructor,[text]))
+    let major=unwrap(py.getattr(version,"major"))
+    print("packaging:",unwrap(py.to_string(version)),"major:",unwrap(json.as_int(unwrap(py.to_json(major)))))
+    for handle in [major,version,text,constructor,module] { unwrap(py.release(handle)) }
+    print("handles:",unwrap(py.active_handles()))
+    unwrap(py.shutdown())
+}

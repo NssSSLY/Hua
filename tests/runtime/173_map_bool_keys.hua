@@ -1,0 +1,2 @@
+let m=map[bool]string{true:"yes",false:"no"}
+print(unwrap(m[true]),unwrap(m[false]))

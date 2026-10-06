@@ -1,2 +1,2 @@
-ERROR E2002
-not implemented in Phase 1
+ERROR E2004
+defer requires a function scope

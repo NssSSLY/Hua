@@ -134,7 +134,7 @@ std::vector<Token> Lexer::scan() {
         {"..",K::Range},{"**",K::Power},{"//",K::FloorDivide},{"++",K::Increment},{"--",K::Decrement},
         {"+=",K::PlusAssign},{"-=",K::MinusAssign},{"*=",K::StarAssign},
         {"/=",K::SlashAssign},{"%=",K::PercentAssign},
-        {"==",K::Equal},{"!=",K::NotEqual},{"<=",K::LessEqual},{">=",K::GreaterEqual},
+        {"=>",K::Arrow},{"==",K::Equal},{"!=",K::NotEqual},{"<=",K::LessEqual},{">=",K::GreaterEqual},
         {"&&",K::And},{"||",K::Or},{"<<",K::ShiftLeft},{">>",K::ShiftRight},
         {"(",K::LParen},{")",K::RParen},{"[",K::LBracket},{"]",K::RBracket},
         {"{",K::LBrace},{"}",K::RBrace},{",",K::Comma},{":",K::Colon},{".",K::Dot},

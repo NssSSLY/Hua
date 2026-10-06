@@ -1,12 +1,12 @@
 #pragma once
 #include "hua/sema.hpp"
 namespace hua {
-// In-memory instruction storage; archive.cpp defines the versioned HUAB v1 encoding.
+// In-memory instruction storage; archive.cpp defines HUAB v6; the reader also accepts v1-v5.
 enum class Op {
     Constant, Load, Bind, Pop, Unary, Binary, Jump, JumpFalse, JumpTrue,
     EnterScope, LeaveScope, Unwind, LocateName, LocateField, LocateIndex, Store,
     MakeArray, Index, Slice, MakeStruct, Member, Call, Return,
-    RangeInit, SliceInit, IterNext, IterEnd, Fail, CheckSlice, ArrayAppend, InitField, ExternalInit
+    RangeInit, SliceInit, IterNext, IterEnd, Fail, CheckSlice, ArrayAppend, InitField, ExternalInit, MakeMap, MapInsert, MakeMulti, BindMulti, StoreMulti, Propagate, CheckIndex, Closure, Defer
 };
 struct Instruction {
     Op op;

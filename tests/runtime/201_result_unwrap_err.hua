@@ -1,0 +1,2 @@
+let r Result<int> = err("bad")
+unwrap(r)

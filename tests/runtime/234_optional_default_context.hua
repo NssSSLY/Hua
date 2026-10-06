@@ -1,0 +1,8 @@
+fn empty() float? { return nil }
+fn main() {
+let x float? = nil
+let y float=unwrap_or(x,1)
+print(type(y),y,type(unwrap_or(empty(),2)))
+var m=map[string]float{}
+print(type(unwrap_or(m["x"],3)),unwrap_or(m["x"],3))
+}

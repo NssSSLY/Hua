@@ -1,0 +1,9 @@
+var a,b=map[string]int{"x":1},map[string]int{"x":2}
+a,b=b,a
+a["x"]=3
+b["x"]=4
+print(unwrap(a["x"]),unwrap(b["x"]))
+let ro=map[string]int{}
+var owned,alias=map[string]int{},ro
+owned["yes"]=5
+print(owned.len,alias.len)

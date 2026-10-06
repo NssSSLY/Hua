@@ -1,0 +1,4 @@
+fn update(m mut map[string]int) { m["x"]=7 }
+var m=map[string]int{}
+update(m)
+print(unwrap(m["x"]))

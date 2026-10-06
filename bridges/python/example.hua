@@ -1,0 +1,18 @@
+import python as py
+import std.json as json
+
+fn main() {
+    unwrap(py.init(""))
+    let math=unwrap(py.import_module("math"))
+    let sqrt=unwrap(py.getattr(math,"sqrt"))
+    let argument=unwrap(py.from_value(81))
+    let answer=unwrap(py.call(sqrt,[argument]))
+    print("Python sqrt:",unwrap(json.as_float(unwrap(py.to_json(answer)))))
+    print("missing package:",is_err(py.import_module("hua_missing_demo_package")))
+    unwrap(py.release(answer))
+    unwrap(py.release(argument))
+    unwrap(py.release(sqrt))
+    unwrap(py.release(math))
+    print("handles:",unwrap(py.active_handles()))
+    unwrap(py.shutdown())
+}

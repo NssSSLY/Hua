@@ -1,0 +1,2 @@
+fn values() (int,string) { return 1,"x" }
+let a int,b int=values()

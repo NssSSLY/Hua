@@ -1,4 +1,5 @@
 #include "hua/archive.hpp"
+#include "hua/stdlib.hpp"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -42,7 +43,7 @@ struct Writer {
     void str(const std::string& s,bool binary=false){if(!binary)valid_utf8(s,{});if(s.size()>max_text)bad({},"string exceeds 16 MiB");count(s.size());bytes+=s;}
 };
 struct Reader {
-    std::string_view bytes;std::size_t offset{};SourceSpan site;
+    std::string_view bytes;std::size_t offset{};SourceSpan site;std::uint32_t format{4};
     std::uint8_t u8(){if(offset==bytes.size())bad(site,"truncated data");return static_cast<std::uint8_t>(bytes[offset++]);}
     bool boolean(){auto n=u8();if(n>1)bad(site,"invalid boolean");return n!=0;}
     std::uint32_t u32(){std::uint32_t n=0;for(unsigned i=0;i<4;++i)n|=std::uint32_t(u8())<<(i*8);return n;}
@@ -66,8 +67,8 @@ struct Sources {
         auto s=sources[id]->span(start,end);if(s.line!=line||s.column!=column)bad(r.site,"source coordinates mismatch");return s;
     }
 };
-void value(Writer& w,const Value& v){auto kind=v.data.index();if(kind>4)bad({},"non-scalar constant");w.u8(static_cast<std::uint8_t>(kind));switch(kind){case 1:w.u8(std::get<bool>(v.data));break;case 2:w.u64(std::bit_cast<std::uint64_t>(std::get<std::int64_t>(v.data)));break;case 3:w.u64(std::bit_cast<std::uint64_t>(std::get<double>(v.data)));break;case 4:w.str(std::get<std::string>(v.data));break;default:break;}}
-Value value(Reader& r){switch(r.u8()){case 0:return {};case 1:return Value(r.boolean());case 2:return Value(std::bit_cast<std::int64_t>(r.u64()));case 3:{auto d=std::bit_cast<double>(r.u64());if(!std::isfinite(d))bad(r.site,"non-finite constant");return Value(d);}case 4:return Value(r.str());default:bad(r.site,"invalid constant kind");}}
+void value(Writer& w,const Value& v){auto kind=v.data.index();if(kind>4&&kind!=15)bad({},"non-scalar constant");w.u8(static_cast<std::uint8_t>(kind));switch(kind){case 1:w.u8(std::get<bool>(v.data));break;case 2:w.u64(std::bit_cast<std::uint64_t>(std::get<std::int64_t>(v.data)));break;case 3:w.u64(std::bit_cast<std::uint64_t>(std::get<double>(v.data)));break;case 4:w.str(std::get<std::string>(v.data));break;case 15:{auto n=std::get<NumericValue>(v.data);w.str(n.type);w.u8(static_cast<std::uint8_t>(n.number.index()));std::visit([&](auto x){w.u64(std::bit_cast<std::uint64_t>(x));},n.number);break;}default:break;}}
+Value value(Reader& r){switch(r.u8()){case 0:return {};case 1:return Value(r.boolean());case 2:return Value(std::bit_cast<std::int64_t>(r.u64()));case 3:{auto d=std::bit_cast<double>(r.u64());if(!std::isfinite(d))bad(r.site,"non-finite constant");return Value(d);}case 4:return Value(r.str());case 15:{if(r.format<5)bad(r.site,"unsupported numeric constant");auto type=r.str();auto spec=numeric_spec(type);if(!spec||type=="int"||type=="float"||type=="@integer")bad(r.site,"unknown numeric constant type");auto kind=r.u8();auto bits=r.u64();NumericValue n{type,std::int64_t{}};if(kind==0&&spec->category=='i')n.number=std::bit_cast<std::int64_t>(bits);else if(kind==1&&spec->category=='u')n.number=bits;else if(kind==2&&spec->category=='f')n.number=std::bit_cast<double>(bits);else bad(r.site,"numeric constant payload mismatch");try{auto checked=convert_numeric(Value(n),type,r.site,true);if(auto real=std::get_if<double>(&n.number);real&&std::get<double>(std::get<NumericValue>(checked.data).number)!=*real)bad(r.site,"non-canonical f32 constant");return checked;}catch(const Diagnostic&){bad(r.site,"numeric constant out of range");}}default:bad(r.site,"invalid constant kind");}}
 void code(Writer& w,const Code& c,const Sources& sources) {
     small_name(c.name,{});w.str(c.name);w.count(c.instructions.size());
     for(const auto& op:c.instructions) {
@@ -80,8 +81,9 @@ void code(Writer& w,const Code& c,const Sources& sources) {
 Code code(Reader& r,const Sources& sources,std::size_t& total) {
     Code c;c.name=r.str();small_name(c.name,r.site);auto count=r.count(250000);total+=count;if(total>max_instructions)bad(r.site,"instruction count limit exceeded");c.instructions.reserve(count);
     for(std::size_t j=0;j<count;++j) {
-        auto kind=r.u8();if(kind>static_cast<unsigned>(Op::ExternalInit))bad(r.site,"unknown opcode");Instruction op{};op.op=static_cast<Op>(kind);op.span=sources.read(r);
-        op.text=r.str();small_name(op.text,r.site,true);op.type=r.str();type_string(op.type,r.site);op.argument=r.u32();op.target=r.u32();op.flag=r.boolean();op.constant=value(r);
+        auto kind=r.u8();if(kind>static_cast<unsigned>(r.format==1?Op::ExternalInit:r.format<5?Op::CheckIndex:Op::Defer))bad(r.site,"unknown opcode");Instruction op{};op.op=static_cast<Op>(kind);op.span=sources.read(r);
+        op.text=r.str();small_name(op.text,r.site,true);
+        auto intrinsic=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(op.op==Op::Load&&intrinsic.starts_with("$std$")&&(!standard_function(intrinsic)||r.format<standard_function(intrinsic)->since))bad(r.site,"unsupported standard library reference");if(op.op==Op::Load&&r.format<6&&(intrinsic=="task_start"||intrinsic=="task_await"||intrinsic=="task_group_begin"||intrinsic=="task_group_end"||intrinsic=="parallel_map"||intrinsic=="simd_check"))bad(r.site,"unsupported concurrency intrinsic");op.type=r.str();type_string(op.type,r.site);op.argument=r.u32();op.target=r.u32();op.flag=r.boolean();op.constant=value(r);
         auto names=r.count(4096);for(std::size_t i=0;i<names;++i){auto n=r.str();small_name(n,r.site);op.names.push_back(std::move(n));}
         auto flags=r.count(4096);for(std::size_t i=0;i<flags;++i)op.contextual.push_back(r.boolean());c.instructions.push_back(std::move(op));
     }
@@ -93,14 +95,20 @@ void verify(const Code& c,const SemanticModel& model) {
     // Validate unreachable instructions too, then walk all reachable abstract stack/scope states.
     const std::unordered_set<std::string> unary={"+","-","!","~"},binary={"+","-","*","/","//","%","**","&","|","^","<<",">>","==","!=","<",">","<=",">=","&&","||"},store={"=","+=","-=","*=","/=","//=","%=","**="};
     for(const auto& op:c.instructions) {
-        if(static_cast<unsigned>(op.op)>static_cast<unsigned>(Op::ExternalInit))bad(op.span,"unknown opcode");
+        if(static_cast<unsigned>(op.op)>static_cast<unsigned>(Op::Defer))bad(op.span,"unknown opcode");
         if(op.argument>4096)bad(op.span,"instruction argument limit exceeded");type_string(op.type,op.span);
-        if(op.constant.data.index()>4)bad(op.span,"non-scalar constant");if(auto f=std::get_if<double>(&op.constant.data);f&&!std::isfinite(*f))bad(op.span,"non-finite constant");
+        if(auto precise=std::get_if<NumericValue>(&op.constant.data)){auto spec=numeric_spec(precise->type);if(!spec||precise->type=="@integer"||precise->type=="int"||precise->type=="float")bad(op.span,"invalid numeric constant type");try{convert_numeric(op.constant,precise->type,op.span,true);}catch(const Diagnostic&){bad(op.span,"numeric constant out of range");}}
+        if(op.constant.data.index()>4&&op.constant.data.index()!=15)bad(op.span,"non-scalar constant");if(auto f=std::get_if<double>(&op.constant.data);f&&!std::isfinite(*f))bad(op.span,"non-finite constant");
         if((op.op==Op::Jump||op.op==Op::JumpFalse||op.op==Op::JumpTrue||op.op==Op::IterNext)&&op.target>=c.instructions.size())bad(op.span,"jump target out of bounds");
         if(op.op==Op::IterNext && (op.names.empty()||op.names.size()>2))bad(op.span,"invalid loop bindings");
         if(op.op==Op::Slice && op.contextual.size()!=2)bad(op.span,"invalid slice bounds metadata");
-        if(op.op==Op::Call && op.contextual.size()!=op.argument)bad(op.span,"invalid call argument metadata");
+        if((op.op==Op::Call||op.op==Op::Defer) && op.contextual.size()!=op.argument)bad(op.span,"invalid call argument metadata");
         if(op.op==Op::Bind && op.contextual.size()!=1)bad(op.span,"invalid binding metadata");
+        if(op.op==Op::MakeMulti&&(op.argument<2||op.contextual.size()!=op.argument))bad(op.span,"invalid multiple-value metadata");
+        if(op.op==Op::BindMulti){auto types=type_arguments(op.type,"multi");if(op.argument<2||op.names.size()!=op.argument||types.size()!=op.argument)bad(op.span,"invalid multiple binding metadata");std::set<std::string> seen;for(const auto& n:op.names)if(n!="_"&&!seen.insert(n).second)bad(op.span,"duplicate multiple binding");}
+        if(op.op==Op::StoreMulti&&op.argument<2)bad(op.span,"invalid multiple assignment metadata");
+        if(op.op==Op::MakeMap){auto ts=type_arguments(op.type,"map");if(ts.size()!=2||(ts[0]!="bool"&&ts[0]!="int"&&ts[0]!="string")||ts[1].empty()||ts[1]=="void"||ts[1].starts_with("Result<"))bad(op.span,"invalid map type metadata");}
+        if(op.op==Op::Propagate){auto f=model.functions.find(c.name);std::string type;if(f!=model.functions.end())for(const auto& t:f->second->children)if(t->kind==NodeKind::ReturnTypes&&t->children.size()==1)type=type_name(*t->children[0]);if(type_arguments(type,"Result").size()!=2)bad(op.span,"propagation requires a Result-returning function");}
         if(op.op==Op::Unary && !unary.contains(op.text))bad(op.span,"unknown unary operator");
         if(op.op==Op::Binary && !binary.contains(op.text))bad(op.span,"unknown binary operator");
         if(op.op==Op::Store && !store.contains(op.text))bad(op.span,"unknown assignment operator");
@@ -120,9 +128,9 @@ void verify(const Code& c,const SemanticModel& model) {
         auto pop=[&](bool location=false){if(s.stack.empty()||s.stack.back()!=location)bad(op.span,"operand stack underflow/type mismatch");s.stack.pop_back();};
         auto push=[&](bool location=false){s.stack.push_back(location);};
         switch(op.op) {
-        case Op::Constant:case Op::Load:case Op::MakeArray:case Op::MakeStruct:push();break;
-        case Op::Bind:case Op::Pop:pop();break;
-        case Op::Unary:case Op::Member:pop();push();break;
+        case Op::Constant:case Op::Load:case Op::MakeArray:case Op::MakeStruct:case Op::MakeMap:push();break;
+        case Op::Bind:case Op::Pop:case Op::BindMulti:pop();break;
+        case Op::Unary:case Op::Member:case Op::Propagate:pop();push();break;
         case Op::Binary:case Op::Index:pop();pop();push();break;
         case Op::Jump:merge(op.target,s);fall=false;break;
         case Op::JumpFalse:case Op::JumpTrue:pop();merge(op.target,s);break;
@@ -134,8 +142,13 @@ void verify(const Code& c,const SemanticModel& model) {
         case Op::LocateIndex:pop();pop();push(true);break;
         case Op::Store:pop();pop(true);push();break;
         case Op::Slice:pop();pop();pop();push();break;
-        case Op::CheckSlice:if(s.stack.empty()||s.stack.back())bad(op.span,"slice target stack mismatch");break;
+        case Op::CheckSlice:case Op::CheckIndex:if(s.stack.empty()||s.stack.back())bad(op.span,"slice target stack mismatch");break;
         case Op::ArrayAppend:case Op::InitField:pop();if(s.stack.empty()||s.stack.back())bad(op.span,"builder stack mismatch");break;
+        case Op::MapInsert:pop();pop();if(s.stack.empty()||s.stack.back())bad(op.span,"map builder stack mismatch");break;
+        case Op::MakeMulti:for(std::size_t j=0;j<op.argument;++j)pop();push();break;
+        case Op::StoreMulti:pop();for(std::size_t j=0;j<op.argument;++j)pop(true);break;
+        case Op::Closure:if(!model.functions.contains(op.text))bad(op.span,"unknown closure function");push();break;
+        case Op::Defer:for(std::size_t j=0;j<op.argument;++j)pop();pop();break;
         case Op::Call:for(std::size_t j=0;j<op.argument;++j)pop();pop();push();break;
         case Op::Return:pop();if(!s.stack.empty())bad(op.span,"return operand stack mismatch");fall=false;break;
         case Op::RangeInit:pop();pop();pop();++s.iterators;break;
@@ -172,11 +185,11 @@ void write_huab(const std::filesystem::path& path,const Bytecode& b,const Semant
     std::vector<std::pair<std::string,const Node*>> structures(model.structures.begin(),model.structures.end()),functions(model.functions.begin(),model.functions.end());
     std::sort(structures.begin(),structures.end());std::sort(functions.begin(),functions.end());
     w.count(structures.size());for(const auto& [name,n]:structures) {
-        w.str(name);src.write(w,n->span);w.u8(n->text.find(" pub")!=std::string::npos);w.count(n->children.size());
+        w.str(name+(n->text.find(" interface")!=std::string::npos?" interface":n->text.find(" enum")!=std::string::npos?" enum":""));src.write(w,n->span);w.u8(n->text.find(" pub")!=std::string::npos);w.count(n->children.size());
         for(const auto& f:n->children){w.str(f->text);w.str(type_name(*f->children[0]));src.write(w,f->span);}
     }
     w.count(functions.size());for(const auto& [name,n]:functions) {
-        w.str(name);src.write(w,n->span);w.u8(n->text.find(" pub")!=std::string::npos);w.u8(n->text.find(" unsafe")!=std::string::npos);w.u8(n->text.find(" external")!=std::string::npos);
+        w.str(name+(model.nested.contains(n)?" nested":"")+(n->text.find(" abstract")!=std::string::npos?" abstract":""));src.write(w,n->span);w.u8(n->text.find(" pub")!=std::string::npos);w.u8(n->text.find(" unsafe")!=std::string::npos);w.u8(n->text.find(" external")!=std::string::npos);
         w.u8(model.mutating.contains(name)&&model.mutating.at(name));std::vector<const Node*> ps,rs;
         for(const auto& c:n->children){if(c->kind==NodeKind::Parameter)ps.push_back(c.get());if(c->kind==NodeKind::ReturnTypes)for(const auto& t:c->children)rs.push_back(t.get());}
         w.count(ps.size());for(auto p:ps){w.str(declared_name(*p));w.str(p->children.empty()?"":type_name(*p->children[0]));w.u8(p->text.find(" mut")!=std::string::npos||(!p->children.empty()&&p->children[0]->kind==NodeKind::MutableType));src.write(w,p->span);}
@@ -188,7 +201,7 @@ void write_huab(const std::filesystem::path& path,const Bytecode& b,const Semant
         for(const auto& e:m.exports){w.str(e.name);w.str(e.linked_name);w.str(e.result);w.count(e.parameters.size());for(const auto& t:e.parameters)w.str(t);}
     }
     code(w,b.initializer,src);w.count(b.functions.size());for(const auto& [name,n]:functions)if(auto c=b.functions.find(n);c!=b.functions.end())code(w,c->second,src);
-    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(1);header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
+    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(6);header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
     auto tmp=path;std::random_device random;tmp+=".tmp-"+std::to_string(random())+"-"+std::to_string(random());
     try {
         std::ofstream out(tmp,std::ios::binary|std::ios::trunc);if(!out)throw std::runtime_error("cannot create .huab output");out.write(header.bytes.data(),header.bytes.size());out.write(w.bytes.data(),w.bytes.size());out.flush();if(!out)throw std::runtime_error("failed to write complete .huab output");out.close();
@@ -203,24 +216,25 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     std::ifstream in(path,std::ios::binary|std::ios::ate);SourceSpan site{utf8(path),0,0,1,1};if(!in)bad(site,"cannot read file");auto size=in.tellg();if(size<32||size>static_cast<std::streamoff>(max_file))bad(site,"file size is outside 32 bytes..128 MiB");
     std::string data(static_cast<std::size_t>(size),'\0');in.seekg(0);if(!in.read(data.data(),size))bad(site,"truncated file");
     if(data.substr(0,8)!="HUAB\r\n\x1a\n")bad(site,"magic header mismatch");Reader header{std::string_view(data).substr(8,24),0,site};
-    if(header.u32()!=1)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
-    if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site};BytecodeImage image;
+    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
+    if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site,format};BytecodeImage image;
     auto source_count=r.count(128);if(!source_count)bad(site,"missing source table");std::size_t text_bytes=0;
     for(std::size_t i=0;i<source_count;++i){auto file=r.str(),text=r.str();if(file.empty()||file.size()>16384||file.find('\0')!=std::string::npos)bad(site,"invalid source id");text_bytes+=text.size();if(text_bytes>64*1024*1024)bad(site,"source table exceeds 64 MiB");auto source=std::make_unique<Source>(file,std::move(text));if(image.source(file))bad(site,"duplicate source id");image.sources.push_back(std::move(source));}
     std::vector<const Source*> originals;for(const auto& s:image.sources)originals.push_back(s.get());Sources src(originals);std::size_t fields_total=0;
     auto structures=r.count(16384);for(std::size_t i=0;i<structures;++i) {
-        auto name=r.str();small_name(name,site);auto span=src.read(r);bool pub=r.boolean();auto n=std::make_unique<Node>(NodeKind::Struct,span,name+(pub?" pub":""));auto count=r.count(4096);fields_total+=count;if(fields_total>1000000)bad(site,"metadata count budget exceeded");std::set<std::string> fields;
+        auto raw=r.str();auto name=raw.substr(0,raw.find(' '));if(raw!=name&&format<5)bad(site,"unsupported structure kind");if(raw!=name&&raw!=name+" interface"&&raw!=name+" enum")bad(site,"unknown structure kind");small_name(name,site);auto span=src.read(r);bool pub=r.boolean();auto n=std::make_unique<Node>(NodeKind::Struct,span,raw+(pub?" pub":""));auto count=r.count(4096);fields_total+=count;if(fields_total>1000000)bad(site,"metadata count budget exceeded");std::set<std::string> fields;
         for(std::size_t j=0;j<count;++j){auto field=r.str(),type=r.str();small_name(field,site);type_string(type,site);auto fs=src.read(r);if(!fields.insert(field).second)bad(site,"duplicate field");auto f=std::make_unique<Node>(NodeKind::Field,fs,field);f->add(std::make_unique<Node>(NodeKind::TypeName,fs,type));n->add(std::move(f));}
         if(!image.model.structures.emplace(name,n.get()).second)bad(site,"duplicate struct metadata");image.declarations.push_back(std::move(n));
     }
     auto functions=r.count(16384);for(std::size_t i=0;i<functions;++i) {
-        auto name=r.str();small_name(name,site);auto span=src.read(r);bool pub=r.boolean(),unsafe=r.boolean(),external=r.boolean(),mut=r.boolean();
-        auto n=std::make_unique<Node>(NodeKind::Function,span,name+(pub?" pub":"")+(unsafe?" unsafe":"")+(external?" external":""));auto count=r.count(4096);fields_total+=count;if(fields_total>1000000)bad(site,"metadata count budget exceeded");std::set<std::string> params;
+        auto raw=r.str();auto name=raw.substr(0,raw.find(' '));if(raw!=name&&format<5)bad(site,"unsupported function kind");if(raw!=name&&raw!=name+" abstract"&&raw!=name+" nested")bad(site,"unknown function kind");small_name(name,site);auto span=src.read(r);bool pub=r.boolean(),unsafe=r.boolean(),external=r.boolean(),mut=r.boolean();
+        auto n=std::make_unique<Node>(NodeKind::Function,span,raw+(pub?" pub":"")+(unsafe?" unsafe":"")+(external?" external":""));auto count=r.count(4096);fields_total+=count;if(fields_total>1000000)bad(site,"metadata count budget exceeded");std::set<std::string> params;
         if(name=="main"&&count)bad(site,"main requires no parameters");
         for(std::size_t j=0;j<count;++j){auto name_p=r.str(),type=r.str();small_name(name_p,site);type_string(type,site);bool writable=r.boolean();auto ps=src.read(r);if(!params.insert(name_p).second)bad(site,"duplicate parameter");auto p=std::make_unique<Node>(NodeKind::Parameter,ps,name_p+(writable?" mut":""));if(!type.empty())p->add(std::make_unique<Node>(NodeKind::TypeName,ps,type));n->add(std::move(p));}
         auto results=r.count(4096);fields_total+=results;if(fields_total>1000000)bad(site,"metadata count budget exceeded");if(results){auto returns=std::make_unique<Node>(NodeKind::ReturnTypes,span);for(std::size_t j=0;j<results;++j){auto t=r.str();type_string(t,site);returns->add(std::make_unique<Node>(NodeKind::TypeName,span,t));}n->add(std::move(returns));}
         if(image.model.structures.contains(name)||!image.model.functions.emplace(name,n.get()).second)bad(site,"duplicate function metadata");
         if(auto dot=name.find('.');dot!=std::string::npos){if(!image.model.structures.contains(name.substr(0,dot)))bad(site,"method owner missing");image.model.mutating[name]=mut;}
+        if(raw==name+" nested")image.model.nested[n.get()]=true;
         image.declarations.push_back(std::move(n));
     }
     auto external_count=r.count(128);if(external_count)image.model.external=std::make_shared<ExternalRegistry>(std::filesystem::canonical(path).parent_path());
@@ -234,6 +248,6 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     }
     std::size_t instructions=0;image.bytecode.initializer=code(r,src,instructions);if(image.bytecode.initializer.name!="<initialize>")bad(site,"invalid initializer code name");
     auto chunks=r.count(16384);for(std::size_t j=0;j<chunks;++j){auto c=code(r,src,instructions);auto fn=image.model.functions.find(c.name);if(fn==image.model.functions.end()||fn->second->text.find(" external")!=std::string::npos||!image.bytecode.functions.emplace(fn->second,std::move(c)).second)bad(site,"missing/duplicate function code metadata");}
-    if(r.offset!=r.bytes.size())bad(site,"trailing payload data");verify_bytecode(image.bytecode,image.model);return image;
+    if(r.offset!=r.bytes.size())bad(site,"trailing payload data");image.model.relations=interface_relations(image.model);verify_bytecode(image.bytecode,image.model);return image;
 }
 }

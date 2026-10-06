@@ -1,0 +1,2 @@
+var ints=map[string]int{"x":1}
+var optional map[string]int? = ints

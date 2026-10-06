@@ -23,8 +23,13 @@ private:
     [[noreturn]] void fail(const Token& token, std::string message, std::string code = "E2001", std::string help = {}) const;
     NodePtr statement();
     NodePtr variable();
-    NodePtr function(bool is_public, bool is_unsafe);
+    NodePtr function(bool is_public, bool is_unsafe, bool prototype=false);
     NodePtr structure(bool is_public);
+    NodePtr generic_parameters();
+    NodePtr interface_declaration(bool is_public);
+    NodePtr enum_declaration(bool is_public);
+    NodePtr match_statement();
+    bool specialization_ahead() const;
     NodePtr block();
     NodePtr conditional();
     NodePtr while_loop();

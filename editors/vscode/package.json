@@ -1,0 +1,104 @@
+{
+  "name": "hua-language",
+  "displayName": "Hua Language",
+  "description": "Hua syntax, snippets, compiler checks and local execution",
+  "version": "0.1.0",
+  "publisher": "NssSSLY",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NssSSLY/Hua"
+  },
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onLanguage:hua"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax and snippets work; compiler execution requires a trusted workspace."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "hua",
+        "aliases": [
+          "Hua",
+          "hua"
+        ],
+        "extensions": [
+          ".hua"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hua",
+        "scopeName": "source.hua",
+        "path": "./syntaxes/hua.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "hua",
+        "path": "./snippets/hua.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "hua.check",
+        "title": "Hua: Check Current File"
+      },
+      {
+        "command": "hua.run",
+        "title": "Hua: Run Current File"
+      },
+      {
+        "command": "hua.build",
+        "title": "Hua: Build Current File to HUAB"
+      }
+    ],
+    "configuration": {
+      "title": "Hua",
+      "properties": {
+        "hua.compilerPath": {
+          "type": "string",
+          "default": "hua",
+          "scope": "machine-overridable",
+          "description": "Hua executable path. Supports ${workspaceFolder}; defaults to PATH."
+        },
+        "hua.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check saved Hua files in trusted workspaces."
+        },
+        "hua.runArguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Program arguments passed after --."
+        }
+      }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "hua.run",
+          "when": "resourceLangId == hua && isWorkspaceTrusted",
+          "group": "navigation"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,345 @@
+--- a/include/hua/value.hpp
++++ b/include/hua/value.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ #include "hua/ast.hpp"
++#include "hua/gc.hpp"
+ #include <cstdint>
+ #include <map>
+ #include <memory>
+--- a/src/value.cpp
++++ b/src/value.cpp
+@@ -235,23 +235,23 @@
+     if(auto p=std::get_if<StructValue>(&v.data)) p->writable=false;
+     if(auto p=std::get_if<MapValue>(&v.data)) p->writable=false;
+     if(auto p=std::get_if<ResultValue>(&v.data)) p->writable=false;
+-    if(auto p=std::get_if<MultiValue>(&v.data)){auto copy=std::make_shared<MultiData>(*p->data);for(auto& x:copy->values)x=read_only(std::move(x));p->data=std::move(copy);}
++    if(auto p=std::get_if<MultiValue>(&v.data)){auto copy=managed<MultiData>(*p->data);for(auto& x:copy->values)x=read_only(std::move(x));p->data=std::move(copy);}
+     return v;
+ }
+ Value copy_value(const Value& v,bool deep,unsigned depth) {
+     if(depth>128) runtime_error({},"value nesting limit exceeded","E4099");
+     if(auto p=std::get_if<StructValue>(&v.data)) {
+-        auto data=std::make_shared<StructData>(); data->name=p->data->name;
++        auto data=managed<StructData>(); data->name=p->data->name;
+         for(const auto& [k,x]:p->data->fields) data->fields.emplace(k,copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1));
+         return Value(StructValue{data,true});
+     }
+-    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;r.payload=std::make_shared<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1));if(deep)r.writable=true;return Value(r);}
+-    if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=std::make_shared<MultiData>();m->contextual=p->data->contextual;for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1));return Value(MultiValue{m});}
+-    if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{std::make_shared<std::string>(*p->data),true});
+-    if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=std::make_shared<ListData>();data->element_type=p->data->element_type;for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1));return Value(ListValue{data,true});}
+-    if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=std::make_shared<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1));return Value(MapValue{data,true});}
++    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1));if(deep)r.writable=true;return Value(r);}
++    if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1));return Value(MultiValue{m});}
++    if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{managed<std::string>(*p->data),true});
++    if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=managed<ListData>();data->element_type=p->data->element_type;for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1));return Value(ListValue{data,true});}
++    if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=managed<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1));return Value(MapValue{data,true});}
+     if(auto p=std::get_if<SliceValue>(&v.data);p&&(deep||p->fixed)) {
+-        auto storage=std::make_shared<std::vector<Value>>(); storage->reserve(p->length);
++        auto storage=managed<std::vector<Value>>(); storage->reserve(p->length);
+         for(std::size_t i=0;i<p->length;++i) storage->push_back(copy_value(sequence_read(*p,i),deep,depth+1));
+         SliceValue result{storage,0,p->length,deep||p->writable,p->element_type};if(p->fixed)result=fixed_array(result,p->element_type,{},false);return Value(result);
+     }
+@@ -276,7 +276,7 @@
+         auto r=*p;auto inactive=r.ok?r.error_type:r.success_type;
+         if(!compatible(result_types[r.ok?1:0],inactive))runtime_error(span,"incompatible Result type metadata","E4003");
+         auto payload=enforce_type(*r.payload,result_types[r.ok?0:1],span,r.contextual);
+-        r.payload=std::make_shared<Value>(copy_value(r.writable?payload:read_only(payload)));r.success_type=result_types[0];r.error_type=result_types[1];r.contextual=false;return Value(r);
++        r.payload=managed<Value>(copy_value(r.writable?payload:read_only(payload)));r.success_type=result_types[0];r.error_type=result_types[1];r.contextual=false;return Value(r);
+     }
+     if(!(contextual&&expected.starts_with('[')&&v.data.index()==5)&&!compatible(expected,value_type(v))) runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
+     if(expected.starts_with('[') && v.data.index()==5) {
+@@ -288,7 +288,7 @@
+         }
+         auto element=expected.substr(close+1);
+         if(close>1){slice=fixed_array(slice,element,span,contextual);}
+-        else if(slice.element_type!=element){auto storage=std::make_shared<std::vector<Value>>();for(std::size_t i=0;i<slice.length;++i)storage->push_back(enforce_type(sequence_read(slice,i),element,span,contextual&&i<slice.contextual.size()&&slice.contextual[i]));slice=SliceValue{storage,0,slice.length,slice.writable,element};}
++        else if(slice.element_type!=element){auto storage=managed<std::vector<Value>>();for(std::size_t i=0;i<slice.length;++i)storage->push_back(enforce_type(sequence_read(slice,i),element,span,contextual&&i<slice.contextual.size()&&slice.contextual[i]));slice=SliceValue{storage,0,slice.length,slice.writable,element};}
+         else slice.fixed=false;
+     }
+     return v;
+@@ -323,9 +323,9 @@
+     for(std::size_t i=start;i<t.size()-1;++i){if(t[i]=='<')++depth;else if(t[i]=='>'){if(!depth)return {};--depth;}else if(t[i]==','&&!depth){out.emplace_back(t.substr(start,i-start));start=i+1;}}
+     if(depth)return {};out.emplace_back(t.substr(start,t.size()-1-start));return out;
+ }
+-Value make_multi(std::vector<Value> values,std::vector<bool> contextual) {auto m=std::make_shared<MultiData>();m->values=std::move(values);m->contextual=std::move(contextual);return Value(MultiValue{m});}
++Value make_multi(std::vector<Value> values,std::vector<bool> contextual) {auto m=managed<MultiData>();m->values=std::move(values);m->contextual=std::move(contextual);return Value(MultiValue{m});}
+ std::vector<Value> unpack_multi(const Value& v,std::size_t count,const SourceSpan& s) {auto p=std::get_if<MultiValue>(&v.data);if(!p||p->data->values.size()!=count)runtime_error(s,"multiple value count mismatch","E4003");return p->data->values;}
+-Value make_map(const std::string& type,const SourceSpan& s) {auto ts=type_arguments(type,"map");if(ts.size()!=2||(ts[0]!="bool"&&ts[0]!="int"&&ts[0]!="string"))runtime_error(s,"map keys require bool/int/string","E4003");auto data=std::make_shared<MapData>();data->key_type=ts[0];data->item_type=ts[1];return Value(MapValue{data,true});}
++Value make_map(const std::string& type,const SourceSpan& s) {auto ts=type_arguments(type,"map");if(ts.size()!=2||(ts[0]!="bool"&&ts[0]!="int"&&ts[0]!="string"))runtime_error(s,"map keys require bool/int/string","E4003");auto data=managed<MapData>();data->key_type=ts[0];data->item_type=ts[1];return Value(MapValue{data,true});}
+ MapKey map_key(const MapValue& map,const Value& key,const SourceSpan& s) {auto value=enforce_type(key,map.data->key_type,s);if(auto p=std::get_if<bool>(&value.data))return *p;if(auto p=std::get_if<I>(&value.data))return *p;if(auto p=std::get_if<std::string>(&value.data))return *p;runtime_error(s,"map keys require bool/int/string","E4003");}
+ void map_put(MapValue& m,const Value& key,Value value,const SourceSpan& s,bool contextual) {if(!m.writable)runtime_error(s,"cannot mutate a read-only map","E4007");auto k=map_key(m,key,s);auto v=enforce_type(std::move(value),m.data->item_type,s,contextual);if(m.data->entries.size()>=1000000&&!m.data->entries.contains(k))runtime_error(s,"map entry limit exceeded","E4099");m.data->entries.insert_or_assign(k,copy_value(v));}
+ Value index_value(const Value& base,const Value& key,const SourceSpan& s) {
+--- a/src/runtime.cpp
++++ b/src/runtime.cpp
+@@ -17,7 +17,7 @@
+         return convert_numeric(args[0],name,span,true);
+     }
+     if((name=="int"||name=="float")&&std::holds_alternative<NumericValue>(args[0].data))return convert_numeric(args[0],name,span,true);
+-    if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);return Value(ResultValue{ok,std::make_shared<Value>(v),ok?value_type(v):"",ok?"":value_type(v),true,!contextual.empty()&&contextual[0]});}
++    if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);return Value(ResultValue{ok,managed<Value>(v),ok?value_type(v):"",ok?"":value_type(v),true,!contextual.empty()&&contextual[0]});}
+     if(name=="is_ok"||name=="is_err"){auto r=std::get_if<ResultValue>(&args[0].data);if(!r)runtime_error(span,"expected Result","E4003");return Value(r->ok==(name=="is_ok"));}
+     if(name=="is_some"||name=="is_none")return Value((args[0].data.index()!=0)==(name=="is_some"));
+     if(name=="unwrap_err")return result_payload(args[0],false,span);
+--- a/src/interpreter.cpp
++++ b/src/interpreter.cpp
+@@ -50,7 +50,7 @@
+     drain(*environment_);
+ }
+ Callable Interpreter::closure(const Node& function){
+-    auto captured=std::make_shared<Environment>();captured->parent=&global_;
++    auto captured=managed<Environment>();captured->parent=&global_;
+     for(auto env=environment_;env&&env!=&global_;env=env->parent)for(const auto& [name,binding]:env->bindings)
+         if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});
+     return Callable{&function,"",{},captured};
+@@ -174,7 +174,7 @@
+         location_write(where,value);return value;
+     }
+     case N::Array: {
+-        auto storage=std::make_shared<std::vector<Value>>();std::string type;
++        auto storage=managed<std::vector<Value>>();std::string type;
+         for(const auto& c:n.children){auto value=copy_value(evaluate(*c));if(type.empty())type=value_type(value);else value=enforce_type(value,type,c->span,numeric_literal(*c));storage->push_back(std::move(value));}
+         SliceValue array{storage,0,storage->size(),true,type};for(const auto& child:n.children)array.contextual.push_back(contextual_literal(*child));return Value(array);
+     }
+@@ -188,7 +188,7 @@
+         auto view=*slice;view.start+=static_cast<std::size_t>(start);view.length=static_cast<std::size_t>(end-start);view.fixed=false;return Value(view);
+     }
+     case N::StructLiteral: {
+-        auto object=std::make_shared<StructData>();object->name=n.text;auto definition=model_.structures.at(n.text);
++        auto object=managed<StructData>();object->name=n.text;auto definition=model_.structures.at(n.text);
+         for(const auto& init:n.children) {
+             std::string type;for(const auto& field:definition->children)if(field->text==init->text)type=type_name(*field->children[0]);
+             auto value=enforce_type(evaluate(*init->children[0]),type,init->span,contextual_literal(*init->children[0]));
+--- a/src/vm.cpp
++++ b/src/vm.cpp
+@@ -37,7 +37,7 @@
+     TypeRelationScope relation_scope(model_.relations);
+     if(model_.external)model_.external->reset();
+     bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();
+-    auto builtins=std::make_shared<Environment>();global_=std::make_shared<Environment>();global_->parent=builtins;
++    auto builtins=managed<Environment>();global_=managed<Environment>();global_->parent=builtins;
+     for(const auto& name:builtin_names())
+         {builtins->bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
+          builtins->bindings.emplace(std::string("$core$")+name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});}
+@@ -58,7 +58,7 @@
+     if(user_calls>=128)runtime_error(site.span,"function call depth limit exceeded (128)","E4099");
+     std::vector<const Node*> ps;for(const auto& c:fn.children)if(c->kind==N::Parameter)ps.push_back(c.get());
+     if(ps.size()!=args.size())runtime_error(site.span,"function argument count mismatch","E4003");
+-    auto local=std::make_shared<Environment>();local->parent=callable.closure?std::static_pointer_cast<Environment>(callable.closure):global_;
++    auto local=managed<Environment>();local->parent=callable.closure?std::static_pointer_cast<Environment>(callable.closure):global_;
+     if(callable.closure)local->bindings.emplace(key,Binding{Value(callable),"fn:"+key,false});
+     if(callable.receiver) {
+         if(model_.mutating.at(key) && !callable.receiver->writable)runtime_error(site.span,"mutating method requires mutable receiver","E4007");
+@@ -94,7 +94,7 @@
+         const auto& op=f.code->instructions[f.pc++];const auto& s=op.span;
+         if(++steps_>1000000)runtime_error(s,"execution step limit exceeded (1000000)","E4099");
+         switch(op.op) {
+-        case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=std::make_shared<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});stack_.emplace_back(Value(Callable{fn->second,"",{},captured}));break;}
++        case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});stack_.emplace_back(Value(Callable{fn->second,"",{},captured}));break;}
+         case Op::Defer:{auto args=arguments(op.argument,s);auto value=pop(s);auto fn=std::get_if<Callable>(&value.data);if(!fn)runtime_error(s,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(arg);f.environment->deferred.push_back({*fn,std::move(args),op});break;}
+         case Op::ExternalInit:model_.external->initialize(op.text,s);break;
+         case Op::Constant:stack_.emplace_back(op.constant);break;
+@@ -108,7 +108,7 @@
+             auto condition=as_bool(pop(s),s);
+             if(condition==(op.op==Op::JumpTrue)){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;}break;
+         }
+-        case Op::EnterScope:{auto env=std::make_shared<Environment>();env->parent=f.environment;f.environment=std::move(env);break;}
++        case Op::EnterScope:{auto env=managed<Environment>();env->parent=f.environment;f.environment=std::move(env);break;}
+         case Op::LeaveScope:case Op::Unwind: {
+             auto count=op.op==Op::LeaveScope?1:op.argument;
+             for(std::size_t i=0;i<count;++i){if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;drain(env);frames_.back().environment=env->parent;}break;
+@@ -153,7 +153,7 @@
+             if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
+             if(!std::holds_alternative<SliceValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice or array","E4003");break;
+         case Op::MakeArray: {
+-            auto storage=std::make_shared<std::vector<Value>>();stack_.emplace_back(Value(SliceValue{storage,0,0,true,""}));break;
++            auto storage=managed<std::vector<Value>>();stack_.emplace_back(Value(SliceValue{storage,0,0,true,""}));break;
+         }
+         case Op::ArrayAppend: {
+             auto item=copy_value(pop(s));
+@@ -170,7 +170,7 @@
+             auto view=*slice;view.start+=static_cast<std::size_t>(a);view.length=static_cast<std::size_t>(b-a);view.fixed=false;stack_.emplace_back(Value(view));break;
+         }
+         case Op::MakeStruct: {
+-            auto object=std::make_shared<StructData>();object->name=op.text;stack_.emplace_back(Value(StructValue{object,true}));break;
++            auto object=managed<StructData>();object->name=op.text;stack_.emplace_back(Value(StructValue{object,true}));break;
+         }
+         case Op::InitField: {
+             auto item=pop(s);if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
+@@ -201,7 +201,7 @@
+         }
+         case Op::SliceInit: {
+             auto value=pop(s);
+-            if(auto m=std::get_if<MapValue>(&value.data)){auto entries=std::make_shared<std::vector<Value>>();for(const auto& [k,v]:m->data->entries)entries->push_back(make_multi({std::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v))}));Iterator it{};it.map=true;it.slice={entries,0,entries->size(),false,""};f.iterators.push_back(std::move(it));break;}
++            if(auto m=std::get_if<MapValue>(&value.data)){auto entries=managed<std::vector<Value>>();for(const auto& [k,v]:m->data->entries)entries->push_back(make_multi({std::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v))}));Iterator it{};it.map=true;it.slice={entries,0,entries->size(),false,""};f.iterators.push_back(std::move(it));break;}
+             auto p=std::get_if<SliceValue>(&value.data);
+             if(!p)runtime_error(s,"for requires a slice or range","E4003");Iterator it{};it.slice=*p;f.iterators.push_back(std::move(it));break;
+         }
+@@ -220,7 +220,7 @@
+             }
+             if(!has){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;break;}
+             if(it.index==std::numeric_limits<I>::max())it.done=true;else ++it.index;
+-            auto env=std::make_shared<Environment>();env->parent=f.environment;f.environment=std::move(env);
++            auto env=managed<Environment>();env->parent=f.environment;f.environment=std::move(env);
+             Instruction binding=op;binding.flag=false;binding.type="int";
+             Value key(index);if(it.map){auto parts=unpack_multi(item,2,s);key=parts[0];item=op.names.size()==1?key:parts[1];binding.type="";}
+             if(op.names.size()==2){binding.text=op.names[0];bind(binding,key);}
+--- a/src/array.cpp
++++ b/src/array.cpp
+@@ -140,9 +140,9 @@
+   if (stride) {
+     if (s.length > 134217728 / (*stride ? *stride : 1))
+       runtime_error(span, "fixed array storage exceeds 128 MiB", "E4099");
+-    result.packed = std::make_shared<std::string>(s.length * (*stride), '\0');
++    result.packed = managed<std::string>(s.length * (*stride), '\0');
+   } else
+-    result.storage = std::make_shared<std::vector<Value>>(s.length);
++    result.storage = managed<std::vector<Value>>(s.length);
+   // Construction validates before publishing the new backing storage.
+   result.writable = true;
+   for (std::size_t i = 0; i < s.length; ++i)
+--- a/src/binary_stdlib.cpp
++++ b/src/binary_stdlib.cpp
+@@ -5,7 +5,7 @@
+ namespace {
+ using I=std::int64_t;
+ constexpr std::size_t max_bytes=128*1024*1024,max_text=16*1024*1024,max_items=1000000;
+-Value bytes(std::string text){return Value(BytesValue{std::make_shared<const std::string>(std::move(text))});}
++Value bytes(std::string text){return Value(BytesValue{managed<const std::string>(std::move(text))});}
+ std::string integer_bytes(std::uint64_t bits,unsigned count){std::string out;for(unsigned i=0;i<count;++i)out+=static_cast<char>((bits>>(i*8))&255);return out;}
+ std::string item_type(const std::string& type){auto items=type_arguments(type,"List");return items.size()==1?items[0]:"";}
+ }
+@@ -30,13 +30,13 @@
+         if(f.name=="from_slice"){
+             auto source=std::get_if<SliceValue>(&args[0].data);if(!source||source->element_type.empty())runtime_error(s,"from_slice requires a typed slice/array","E4003");
+             if(source->length>max_items)runtime_error(s,"list item limit exceeded","E4099");
+-            auto data=std::make_shared<ListData>();data->element_type=source->element_type;data->values.reserve(source->length);
++            auto data=managed<ListData>();data->element_type=source->element_type;data->values.reserve(source->length);
+             for(std::size_t i=0;i<source->length;++i)data->values.push_back(copy_value(sequence_read(*source,i),true));
+             return Value(ListValue{data,true});
+         }
+         auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");auto& data=*handle->data;
+         if(f.name=="len")return Value(static_cast<I>(data.values.size()));
+-        if(f.name=="snapshot"){auto values=std::make_shared<std::vector<Value>>();values->reserve(data.values.size());for(const auto& v:data.values)values->push_back(copy_value(read_only(v)));return Value(SliceValue{values,0,values->size(),false,data.element_type});}
++        if(f.name=="snapshot"){auto values=managed<std::vector<Value>>();values->reserve(data.values.size());for(const auto& v:data.values)values->push_back(copy_value(read_only(v)));return Value(SliceValue{values,0,values->size(),false,data.element_type});}
+         if(f.name=="get"||f.name=="set"){auto at=integer(1);if(at<0||static_cast<std::size_t>(at)>=data.values.size())return err("list index out of bounds");if(f.name=="get")return ok(copy_value(read_only(data.values[static_cast<std::size_t>(at)])));auto value=copy_value(enforce_type(args[2],data.element_type,s));data.values[static_cast<std::size_t>(at)]=std::move(value);return ok(Value(true));}
+         if(f.name=="clear"){data.values.clear();return {};}
+         if(f.name=="reserve"){auto n=integer(1);if(n<0||n>static_cast<I>(max_items))return err("list capacity outside 0..1000000");auto capacity=static_cast<std::size_t>(n);bool changed=capacity>data.values.capacity();if(changed)data.values.reserve(capacity);return ok(Value(changed));}
+@@ -45,7 +45,7 @@
+         if(f.name=="extend"){auto source=std::get_if<SliceValue>(&args[1].data);if(!source)runtime_error(s,"extend requires a slice/array","E4003");if(source->length>max_items-data.values.size())return err("list item limit exceeded");std::vector<Value> extra;extra.reserve(source->length);for(std::size_t i=0;i<source->length;++i)extra.push_back(copy_value(enforce_type(sequence_read(*source,i),data.element_type,s)));data.values.insert(data.values.end(),extra.begin(),extra.end());return ok(Value(static_cast<I>(data.values.size())));}
+     }
+     if(f.module=="buffer"){
+-        if(f.name=="new")return Value(BufferValue{std::make_shared<std::string>(),true});
++        if(f.name=="new")return Value(BufferValue{managed<std::string>(),true});
+         auto handle=std::get_if<BufferValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Buffer","E4003");auto& out=*handle->data;
+         if(f.name=="len")return Value(static_cast<I>(out.size()));
+         if(f.name=="bytes")return bytes(out);
+@@ -65,7 +65,7 @@
+         auto handle=std::get_if<BytesValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Bytes","E4003");const auto& data=*handle->data;
+         if(f.name=="len")return Value(static_cast<I>(data.size()));
+         if(f.name=="to_text"){if(data.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(data);return invalid.empty()?ok(Value(data)):err(invalid);}
+-        if(f.name=="to_ints"){if(data.size()>max_items)return err("byte output exceeds 1000000 items");auto values=std::make_shared<std::vector<Value>>();values->reserve(data.size());for(unsigned char c:data)values->emplace_back(static_cast<I>(c));return ok(Value(SliceValue{values,0,values->size(),false,"int"}));}
++        if(f.name=="to_ints"){if(data.size()>max_items)return err("byte output exceeds 1000000 items");auto values=managed<std::vector<Value>>();values->reserve(data.size());for(unsigned char c:data)values->emplace_back(static_cast<I>(c));return ok(Value(SliceValue{values,0,values->size(),false,"int"}));}
+         if(f.name=="concat"){const auto& other=*std::get<BytesValue>(args[1].data).data;if(other.size()>max_bytes-data.size())return err("bytes exceed 128 MiB");return ok(bytes(data+other));}
+         if(f.name=="crc32"){std::uint32_t crc=0xffffffffu;for(unsigned char c:data){crc^=c;for(unsigned k=0;k<8;++k)crc=(crc>>1)^(0xedb88320u&static_cast<std::uint32_t>(-static_cast<std::int32_t>(crc&1)));}return Value(static_cast<I>(~crc));}
+         auto at=integer(1);auto count=f.name=="read_u32_le"?4u:8u;
+--- a/src/stdlib.cpp
++++ b/src/stdlib.cpp
+@@ -9,7 +9,7 @@
+ using I=std::int64_t;
+ constexpr std::size_t max_text=16*1024*1024,max_items=1000000;
+ std::string utf8(const std::filesystem::path& p){auto s=p.u8string();return {s.begin(),s.end()};}
+-Value strings(const std::vector<std::string>& values){auto data=std::make_shared<std::vector<Value>>();for(const auto& x:values)data->emplace_back(x);return Value(SliceValue{data,0,data->size(),false,"string"});}
++Value strings(const std::vector<std::string>& values){auto data=managed<std::vector<Value>>();for(const auto& x:values)data->emplace_back(x);return Value(SliceValue{data,0,data->size(),false,"string"});}
+ std::filesystem::path path(const std::string& text,RuntimeContext* context){if(text.find('\0')!=std::string::npos)throw std::runtime_error("path contains NUL");auto p=std::filesystem::path(std::u8string(text.begin(),text.end()));if(p.is_relative())p=(context&&!context->working_directory.empty()?context->working_directory:std::filesystem::current_path())/p;return p;}
+ void bounded(const std::string& text,const SourceSpan& s){if(text.size()>max_text)runtime_error(s,"standard library text exceeds 16 MiB","E4099");}
+ }
+@@ -93,7 +93,7 @@
+ std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
+ const StandardFunction* standard_function(std::string_view name){for(const auto& f:standard_functions())if(standard_name(f)==name)return &f;return nullptr;}
+ bool standard_module(std::string_view name){for(const auto& f:standard_functions())if(name=="std."+f.module)return true;return false;}
+-Value standard_result(Value value,bool ok,const std::string& type){return Value(ResultValue{ok,std::make_shared<Value>(std::move(value)),type,"string",true,false});}
++Value standard_result(Value value,bool ok,const std::string& type){return Value(ResultValue{ok,managed<Value>(std::move(value)),type,"string",true,false});}
+ std::string text_utf8_error(std::string_view s) {
+     for(std::size_t i=0;i<s.size();) {auto b=static_cast<unsigned char>(s[i++]);if(b<128)continue;unsigned n;std::uint32_t v,min;
+         if(b>=194&&b<=223){n=1;v=b&31;min=128;}else if(b>=224&&b<=239){n=2;v=b&15;min=2048;}else if(b>=240&&b<=244){n=3;v=b&7;min=65536;}else return "invalid UTF-8";
+@@ -132,7 +132,7 @@
+             if(f.name=="list_dir"){std::vector<std::string> names;std::filesystem::directory_iterator it(p,ec),end;if(ec)return err("cannot list directory");for(;it!=end;it.increment(ec)){if(ec)return err("directory iteration failed");if(names.size()>=max_items)return err("directory entry limit exceeded");names.push_back(utf8(it->path().filename()));}if(ec)return err("directory iteration failed");std::sort(names.begin(),names.end());return ok(strings(names));}
+             if(f.name=="read_text"||f.name=="read_bytes") {
+                 if(!std::filesystem::is_regular_file(p,ec)||ec)return err("cannot read regular text file");std::ifstream file(p,std::ios::binary|std::ios::ate);if(!file)return err("cannot open text file");auto size=file.tellg();if(size<0||size>static_cast<std::streamoff>(f.name=="read_bytes"?128*1024*1024:max_text))return err(f.name=="read_bytes"?"binary file is unreadable or exceeds 128 MiB":"text file is unreadable or exceeds 16 MiB");
+-                std::string value(static_cast<std::size_t>(size),'\0');file.seekg(0);if(!value.empty()&&!file.read(value.data(),static_cast<std::streamsize>(value.size())))return err("text file read failed");if(f.name=="read_bytes")return ok(Value(BytesValue{std::make_shared<const std::string>(std::move(value))}));auto invalid=text_utf8_error(value);if(!invalid.empty())return err(invalid);return ok(Value(std::move(value)));
++                std::string value(static_cast<std::size_t>(size),'\0');file.seekg(0);if(!value.empty()&&!file.read(value.data(),static_cast<std::streamsize>(value.size())))return err("text file read failed");if(f.name=="read_bytes")return ok(Value(BytesValue{managed<const std::string>(std::move(value))}));auto invalid=text_utf8_error(value);if(!invalid.empty())return err(invalid);return ok(Value(std::move(value)));
+             }
+             bool binary=f.name=="write_bytes"||f.name=="append_bytes";const auto& content=binary?*std::get<BytesValue>(args[1].data).data:text(1);
+             if(content.size()>(binary?128*1024*1024:max_text))return err("file content exceeds size limit");if(!binary){auto invalid=text_utf8_error(content);if(!invalid.empty())return err(invalid);}
+--- a/src/json.cpp
++++ b/src/json.cpp
+@@ -9,7 +9,7 @@
+ using I=std::int64_t;using P=JsonData::Pointer;using A=JsonData::Array;using O=JsonData::Object;
+ constexpr std::size_t max_text=16*1024*1024,max_nodes=1000000,max_depth=64;
+ struct Failure:std::runtime_error {using std::runtime_error::runtime_error;};
+-template<class T>P node(T value){return std::make_shared<const JsonData>(std::move(value));}
++template<class T>P node(T value){return managed<const JsonData>(std::move(value));}
+ void append_utf8(std::string& s,unsigned c){if(c<128)s+=static_cast<char>(c);else if(c<2048){s+=static_cast<char>(192|(c>>6));s+=static_cast<char>(128|(c&63));}else if(c<65536){s+=static_cast<char>(224|(c>>12));s+=static_cast<char>(128|((c>>6)&63));s+=static_cast<char>(128|(c&63));}else{s+=static_cast<char>(240|(c>>18));s+=static_cast<char>(128|((c>>12)&63));s+=static_cast<char>(128|((c>>6)&63));s+=static_cast<char>(128|(c&63));}}
+ class Parser {
+     const std::string& text;std::size_t at{},nodes{};
+@@ -62,7 +62,7 @@
+     if(auto p=std::get_if<StructValue>(&v.data)){if(p->data->fields.contains("$case"))throw Failure("enum JSON encoding requires an explicit representation");O out;for(const auto& [k,x]:p->data->fields)out.emplace(k,convert(x,depth+1,nodes));return node(std::move(out));}
+     throw Failure("unsupported JSON value type: "+display_type(value_type(v)));
+ }
+-Value list(const std::vector<std::string>& xs){auto values=std::make_shared<std::vector<Value>>();for(const auto& x:xs)values->emplace_back(x);return Value(SliceValue{values,0,values->size(),false,"string"});}
++Value list(const std::vector<std::string>& xs){auto values=managed<std::vector<Value>>();for(const auto& x:xs)values->emplace_back(x);return Value(SliceValue{values,0,values->size(),false,"string"});}
+ }
+ std::string json_display(const JsonValue& v){Writer writer;writer.value(v.data);return writer.out;}
+ Value json_decode(const std::string& text){try{return standard_result(Value(JsonValue{Parser(text).parse()}),true,"Json");}catch(const Failure& e){return standard_result(Value(std::string(e.what())),false,"Json");}}
+--- a/include/hua/interpreter.hpp
++++ b/include/hua/interpreter.hpp
+@@ -15,6 +15,10 @@
+         std::unordered_map<std::string, Binding> bindings;
+         std::vector<Deferred> deferred;
+         Environment(Environment* outer=nullptr,std::unordered_map<std::string,Binding> initial={}):parent(outer),bindings(std::move(initial)){}
++        friend void heap_edges(const Environment& e,const HeapVisitor& visit){
++            for(const auto& [_,b]:e.bindings)heap_edges(b.value,visit);
++            for(const auto& d:e.deferred){heap_edges(Value(d.callable),visit);for(const auto& a:d.arguments)heap_edges(a,visit);}
++        }
+         Binding& lookup(const std::string& name, const SourceSpan& span);
+     };
+     using Location = ValueLocation;
+--- a/include/hua/vm.hpp
++++ b/include/hua/vm.hpp
+@@ -14,6 +14,10 @@
+         std::shared_ptr<Environment> parent;
+         std::unordered_map<std::string, Binding> bindings;
+         std::vector<Deferred> deferred;
++        friend void heap_edges(const Environment& e,const HeapVisitor& visit){
++            visit(e.parent.get());for(const auto& [_,b]:e.bindings)heap_edges(b.value,visit);
++            for(const auto& d:e.deferred){heap_edges(Value(d.callable),visit);for(const auto& a:d.arguments)heap_edges(a,visit);}
++        }
+         Binding& lookup(const std::string& name, const SourceSpan& span);
+     };
+     using Location = ValueLocation;
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -11,7 +11,7 @@
+ else()
+     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
+ endif()
+-add_library(hua_semantics src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/json.cpp src/binary_stdlib.cpp)
++add_library(hua_semantics src/gc.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/json.cpp src/binary_stdlib.cpp)
+ target_link_libraries(hua_semantics PUBLIC hua_frontend)
+ set(WASMTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.tools/wasmtime-v49.0.2-x86_64-windows-c-api" CACHE PATH "Wasmtime C API SDK")
+ find_path(WASMTIME_INCLUDE wasmtime.h PATHS "${WASMTIME_ROOT}/include" REQUIRED NO_DEFAULT_PATH)
+@@ -170,3 +170,12 @@
+         endif()
+     endforeach()
+ endif()
++
++if(BUILD_TESTING)
++    add_executable(hua_gc_tests tests/gc_tests.cpp)
++    target_link_libraries(hua_gc_tests PRIVATE hua_semantics)
++    if(MINGW)
++        target_link_options(hua_gc_tests PRIVATE -static)
++    endif()
++    add_test(NAME managed_gc COMMAND hua_gc_tests)
++endif()

@@ -1,0 +1,635 @@
+--- a/include/hua/value.hpp
++++ b/include/hua/value.hpp
+@@ -14,6 +14,8 @@
+ struct TypeRelationScope { const TypeRelations* previous;explicit TypeRelationScope(const TypeRelations& relations);~TypeRelationScope(); };
+ std::vector<std::pair<std::string,std::vector<std::string>>> enum_cases(const Node& structure);
+ struct Value;
++struct TaskState;
++struct TaskValue {std::shared_ptr<TaskState> data;};
+ struct StructData;
+ struct MapData;
+ struct MultiData;
+@@ -51,7 +53,7 @@
+     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
+ };
+ struct Value {
+-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue>;
++    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue>;
+     Data data;
+     Value() = default;
+     template<class T> explicit Value(T value) : data(std::move(value)) {}
+--- a/include/hua/stdlib.hpp
++++ b/include/hua/stdlib.hpp
+@@ -3,10 +3,15 @@
+ #include <filesystem>
+ #include <iosfwd>
+ namespace hua {
++struct TaskRuntime;struct Cancellation;class ManagedHeap;
+ struct RuntimeContext {
+     std::istream* input{};
+     std::vector<std::string> arguments;
+     std::filesystem::path working_directory;
++    TaskRuntime* tasks{};
++    std::shared_ptr<Cancellation> cancellation;
++    std::shared_ptr<ManagedHeap> heap;
++    bool in_task{},cleanup{};
+ };
+ struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; };
+ struct StandardSignature { std::vector<std::string> parameters; std::string result; };
+--- a/src/tasks.cpp
++++ b/src/tasks.cpp
+@@ -7,21 +7,21 @@
+ std::atomic<unsigned> running{0};
+ std::shared_ptr<TaskState> task_state(const Value& v,const SourceSpan& s){auto t=std::get_if<TaskValue>(&v.data);if(!t||!t->data)runtime_error(s,"expected Task<T>","E4003");return t->data;}
+ std::chrono::milliseconds duration(const Value& v,const SourceSpan& s){auto ms=as_int(v,s);if(ms<0||ms>86400000)runtime_error(s,"duration must be 0..86400000 milliseconds","E4103");return std::chrono::milliseconds(ms);}
+-std::string failure(std::exception_ptr error){try{std::rethrow_exception(error);}catch(const Diagnostic& e){return e.code+": "+e.what();}catch(const std::exception& e){return e.what();}catch(...){return "task failed";}}
+-void join(const std::shared_ptr<TaskState>& state){if(state->worker.joinable())state->worker.join();}
++std::string failure(std::exception_ptr error){try{std::rethrow_exception(error);}catch(const Diagnostic& e){return e.code()+": "+e.what();}catch(const std::exception& e){return e.what();}catch(...){return "task failed";}}
++void join(const std::shared_ptr<TaskState>& state){std::lock_guard lock(state->join_mutex);if(state->worker.joinable())state->worker.join();}
+ }
+ TaskState::~TaskState(){if(worker.joinable()){cancellation->requested=true;worker.join();}result={};if(heap)heap->collect();}
+ TaskRuntime::~TaskRuntime(){try{finish(true);}catch(...) {}}
+ void task_checkpoint(RuntimeContext* c,const SourceSpan& s){if(c&&!c->cleanup&&c->cancellation&&c->cancellation->stopped())runtime_error(s,"task canceled","E4101");}
+-Value TaskRuntime::start(TaskJob job,std::string type,const SourceSpan& span){
++Value TaskRuntime::start(TaskJob job,std::string type,const SourceSpan& span,std::shared_ptr<ManagedHeap> heap){
+     task_checkpoint(&context,span);
+     if(children.size()>=4096)runtime_error(span,"task creation limit exceeded (4096 per scope)","E4099");
+     auto old=running.fetch_add(1);if(old>=64){--running;runtime_error(span,"concurrent task limit exceeded (64)","E4099");}
+-    auto state=std::make_shared<TaskState>();state->result_type=std::move(type);state->cancellation=std::make_shared<Cancellation>();state->cancellation->parent=context.cancellation;
++    auto state=std::make_shared<TaskState>();state->heap=heap?std::move(heap):std::make_shared<ManagedHeap>();state->result_type=std::move(type);state->cancellation=std::make_shared<Cancellation>();state->cancellation->parent=context.cancellation;
+     auto child=context;child.tasks=nullptr;child.cancellation=state->cancellation;child.in_task=true;child.cleanup=false;child.input=nullptr;
+     children.push_back(state);
+     try{state->worker=std::jthread([state,job=std::move(job),child=std::move(child)]()mutable{
+-        std::ostringstream out;state->heap=std::make_shared<ManagedHeap>();HeapScope heap_scope(*state->heap);
++        std::ostringstream out;child.heap=state->heap;HeapScope heap_scope(*state->heap);
+         Value result;std::exception_ptr error;
+         try{task_checkpoint(&child,{});result=job(child,out);task_checkpoint(&child,{});}catch(...){error=std::current_exception();}
+         {std::lock_guard lock(state->mutex);state->result=std::move(result);state->error=error;state->output=out.str();state->finished=true;}
+@@ -38,8 +38,8 @@
+         state->changed.wait_for(lock,std::chrono::milliseconds(2));
+     }}
+     // Timeout cancels and joins: no background write continues after the caller regains control.
+-    join(state);state->observed=true;
+-    if(!state->emitted){output<<state->output;state->emitted=true;}
++    join(state);{std::lock_guard lock(state->mutex);state->observed=true;
++    if(!state->emitted){output<<state->output;state->emitted=true;}}
+     if(timed_out)return standard_result(Value(std::string("timeout")),false,state->result_type);
+     if(state->error){if(timeout)return standard_result(Value(failure(state->error)),false,state->result_type);std::rethrow_exception(state->error);}
+     auto result=copy_value(state->result,true);
+@@ -59,7 +59,7 @@
+     for(std::size_t i=start;i<children.size();++i)try{if(!children[i]->observed)await(Value(TaskValue{children[i]}),span);}catch(...){if(!first)first=std::current_exception();for(std::size_t j=start;j<children.size();++j)children[j]->cancellation->requested=true;}
+     if(first)std::rethrow_exception(first);
+ }
+-ExecutionScope::ExecutionScope(RuntimeContext*& pointer,std::ostream& out):target(pointer),previous(pointer),context(std::make_unique<RuntimeContext>(pointer?*pointer:RuntimeContext{})),heap(std::make_shared<ManagedHeap>()),heap_scope(*heap){runtime=std::make_unique<TaskRuntime>(*context,out);context->tasks=runtime.get();target=context.get();}
++ExecutionScope::ExecutionScope(RuntimeContext*& pointer,std::ostream& out):target(pointer),previous(pointer),context(std::make_unique<RuntimeContext>(pointer?*pointer:RuntimeContext{})),heap(context->heap?context->heap:std::make_shared<ManagedHeap>()),heap_scope(*heap){runtime=std::make_unique<TaskRuntime>(*context,out);context->heap=heap;context->tasks=runtime.get();target=context.get();}
+ ExecutionScope::~ExecutionScope(){runtime.reset();heap->collect();target=previous;}
+ void ExecutionScope::finish(){runtime->finish();}
+ std::string task_result_type(const Callable& callable){if(!callable.function)return "";for(const auto& child:callable.function->children)if(child->kind==NodeKind::ReturnTypes)return child->children.size()==1?type_name(*child->children[0]):"";return "void";}
+--- a/include/hua/tasks.hpp
++++ b/include/hua/tasks.hpp
+@@ -12,7 +12,7 @@
+ struct RuntimeContext;
+ struct Cancellation {std::atomic<bool> requested{false};std::shared_ptr<Cancellation> parent;bool stopped()const{return requested||(parent&&parent->stopped());}};
+ struct TaskState {
+-    std::mutex mutex;std::condition_variable changed;
++    std::mutex mutex,join_mutex;std::condition_variable changed;
+     bool finished{},observed{},emitted{};Value result;std::exception_ptr error;
+     std::string result_type,output;
+     std::shared_ptr<Cancellation> cancellation;
+@@ -28,7 +28,7 @@
+     std::size_t next_group{1};
+     TaskRuntime(RuntimeContext& c,std::ostream& o):context(c),output(o){}
+     ~TaskRuntime();
+-    Value start(TaskJob job,std::string type,const SourceSpan& span);
++    Value start(TaskJob job,std::string type,const SourceSpan& span,std::shared_ptr<ManagedHeap> heap={});
+     void finish(bool cancel=false);
+     Value await(const Value& task,const SourceSpan& span,std::optional<std::chrono::milliseconds> timeout={});
+     std::size_t begin_group();void end_group(std::size_t id,const SourceSpan& span);
+--- a/src/value.cpp
++++ b/src/value.cpp
+@@ -1,4 +1,5 @@
+ #include "hua/value.hpp"
++#include "hua/tasks.hpp"
+ #include <algorithm>
+ #include <charconv>
+ #include <cmath>
+@@ -32,6 +33,7 @@
+         if(n.text=="Result" && n.children.size()==1)result+=",string";
+         return result + ">";
+     }
++    case 16:return "Task<"+std::get<TaskValue>(v.data).data->result_type+">";
+     default: return "";
+     }
+ }
+@@ -55,6 +57,7 @@
+     case 15:{auto type=std::get<NumericValue>(v.data).type;return type=="@integer"?"int":type;}
+     case 11:return "Json";
+     case 12:return "Bytes";case 13:return "Buffer";case 14:return "List<"+std::get<ListValue>(v.data).data->element_type+">";
++    case 16:return "Task<"+std::get<TaskValue>(v.data).data->result_type+">";
+     default: return "";
+     }
+ }
+@@ -63,7 +66,7 @@
+     if(numeric_widening(expected,actual))return true;
+     if(current_relations){auto found=current_relations->find(std::string(expected));if(found!=current_relations->end()&&found->second.contains(std::string(actual)))return true;}
+     if(expected.ends_with('?')) return actual=="nil" || compatible(expected.substr(0,expected.size()-1),actual);
+-    for(auto name:{"map","Result","multi","List"}) {
++    for(auto name:{"map","Result","multi","List","Task"}) {
+         auto es=type_arguments(expected,name),as=type_arguments(actual,name);
+         if(!es.empty()&&!as.empty()){if(std::string_view(name)=="map"||std::string_view(name)=="List")return es==as;if(es.size()!=as.size())return false;for(std::size_t i=0;i<es.size();++i)if(!compatible(es[i],as[i]))return false;return true;}
+     }
+@@ -294,6 +297,7 @@
+     return v;
+ }
+ std::string show(const Value& v) {
++    if(std::holds_alternative<TaskValue>(v.data))return "<"+value_type(v)+">";
+     if(auto p=std::get_if<NumericValue>(&v.data))return std::visit([](auto x)->std::string{if constexpr(std::is_same_v<decltype(x),std::uint64_t>)return std::to_string(x);else return show(Value(x));},p->number);
+     if(auto p=std::get_if<BytesValue>(&v.data))return "<Bytes:"+std::to_string(p->data->size())+">";
+     if(auto p=std::get_if<BufferValue>(&v.data))return "<Buffer:"+std::to_string(p->data->size())+">";
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -11,7 +11,7 @@
+ else()
+     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
+ endif()
+-add_library(hua_semantics src/gc.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/json.cpp src/binary_stdlib.cpp)
++add_library(hua_semantics src/gc.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/json.cpp src/binary_stdlib.cpp)
+ target_link_libraries(hua_semantics PUBLIC hua_frontend)
+ set(WASMTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.tools/wasmtime-v49.0.2-x86_64-windows-c-api" CACHE PATH "Wasmtime C API SDK")
+ find_path(WASMTIME_INCLUDE wasmtime.h PATHS "${WASMTIME_ROOT}/include" REQUIRED NO_DEFAULT_PATH)
+--- a/src/parser.cpp
++++ b/src/parser.cpp
+@@ -101,7 +101,7 @@
+             attributes.push_back(value);newlines();
+         }
+         bool pub=accept(K::Pub);
+-        if(at(K::Fn))node=function(pub,false);else if(at(K::Struct))node=structure(pub);else fail(peek(),"attributes require a function or struct declaration","E2002");
++        if(accept(K::Async)){node=function(pub,false);node->text+=" async";}else if(at(K::Fn))node=function(pub,false);else if(at(K::Struct))node=structure(pub);else fail(peek(),"attributes require a function or struct declaration","E2002");
+         for(const auto& attribute:attributes){if(node->kind!=N::Function&&(attribute=="inline"||attribute=="noinline"||attribute=="entry"))fail(peek(),"function attribute used on a struct","E2002");node->text+=" @"+attribute;}
+         if(node->text.find(" @inline")!=std::string::npos&&node->text.find(" @noinline")!=std::string::npos)fail(peek(),"conflicting inline attributes","E2002");
+     }
+@@ -110,6 +110,9 @@
+         auto token=take();if(!function_depth_)fail(token,"defer requires a function scope","E2004");
+         node=make(N::Defer,token);node->add(expression());if(node->children[0]->kind!=N::Call)fail(token,"defer requires a function call","E2002");finish(*node);
+     }
++    else if(at(K::Async)){auto modifier=take();node=function(false,false);node->text+=" async";node->span.start_offset=modifier.span.start_offset;node->span.line=modifier.span.line;node->span.column=modifier.span.column;}
++    else if(at(K::Taskgroup)){auto token=take();if(!function_depth_)fail(token,"taskgroup requires a function scope","E2004");node=block();node->text="taskgroup";node->span.start_offset=token.span.start_offset;node->span.line=token.span.line;node->span.column=token.span.column;}
++    else if(at(K::Parallel)||at(K::Simd)){auto modifier=take();std::string mode=modifier.text;if(modifier.kind==K::Parallel&&accept(K::Simd))mode+=" simd";node=for_loop();node->text=mode;node->span.start_offset=modifier.span.start_offset;node->span.line=modifier.span.line;node->span.column=modifier.span.column;}
+     else if (at(K::Fn)) node = function(false, false);
+     else if (at(K::Struct)) node = structure(false);
+     else if (at(K::Interface)){if(function_depth_)fail(peek(),"interface requires module scope","E2002");node=interface_declaration(false);}
+@@ -117,7 +120,8 @@
+     else if (at(K::Match))node=match_statement();
+     else if (at(K::Pub)) {
+         auto modifier = take();
+-        if (at(K::Fn)) node = function(true, false);
++        if(accept(K::Async)){node=function(true,false);node->text+=" async";}
++        else if (at(K::Fn)) node = function(true, false);
+         else if (at(K::Struct)) node = structure(true);
+         else if(at(K::Interface))node=interface_declaration(true);
+         else if(at(K::Enum))node=enum_declaration(true);
+@@ -162,7 +166,7 @@
+         if (accept(K::As)) { auto alias = expect(K::Identifier, "expected import alias"); node->add(make(N::Name, alias, alias.text)); }
+         finish(*node);
+     } else {
+-        if ((reserved(peek().kind) && !at(K::True) && !at(K::False) && !at(K::Nil)) || at(K::At) || at(K::Question))
++        if ((reserved(peek().kind) && !at(K::True) && !at(K::False) && !at(K::Nil) && !at(K::Await) && !at(K::Spawn)) || at(K::At) || at(K::Question))
+             fail(peek(), "syntax `" + peek().text + "` is not implemented in Phase 1", "E2002");
+         node = make(N::ExpressionStatement, peek());
+         auto first=expression();
+@@ -353,7 +357,7 @@
+                 while (accept(K::Comma)) result->add(type());
+                 auto close = expect(K::Greater, "expected > after type arguments");
+                 if ((name.text == "Result" && result->children.size() > 2) ||
+-                    ((name.text=="ptr"||name.text=="ref"||name.text=="List") && result->children.size() != 1))
++                    ((name.text=="ptr"||name.text=="ref"||name.text=="List"||name.text=="Task") && result->children.size() != 1))
+                     fail(name, "incorrect number of type arguments", "E2006");
+                 result->span.end_offset = close.span.end_offset;
+             } else {
+@@ -504,8 +508,8 @@
+     Depth depth(depth_, peek().span);
+     if (multiline) newlines();
+     NodePtr left;
+-    if (at(K::Not) || at(K::BitNot) || at(K::Plus) || at(K::Minus) || at(K::BitAnd)) {
+-        auto op = take(); left = make(N::Unary, op, op.text);
++    if (at(K::Await) || at(K::Spawn) || at(K::Not) || at(K::BitNot) || at(K::Plus) || at(K::Minus) || at(K::BitAnd)) {
++        auto op = take();if((op.kind==K::Await||op.kind==K::Spawn)&&!function_depth_)fail(op,"await/spawn requires a function scope","E2004");left = make(N::Unary, op, op.text);
+         newlines(); left->add(expression(12, multiline)); finish(*left);
+     } else left = postfix(primary(multiline), multiline);
+     std::size_t operators = 0;
+--- a/src/module.cpp
++++ b/src/module.cpp
+@@ -125,7 +125,7 @@
+             if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
+             else {auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}
+         }else {
+-            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"))error(n->span,"reserved standard value type","E3002");
++            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
+             if(n->kind==N::MultiBinding){for(const auto& p:n->children[0]->children)if(p->text!="_")module.globals.emplace(p->text,module.prefix+p->text);}
+             if(n->kind==N::Function || n->kind==N::Struct || n->kind==N::Let || n->kind==N::Var || n->kind==N::Const) {
+                 auto name=declared_name(*n);module.globals.emplace(name,module.prefix+name);
+@@ -170,7 +170,7 @@
+         if(name.empty())return std::string{};
+         for(auto i=local_types.rbegin();i!=local_types.rend();++i)if(i->contains(name))return name;
+         if(auto linked=imported(name,span,true);!linked.empty())return linked;
+-        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer"};
++        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task"};
+         if(primitives.contains(name))return name;
+         if(auto found=module.globals.find(name);found!=module.globals.end())return found->second;
+         return module.prefix+name;
+@@ -200,7 +200,7 @@
+         if(n.kind==N::MultiAssignment) {
+             auto list=std::make_unique<Node>(N::BindingList,n.children[0]->span);for(const auto& t:n.children[0]->children)list->add(t->kind==N::Name&&t->text=="_"?std::make_unique<Node>(N::Name,t->span,"_"):rewrite(*t,false));out->add(std::move(list));out->add(rewrite(*n.children[1],false));return out;
+         }
+-        if(n.kind==N::TypeName || n.kind==N::StructLiteral || (n.kind==N::GenericType&&n.text!="map"&&n.text!="Result"&&n.text!="List"&&n.text!="ptr"&&n.text!="ref"))out->text=type(n.text,n.span);
++        if(n.kind==N::TypeName || n.kind==N::StructLiteral || (n.kind==N::GenericType&&n.text!="map"&&n.text!="Result"&&n.text!="List"&&n.text!="Task"&&n.text!="ptr"&&n.text!="ref"))out->text=type(n.text,n.span);
+         if(n.kind==N::Function) {
+             if(!top && !locals.empty())locals.back().insert(declared_name(n));
+             if(top)out->text=module.prefix+n.text;
+--- a/src/lowering.cpp
++++ b/src/lowering.cpp
+@@ -1,4 +1,5 @@
+ #include "hua/lowering.hpp"
++#include "hua/concurrency_lowering.hpp"
+ #include "hua/value.hpp"
+ #include <functional>
+ #include <map>
+@@ -320,5 +321,5 @@
+   }
+   program.children = std::move(out);
+ }
+-void lower_language(Node &program) { Lower{program}.run(); }
++void lower_language(Node &program) {lower_concurrency(program);Lower{program}.run();}
+ } // namespace hua
+--- a/src/concurrency_lowering.cpp
++++ b/src/concurrency_lowering.cpp
+@@ -25,6 +25,7 @@
+             std::vector<NodePtr> out;
+             for(auto& p:n.children){walk(*p);
+                 if(p->kind==N::Function&&p->text.find(" async")!=std::string::npos){
++                    if(!p->children.empty()&&p->children[0]->kind==N::GenericParameters)bad(*p,"async generics require explicit specialization support in a later revision");
+                     auto body_name="$async$"+std::to_string(serial++)+"$"+declared_name(*p);
+                     auto wrapper=node(N::Function,*p,p->text);auto async_at=wrapper->text.find(" async");wrapper->text.erase(async_at,6);
+                     std::string result="void";const Node* returns=nullptr;
+@@ -35,7 +36,10 @@
+                     auto flags=p->text.substr(p->text.find(' '));auto at=flags.find(" async");flags.erase(at,6);auto attr=flags.find(" @");if(attr!=std::string::npos)flags.erase(attr);p->text=body_name+flags;
+                     out.push_back(std::move(p));out.push_back(std::move(wrapper));
+                 }else out.push_back(std::move(p));
+-            }n.children=std::move(out);return;
++            }n.children=std::move(out);
++            if(n.kind==N::Block&&n.text=="taskgroup"){
++                auto name="$taskgroup$"+std::to_string(serial++);auto start=node(N::Let,n,name);start->add(call(n,"task_group_begin"));auto deferred=node(N::Defer,n);auto end=call(n,"task_group_end");end->add(node(N::Name,n,name));deferred->add(std::move(end));n.children.insert(n.children.begin(),std::move(deferred));n.children.insert(n.children.begin(),std::move(start));n.text="";
++            }return;
+         }
+         if(n.kind==N::For&&(n.text=="parallel"||n.text=="simd"||n.text=="parallel simd")){
+             if(n.children.size()!=3||n.children[1]->kind!=N::Range)bad(n,"parallel/SIMD requires one index binding and a range");
+@@ -43,7 +47,7 @@
+             if(body.children.size()!=1||body.children[0]->kind!=N::ExpressionStatement||body.children[0]->children[0]->kind!=N::Assignment)bad(body,"parallel/SIMD kernel requires one independent array assignment");
+             auto& assignment=*body.children[0]->children[0];auto& target=*assignment.children[0];
+             if(assignment.text!="="||target.kind!=N::Index||target.children[0]->kind!=N::Name||target.children[1]->kind!=N::Name||target.children[1]->text!=index||!kernel(*assignment.children[1],index))bad(assignment,"parallel/SIMD requires out[i] = pure numeric expression with only input[i] reads");
+-            if(n.text=="simd"){n.text="";for(auto& c:n.children)walk(*c);return;}
++            if(n.text=="simd"){auto block=node(N::Block,n),check=node(N::ExpressionStatement,n),validate=call(n,"simd_check");validate->add(clone(*target.children[0]));check->add(std::move(validate));block->add(std::move(check));auto loop=clone(n);loop->text="";block->add(std::move(loop));n=std::move(*block);for(auto& c:n.children)walk(*c);return;}
+             auto serial_name=std::to_string(serial++),name="$parallel$"+serial_name,results="$parallel_results$"+serial_name,slot="$parallel_slot$"+serial_name;
+             auto block=node(N::Block,n),fn=node(N::Function,n,name),param=node(N::Parameter,n,index);param->add(node(N::TypeName,n,"int"));fn->add(std::move(param));
+             auto fnbody=node(N::Block,n),ret=node(N::Return,n);ret->add(clone(*assignment.children[1]));fnbody->add(std::move(ret));fn->add(std::move(fnbody));block->add(std::move(fn));
+--- a/src/runtime.cpp
++++ b/src/runtime.cpp
+@@ -1,14 +1,19 @@
+ #include "hua/runtime.hpp"
++#include "hua/tasks.hpp"
+ #include <charconv>
+ #include <cmath>
+ #include <ostream>
+ namespace hua {
+ using I=std::int64_t;
+ const std::unordered_set<std::string>& builtin_names() {
+-    static const std::unordered_set<std::string> names=[] {std::unordered_set<std::string> out={"print","str","int","float","len","clone","sqrt","min","max","abs","clamp","type","has","delete","ok","err","is_ok","is_err","unwrap","unwrap_err","unwrap_or","is_some","is_none","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","sizeof","alignof"};for(const auto& f:standard_functions())out.insert(standard_name(f));return out;}();return names;
++    static const std::unordered_set<std::string> names=[] {std::unordered_set<std::string> out={"print","str","int","float","len","clone","sqrt","min","max","abs","clamp","type","has","delete","ok","err","is_ok","is_err","unwrap","unwrap_err","unwrap_or","is_some","is_none","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","sizeof","alignof","task_start","task_await","task_group_begin","task_group_end","parallel_map","simd_check"};for(const auto& f:standard_functions())out.insert(standard_name(f));return out;}();return names;
+ }
+ Value invoke_builtin(const std::string& name,const std::vector<Value>& args,const SourceSpan& span,std::ostream& output,const std::vector<bool>& contextual,const std::string& result_type,RuntimeContext* context) {
+     for(const auto& a:args)if(std::holds_alternative<MultiValue>(a.data))runtime_error(span,"multiple values require positional binding","E4003");
++    if(name=="task_await"){if(args.size()!=1||!context||!context->tasks)runtime_error(span,"invalid task await","E4103");return context->tasks->await(args[0],span);}
++    if(name=="task_group_begin"){if(!args.empty()||!context||!context->tasks)runtime_error(span,"invalid taskgroup","E4103");return Value(static_cast<I>(context->tasks->begin_group()));}
++    if(name=="task_group_end"){if(args.size()!=1||!context||!context->tasks)runtime_error(span,"invalid taskgroup","E4103");context->tasks->end_group(static_cast<std::size_t>(as_int(args[0],span)),span);return {};}
++    if(name=="simd_check"){if(args.size()!=1)runtime_error(span,"invalid SIMD metadata","E4104");auto array=std::get_if<SliceValue>(&args[0].data);if(!array||!numeric_spec(array->element_type))runtime_error(span,"SIMD requires a numeric array","E4104");return {};}
+     if(auto standard=standard_function(name))return invoke_standard(*standard,args,span,output,context);
+     auto arity=(name=="min"||name=="max"||name=="has"||name=="delete"||name=="unwrap_or")?2u:name=="clamp"?3u:1u;
+     if(name!="print" && args.size()!=arity)runtime_error(span,"builtin argument count mismatch","E4003");
+--- a/src/sema.cpp
++++ b/src/sema.cpp
+@@ -54,13 +54,13 @@
+     if(!scopes_.back().emplace(name,std::move(symbol)).second)throw Diagnostic("E3002",span,"duplicate declaration `"+name+"` in this scope");
+ }
+ void SemanticAnalyzer::validate_type(const Node& n) {
+-    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer"};
++    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task"};
+     if(n.kind==N::TypeName&&n.text.empty())return;
+     if(n.kind==N::TypeName && !types.contains(n.text) && !model_.structures.contains(n.text)) {
+         if(n.text.find('.')==std::string::npos)error(n,"unknown type `"+n.text+"`","E3004");
+         auto prefix=n.text.substr(0,n.text.find('.'));lookup(prefix,n.span);
+     }
+-    if(n.kind==N::TypeName&&n.text=="List")error(n,"List requires an element type","E3004");
++    if(n.kind==N::TypeName&&(n.text=="List"||n.text=="Task"))error(n,"List requires an element type","E3004");
+     if(n.kind==N::GenericType&&n.text=="List"&&type_name(*n.children[0])=="void")error(n,"List elements cannot be void","E3004");
+     if(n.kind==N::GenericType && n.text=="map") {
+         auto key=type_name(*n.children[0]);if(key!="bool"&&key!="int"&&key!="string")error(n,"map keys require bool/int/string","E3004");
+@@ -411,12 +411,33 @@
+             out={result_type(*fn),model_.return_writable.contains(key)&&model_.return_writable.at(key)};
+         } else if(callee.type.starts_with("builtin:")) {
+             auto name=callee.type.substr(8);
++            if(name=="task_start"){
++                if(args.empty()||!args[0].type.starts_with("fn:"))error(n,"spawn requires a Hua function","E3004");
++                auto fn=model_.functions.at(args[0].type.substr(3));auto ps=parameters(*fn);if(ps.size()+1!=args.size())error(n,"spawn argument count mismatch","E3005");
++                if(fn->text.find(" external")!=std::string::npos||fn->text.find(" unsafe")!=std::string::npos)error(n,"Native/WASM functions cannot be spawned","E3008");
++                for(std::size_t i=0;i<ps.size();++i){if(mutable_parameter(*ps[i]))error(n,"spawn cannot pass mutable borrows","E3003");if(!ps[i]->children.empty())require(type_name(*ps[i]->children[0]),args[i+1],*n.children[i+2]);}
++                auto r=result_type(*fn);out={r.starts_with("Task<")?r:"Task<"+(r.empty()?"void":r)+">",false};break;
++            }
++            if(name=="task_await"){if(args.size()!=1)error(n,"await requires one task","E3005");auto types=type_arguments(args[0].type,"Task");if(types.size()!=1)error(n,"await requires Task<T>","E3004");out={types[0],true};break;}
++            if(name=="task_group_begin"){if(!args.empty())error(n,"invalid taskgroup start","E3005");out={"int",false};break;}
++            if(name=="task_group_end"){if(args.size()!=1)error(n,"invalid taskgroup end","E3005");require("int",args[0],*n.children[1]);out={"void",false};break;}
++            if(name=="simd_check"||name=="parallel_map"){
++                if(args.size()!=(name=="simd_check"?1u:6u))error(n,"invalid parallel/SIMD metadata","E3005");auto type=args[name=="simd_check"?0:4].type;auto element=element_type(type);
++                if(!type.empty()&&(!type.starts_with('[')||!numeric_spec(element)))error(n,"parallel/SIMD requires a numeric array","E3004");
++                if(name=="parallel_map"){if(!args[0].type.starts_with("fn:"))error(n,"parallel requires a Hua kernel","E3004");for(std::size_t i=1;i<=3;++i)require("int",args[i],*n.children[i+1]);require("bool",args[5],*n.children[6]);}
++                out={name=="parallel_map"?"[]"+element:"void",true};break;
++            }
+             if(auto f=standard_function(name)){
+                 if(args.size()!=f->parameters.size())error(n,"standard function argument count mismatch","E3005");
+                 std::vector<std::string> types;for(const auto& a:args)types.push_back(a.type);
+                 if(f->module=="list"&&!types.empty()&&!types[0].empty()){
+                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
+                     else if(type_arguments(types[0],"List").size()!=1)error(n,"expected List<T>","E3004");
++                }
++                if(f->module=="task"&&f->name!="sleep"&&f->name!="yield"&&f->name!="worker_id"){
++                    auto task=type_arguments(types[0],"Task");if(task.size()!=1)error(n,"expected Task<T>","E3004");
++                    if((f->name=="timeout"||f->name=="all")&&task[0]=="void")error(n,"this operation requires a value task","E3004");
++                    if((f->name=="all"||f->name=="race")&&types[0]!=types[1])error(n,"task combination requires identical Task<T> types","E3004");
+                 }
+                 auto signature=standard_signature(*f,types);
+                 for(std::size_t i=0;i<args.size();++i){
+--- a/src/stdlib.cpp
++++ b/src/stdlib.cpp
+@@ -1,4 +1,5 @@
+ #include "hua/stdlib.hpp"
++#include "hua/tasks.hpp"
+ #include "hua/json.hpp"
+ #include <algorithm>
+ #include <fstream>
+@@ -15,6 +16,19 @@
+ }
+ const std::vector<StandardFunction>& standard_functions() {
+     static const std::vector<StandardFunction> functions={
++        {"gc","collect",{},"int",false,false,6},
++        {"gc","live",{},"int",false,false,6},
++        {"gc","allocated",{},"int",false,false,6},
++        {"gc","collected",{},"int",false,false,6},
++        {"task","sleep",{"int"},"void",false,false,6},
++        {"task","yield",{},"void",false,false,6},
++        {"task","worker_id",{},"string",false,false,6},
++        {"task","cancel",{""},"bool",false,false,6},
++        {"task","done",{""},"bool",false,false,6},
++        {"task","state",{""},"string",false,false,6},
++        {"task","timeout",{"","int"},"",false,true,6},
++        {"task","all",{"",""},"",false,true,6},
++        {"task","race",{"",""},"",false,true,6},
+         {"os","args",{},"[]string"},
+         {"os","cwd",{},"Result<string,string>"},
+         {"io","read_line",{},"Result<string?,string>"},
+@@ -106,6 +120,8 @@
+     std::vector<std::string> types;for(const auto& v:input)types.push_back(value_type(v));auto signature=standard_signature(f,types);
+     std::vector<Value> args;for(std::size_t i=0;i<input.size();++i){if(signature.parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(signature.parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],signature.parameters[i],s));}
+     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data))writable=p->writable;if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
++    if(f.module=="gc"){auto& heap=managed_heap();return Value(static_cast<I>(f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected()));}
++    if(f.module=="task")return task_standard(f.name,args,s,context);
+     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
+     if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);
+     auto result=type_arguments(f.result,"Result");std::string success=result.empty()?"":result[0];
+--- a/src/binary_stdlib.cpp
++++ b/src/binary_stdlib.cpp
+@@ -10,7 +10,14 @@
+ std::string item_type(const std::string& type){auto items=type_arguments(type,"List");return items.size()==1?items[0]:"";}
+ }
+ StandardSignature standard_signature(const StandardFunction& f,const std::vector<std::string>& types){
+-    StandardSignature out{f.parameters,f.result};if(f.module!="list"||types.empty())return out;
++    StandardSignature out{f.parameters,f.result};
++    if(f.module=="task"&&!types.empty()){
++        auto task=type_arguments(types[0],"Task");if(task.size()==1){out.parameters[0]=types[0];if(f.name=="all"||f.name=="race")out.parameters[1]=types[0];
++            if(f.name=="timeout")out.result="Result<"+task[0]+",string>";
++            if(f.name=="all")out.result="Task<[]"+task[0]+">";
++            if(f.name=="race")out.result=types[0];}return out;
++    }
++    if(f.module!="list"||types.empty())return out;
+     if(f.name=="from_slice"){auto end=types[0].find(']');auto element=types[0].starts_with('[')&&end!=std::string::npos?types[0].substr(end+1):"";out.result=element.empty()?"":"List<"+element+">";return out;}
+     auto element=item_type(types[0]);out.parameters[0]=element.empty()?"":"List<"+element+">";
+     if(f.name=="append")out.parameters[1]=element;
+--- a/include/hua/interpreter.hpp
++++ b/include/hua/interpreter.hpp
+@@ -36,6 +36,9 @@
+     Value evaluate(const Node& node);
+     Location locate(const Node& node);
+     Value call(const Callable& callable, const std::vector<Value>& args, const Node& site);
++    Value isolated(const Value& value,unsigned depth=0);
++    Value launch(const Callable&,const std::vector<Value>&,const Node&,std::vector<std::int64_t> batch={},std::string element={});
++    Value parallel(const std::vector<Value>&,const Node&);
+     Value builtin(const std::string& name, const std::vector<Value>& args, const Node& site);
+     void bind(const std::string& name, Value value, std::string type, bool mutable_binding, const SourceSpan& span);
+ };
+--- a/src/interpreter.cpp
++++ b/src/interpreter.cpp
+@@ -1,6 +1,7 @@
+ #include <exception>
+ #include "hua/interpreter.hpp"
+ #include "hua/runtime.hpp"
++#include "hua/tasks.hpp"
+ #include <algorithm>
+ #include <charconv>
+ #include <cmath>
+@@ -24,7 +25,7 @@
+     for(auto env=this;env;env=env->parent)if(auto found=env->bindings.find(name);found!=env->bindings.end())return found->second;
+     runtime_error(span,"name `"+name+"` is not initialized","E4001");
+ }
+-void Interpreter::tick(const Node& n) {if(++steps_>1000000)runtime_error(n.span,"execution step limit exceeded (1000000)","E4099");}
++void Interpreter::tick(const Node& n) {task_checkpoint(context_,n.span);if(++steps_>1000000)runtime_error(n.span,"execution step limit exceeded (1000000)","E4099");}
+ void Interpreter::bind(const std::string& name,Value value,std::string type,bool mutable_binding,const SourceSpan& span) {
+     if(std::holds_alternative<MultiValue>(value.data))runtime_error(span,"multiple values require positional binding","E4003");
+     if(type.empty())type=value_type(value);
+@@ -34,13 +35,16 @@
+         runtime_error(span,"duplicate runtime binding `"+name+"`","E4001");
+ }
+ void Interpreter::run(const Node& program) {
+-    TypeRelationScope relation_scope(model_.relations);
++    ExecutionScope execution(context_,output_);TypeRelationScope relation_scope(model_.relations);
+     if(model_.external)model_.external->reset();
+     steps_=0;calls_=0;global_.bindings.clear();builtins_.bindings.clear();builtins_.parent=nullptr;global_.parent=&builtins_;environment_=&global_;
+     for(const auto& name:builtin_names()){builtins_.bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),"builtin:"+name,false});builtins_.bindings.emplace("$core$"+name,Binding{Value(Callable{nullptr,name,{}}),"builtin:"+name,false});}
+     for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_.bindings.insert_or_assign(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
+-    for(const auto& n:program.children)if(n->kind!=N::Function && n->kind!=N::Struct)execute(*n);
+-    if(auto found=model_.functions.find("main");found!=model_.functions.end())call(Callable{found->second,"",{}},{},*found->second);
++    try{
++        for(const auto& n:program.children)if(n->kind!=N::Function && n->kind!=N::Struct)execute(*n);
++        if(auto found=model_.functions.find("main");found!=model_.functions.end()){auto result=call(Callable{found->second,"",{}},{},*found->second);if(std::holds_alternative<TaskValue>(result.data))context_->tasks->await(result,found->second->span);}
++        execution.finish();global_.bindings.clear();builtins_.bindings.clear();
++    }catch(...){global_.bindings.clear();builtins_.bindings.clear();throw;}
+ }
+ void Interpreter::block(const Node& n,bool scope) {
+     Environment local{environment_,{}};Restore guard(environment_,scope?&local:environment_);
+@@ -56,7 +60,7 @@
+     return Callable{&function,"",{},captured};
+ }
+ void Interpreter::drain(Environment& env){
+-    auto deferred=std::move(env.deferred);env.deferred.clear();std::exception_ptr first;
++    Restore cleanup(context_->cleanup,true);auto deferred=std::move(env.deferred);env.deferred.clear();std::exception_ptr first;
+     for(auto i=deferred.rbegin();i!=deferred.rend();++i)try{call(i->callable,i->arguments,*i->site);}catch(...){if(!first)first=std::current_exception();}
+     if(first)std::rethrow_exception(first);
+ }
+@@ -219,6 +223,7 @@
+     if(!callable.builtin.empty())return builtin(callable.builtin,args,site);
+     const auto& fn=*callable.function;auto name=declared_name(fn);
+     if(fn.text.find(" external")!=std::string::npos) {
++        if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");
+         std::vector<bool> contextual;for(std::size_t i=1;i<site.children.size();++i)contextual.push_back(contextual_literal(*site.children[i]));
+         return model_.external->call(name,args,contextual,site.span);
+     }
+@@ -249,6 +254,8 @@
+     return enforce_return(std::move(result),fn,site.span,contextual);
+ }
+ Value Interpreter::builtin(const std::string& name,const std::vector<Value>& args,const Node& site) {
++    if(name=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=Node(NodeKind::Call,site.span);for(std::size_t i=1;i<site.children.size();++i)nested.add(std::make_unique<Node>(site.children[i]->kind,site.children[i]->span,site.children[i]->text));return launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested);}
++    if(name=="parallel_map")return parallel(args,site);
+     std::vector<bool> contextual;for(std::size_t i=1;i<site.children.size();++i)contextual.push_back(contextual_literal(*site.children[i]));auto inferred=model_.types.find(&site);return invoke_builtin(name,args,site.span,output_,contextual,inferred==model_.types.end()?"":inferred->second,context_);
+ }
+ }
+--- a/include/hua/vm.hpp
++++ b/include/hua/vm.hpp
+@@ -44,10 +44,14 @@
+     std::vector<Entry> stack_;
+     std::vector<Frame> frames_;
+     std::size_t steps_{};
++    std::optional<Value> completed_;
+     Value pop(const SourceSpan& span);
+     std::vector<Value> arguments(std::size_t count, const SourceSpan& span);
+     void bind(const Instruction& op, Value value);
+     void call(const Callable& callable, const std::vector<Value>& args, const Instruction& site);
++    Value isolated(const Value& value,unsigned depth=0);
++    Value launch(const Callable&,const std::vector<Value>&,const Instruction&,std::vector<std::int64_t> batch={},std::string element={});
++    Value parallel(const std::vector<Value>&,const Instruction&);
+     void dispatch(std::size_t stop_depth=0);
+     void drain(const std::shared_ptr<Environment>& env);
+     void cleanup_error();
+--- a/src/vm.cpp
++++ b/src/vm.cpp
+@@ -1,6 +1,7 @@
+ #include <exception>
+ #include "hua/vm.hpp"
+ #include "hua/runtime.hpp"
++#include "hua/tasks.hpp"
+ #include <limits>
+ #include <unordered_set>
+ namespace hua {
+@@ -34,7 +35,7 @@
+         runtime_error(op.span,"duplicate runtime binding `"+op.text+"`","E4001");
+ }
+ void VirtualMachine::run(const Bytecode& bytecode) {
+-    TypeRelationScope relation_scope(model_.relations);
++    ExecutionScope execution(context_,output_);TypeRelationScope relation_scope(model_.relations);
+     if(model_.external)model_.external->reset();
+     bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();
+     auto builtins=managed<Environment>();global_=managed<Environment>();global_->parent=builtins;
+@@ -42,17 +43,20 @@
+         {builtins->bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
+          builtins->bindings.emplace(std::string("$core$")+name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});}
+     for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_->bindings.emplace(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
+-    frames_.push_back({&bytecode.initializer,nullptr,0,0,{},global_,{}});try{dispatch();}catch(...){auto original=std::current_exception();cleanup_error();global_->bindings.clear();std::rethrow_exception(original);}
++    frames_.push_back({&bytecode.initializer,nullptr,0,0,{},global_,{}});try{dispatch();}catch(...){auto original=std::current_exception();cleanup_error();global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();std::rethrow_exception(original);}
+     if(auto main=model_.functions.find("main");main!=model_.functions.end()) {
+-        Instruction site{};site.span=main->second->span;call(Callable{main->second,"",{}},{},site);if(frames_.empty())stack_.clear();else try{dispatch();}catch(...){auto original=std::current_exception();cleanup_error();global_->bindings.clear();std::rethrow_exception(original);}
+-    }
+-    global_->bindings.clear();
++        Instruction site{};site.span=main->second->span;call(Callable{main->second,"",{}},{},site);if(frames_.empty())stack_.clear();else try{dispatch();}catch(...){auto original=std::current_exception();cleanup_error();global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();std::rethrow_exception(original);}
++    }
++    try{if(completed_&&std::holds_alternative<TaskValue>(completed_->data))context_->tasks->await(*completed_,{});execution.finish();}catch(...){global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();throw;}
++    global_->bindings.clear();completed_.reset();
+ }
+ void VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
++    if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));return;}
++    if(callable.builtin=="parallel_map"){stack_.emplace_back(parallel(args,site));return;}
+     if(!callable.builtin.empty()){stack_.emplace_back(invoke_builtin(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));return;}
+     if(!callable.function)invalid(site.span);
+     const auto& fn=*callable.function;auto key=declared_name(fn);
+-    if(fn.text.find(" external")!=std::string::npos){stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));return;}
++    if(fn.text.find(" external")!=std::string::npos){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));return;}
+     if(fn.text.find(" unsafe")!=std::string::npos)runtime_error(site.span,"unsafe function execution/FFI is not implemented","E4008");
+     const auto user_calls=frames_.size()-(!frames_.empty() && !frames_.front().function?1:0);
+     if(user_calls>=128)runtime_error(site.span,"function call depth limit exceeded (128)","E4099");
+@@ -77,9 +81,10 @@
+ void VirtualMachine::finish_return(Value value,const Instruction& op,bool early) {
+     auto f=frames_.back();
+     for(auto env=f.environment;env&&env!=global_;env=env->parent)drain(env);if(!f.function)drain(global_);if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),*f.function,f.site,op.flag);
+-    auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);if(!frames_.empty())stack_.emplace_back(copy_value(value));
++    auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);if(!frames_.empty())stack_.emplace_back(copy_value(value));else completed_=copy_value(value);
+ }
+ void VirtualMachine::drain(const std::shared_ptr<Environment>& env){
++    struct Cleanup {bool& flag;bool previous;Cleanup(bool& f):flag(f),previous(f){flag=true;}~Cleanup(){flag=previous;}} cleanup(context_->cleanup);
+     auto deferred=std::move(env->deferred);env->deferred.clear();std::exception_ptr first;
+     for(auto i=deferred.rbegin();i!=deferred.rend();++i){auto depth=frames_.size(),base=stack_.size();try{call(i->callable,i->arguments,i->site);dispatch(depth);}catch(...){if(!first)first=std::current_exception();while(frames_.size()>depth){auto environment=frames_.back().environment;for(auto e=environment;e&&e!=env&&e!=global_;e=e->parent)try{drain(e);}catch(...){}frames_.pop_back();}}stack_.resize(base);}
+     if(first)std::rethrow_exception(first);
+@@ -92,7 +97,7 @@
+     while(frames_.size()>stop_depth) {
+         auto& f=frames_.back();if(f.pc>=f.code->instructions.size())invalid(f.site);
+         const auto& op=f.code->instructions[f.pc++];const auto& s=op.span;
+-        if(++steps_>1000000)runtime_error(s,"execution step limit exceeded (1000000)","E4099");
++        task_checkpoint(context_,s);if(++steps_>1000000)runtime_error(s,"execution step limit exceeded (1000000)","E4099");
+         switch(op.op) {
+         case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});stack_.emplace_back(Value(Callable{fn->second,"",{},captured}));break;}
+         case Op::Defer:{auto args=arguments(op.argument,s);auto value=pop(s);auto fn=std::get_if<Callable>(&value.data);if(!fn)runtime_error(s,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(arg);f.environment->deferred.push_back({*fn,std::move(args),op});break;}
+--- a/src/task_engines.cpp
++++ b/src/task_engines.cpp
+@@ -89,7 +89,7 @@
+     return context_->tasks->start([model,bytecode,globals,fn,values=std::move(values),site,batch=std::move(batch),element](RuntimeContext& context,std::ostream& output)mutable{
+         VirtualMachine child(*model,output,&context);ExecutionScope execution(child.context_,output);TypeRelationScope relations(model->relations);child.bytecode_=bytecode;child.global_=globals;
+         auto attach=[&](const Callable& f){if(f.closure)std::static_pointer_cast<Environment>(f.closure)->parent=child.global_;};attach(fn);for(auto& [_,b]:globals->bindings)if(auto f=std::get_if<Callable>(&b.value.data))attach(*f);
+-        auto invoke=[&](const std::vector<Value>& args){child.call(fn,args,site);child.dispatch();if(child.stack_.size()!=1)runtime_error(site.span,"invalid task return stack","E6001");return child.pop(site.span);};
++        auto invoke=[&](const std::vector<Value>& args){child.call(fn,args,site);child.dispatch();if(!child.completed_)runtime_error(site.span,"invalid task return stack","E6001");auto result=std::move(*child.completed_);child.completed_.reset();return result;};
+         Value result;
+         try{if(element.empty())result=invoke(values);else{auto storage=managed<std::vector<Value>>();for(auto i:batch){task_checkpoint(child.context_,site.span);storage->push_back(enforce_type(invoke({Value(i)}),element,site.span));}result=Value(SliceValue{storage,0,storage->size(),true,element});}
+             transferable(result);execution.finish();globals->bindings.clear();return result;
+--- a/src/archive.cpp
++++ b/src/archive.cpp
+@@ -83,7 +83,7 @@
+     for(std::size_t j=0;j<count;++j) {
+         auto kind=r.u8();if(kind>static_cast<unsigned>(r.format==1?Op::ExternalInit:r.format<5?Op::CheckIndex:Op::Defer))bad(r.site,"unknown opcode");Instruction op{};op.op=static_cast<Op>(kind);op.span=sources.read(r);
+         op.text=r.str();small_name(op.text,r.site,true);
+-        auto intrinsic=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(op.op==Op::Load&&intrinsic.starts_with("$std$")&&(!standard_function(intrinsic)||r.format<standard_function(intrinsic)->since))bad(r.site,"unsupported standard library reference");op.type=r.str();type_string(op.type,r.site);op.argument=r.u32();op.target=r.u32();op.flag=r.boolean();op.constant=value(r);
++        auto intrinsic=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(op.op==Op::Load&&intrinsic.starts_with("$std$")&&(!standard_function(intrinsic)||r.format<standard_function(intrinsic)->since))bad(r.site,"unsupported standard library reference");if(op.op==Op::Load&&r.format<6&&(intrinsic=="task_start"||intrinsic=="task_await"||intrinsic=="task_group_begin"||intrinsic=="task_group_end"||intrinsic=="parallel_map"||intrinsic=="simd_check"))bad(r.site,"unsupported concurrency intrinsic");op.type=r.str();type_string(op.type,r.site);op.argument=r.u32();op.target=r.u32();op.flag=r.boolean();op.constant=value(r);
+         auto names=r.count(4096);for(std::size_t i=0;i<names;++i){auto n=r.str();small_name(n,r.site);op.names.push_back(std::move(n));}
+         auto flags=r.count(4096);for(std::size_t i=0;i<flags;++i)op.contextual.push_back(r.boolean());c.instructions.push_back(std::move(op));
+     }
+@@ -201,7 +201,7 @@
+         for(const auto& e:m.exports){w.str(e.name);w.str(e.linked_name);w.str(e.result);w.count(e.parameters.size());for(const auto& t:e.parameters)w.str(t);}
+     }
+     code(w,b.initializer,src);w.count(b.functions.size());for(const auto& [name,n]:functions)if(auto c=b.functions.find(n);c!=b.functions.end())code(w,c->second,src);
+-    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(5);header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
++    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(6);header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
+     auto tmp=path;std::random_device random;tmp+=".tmp-"+std::to_string(random())+"-"+std::to_string(random());
+     try {
+         std::ofstream out(tmp,std::ios::binary|std::ios::trunc);if(!out)throw std::runtime_error("cannot create .huab output");out.write(header.bytes.data(),header.bytes.size());out.write(w.bytes.data(),w.bytes.size());out.flush();if(!out)throw std::runtime_error("failed to write complete .huab output");out.close();
+@@ -216,7 +216,7 @@
+     std::ifstream in(path,std::ios::binary|std::ios::ate);SourceSpan site{utf8(path),0,0,1,1};if(!in)bad(site,"cannot read file");auto size=in.tellg();if(size<32||size>static_cast<std::streamoff>(max_file))bad(site,"file size is outside 32 bytes..128 MiB");
+     std::string data(static_cast<std::size_t>(size),'\0');in.seekg(0);if(!in.read(data.data(),size))bad(site,"truncated file");
+     if(data.substr(0,8)!="HUAB\r\n\x1a\n")bad(site,"magic header mismatch");Reader header{std::string_view(data).substr(8,24),0,site};
+-    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
++    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
+     if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site,format};BytecodeImage image;
+     auto source_count=r.count(128);if(!source_count)bad(site,"missing source table");std::size_t text_bytes=0;
+     for(std::size_t i=0;i<source_count;++i){auto file=r.str(),text=r.str();if(file.empty()||file.size()>16384||file.find('\0')!=std::string::npos)bad(site,"invalid source id");text_bytes+=text.size();if(text_bytes>64*1024*1024)bad(site,"source table exceeds 64 MiB");auto source=std::make_unique<Source>(file,std::move(text));if(image.source(file))bad(site,"duplicate source id");image.sources.push_back(std::move(source));}
+--- a/tests/archive_extension_tests.py
++++ b/tests/archive_extension_tests.py
+@@ -72,7 +72,7 @@
+             assert not artifact.exists();continue
+         run("build",entry)
+         assert artifact.read_bytes()[:8]==b"HUAB\r\n\x1a\n"
+-        assert struct.unpack_from("<II",artifact.read_bytes(),8)==(5,1)
++        assert struct.unpack_from("<II",artifact.read_bytes(),8)==(6,1)
+         entry.unlink()
+         run("check",artifact,output="OK\n")
+         if expected=="OK":run("run",artifact,output=stdout)

@@ -1,0 +1,5 @@
+struct Failure { code int }
+fn fail() Result<int,Failure> { return err(Failure{code:7}) }
+fn work() Result<string,Failure> { let n=fail()?
+return ok(str(n)) }
+print(unwrap_err(work()).code)

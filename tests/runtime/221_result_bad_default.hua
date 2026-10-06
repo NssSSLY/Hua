@@ -1,0 +1,2 @@
+let r Result<int> = ok(3)
+print(unwrap_or(r,"bad"))

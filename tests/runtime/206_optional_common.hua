@@ -1,0 +1,9 @@
+fn find(n int) int? { if n<0 { return nil }
+return n }
+fn use(n int) {
+let x=find(n)
+if x!=nil && x>=0 { print(x+1) } else { print("none") }
+print(is_some(x),is_none(x),unwrap_or(x,9))
+}
+use(4)
+use(-1)

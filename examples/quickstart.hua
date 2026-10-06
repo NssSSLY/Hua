@@ -1,0 +1,14 @@
+# Hua 入门：函数、循环、变量和除法
+fn add(a int, b int) int {
+    return a + b
+}
+
+fn main() {
+    var total = 0
+    for i in 0..5 {
+        total += i
+    }
+    print("Hua", add(20, 22))
+    print(total)
+    print(7 / 2, 7 // 2, 7 % 2)
+}

@@ -1,0 +1,3 @@
+var m=map[string]map[int]int{"outer":map[int]int{1:8}}
+let inner=unwrap(m["outer"])
+print(unwrap(inner[1]))

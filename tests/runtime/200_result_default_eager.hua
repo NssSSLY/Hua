@@ -1,0 +1,3 @@
+fn fallback() int { print("fallback")
+return 7 }
+print(unwrap_or(ok(3),fallback()))

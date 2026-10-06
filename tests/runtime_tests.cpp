@@ -3,6 +3,7 @@
 #include "hua/interpreter.hpp"
 #include "hua/vm.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -18,6 +19,7 @@ int main(){
         for(const auto& f:std::filesystem::directory_iterator(HUA_RUNTIME_TEST_ROOT))if(f.path().extension()==".hua")fixtures.push_back(f.path());
         std::sort(fixtures.begin(),fixtures.end());
         for(const auto& p:fixtures)for(bool vm:{false,true}){
+            if(std::getenv("HUA_TEST_TRACE"))std::cerr<<p.filename().string()<<" "<<(vm?"VM":"Interpreter")<<std::endl;
             auto ep=p;ep.replace_extension(".expect");auto expectation=read(ep);std::istringstream expected(expectation);std::string header;std::getline(expected,header);
             auto output_path=p;output_path.replace_extension(".stdout");auto wanted=std::filesystem::exists(output_path)?read(output_path):"";
             std::ostringstream output;bool checked=false;

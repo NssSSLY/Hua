@@ -15,6 +15,7 @@ public:
 private:
     struct Module {
         enum class State { Loading, Loaded } state{State::Loading};
+        bool standard{};
         std::filesystem::path path;
         std::string prefix;
         std::unique_ptr<Source> source;
@@ -33,5 +34,6 @@ private:
     Module& visit(const std::filesystem::path& path, const SourceSpan& site, bool entry = false);
     std::filesystem::path resolve(const std::string& name, const SourceSpan& site) const;
     NodePtr link(Module& module);
+    Module& standard(const std::string& name,const SourceSpan& site);
 };
 }

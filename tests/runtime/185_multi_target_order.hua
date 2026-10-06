@@ -1,0 +1,7 @@
+var a=[10,20]
+fn index() int { print("lhs")
+return 0 }
+fn value() int { print("rhs")
+return 30 }
+a[index()],a[1]=a[1],value()
+print(a)

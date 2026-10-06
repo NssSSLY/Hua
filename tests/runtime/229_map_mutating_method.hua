@@ -1,0 +1,5 @@
+struct Cache { entries map[string]int }
+fn Cache.clear() { delete(self.entries,"x") }
+var c=Cache{entries:map[string]int{"x":1}}
+c.clear()
+print(c.entries.len)

@@ -1,0 +1,27 @@
+import std.bytes as bytes
+import std.buffer as buffer
+import std.list as list
+import std.fs as fs
+import std.os as os
+
+fn main() {
+    var words=list.from_slice(["Hua"])
+    unwrap(list.append(words,"bootstrap"))
+    let snapshot=list.snapshot(words)
+    unwrap(list.append(words,"ready"))
+    print(snapshot,list.snapshot(words))
+    var out=buffer.new()
+    unwrap(buffer.write_text(out,"HUAB"))
+    unwrap(buffer.write_u32_le(out,4))
+    unwrap(buffer.write_u8(out,255))
+    unwrap(buffer.write_i64_le(out,-1))
+    let data=buffer.bytes(out)
+    let args=os.args()
+    if len(args)!=1 { print("usage: binary_collections.hua -- output.bin") }
+    else {
+        unwrap(fs.write_bytes(args[0],data))
+        let loaded=unwrap(fs.read_bytes(args[0]))
+        print(bytes.len(loaded),unwrap(bytes.read_u32_le(loaded,4)),unwrap(bytes.at(loaded,8)))
+        print(unwrap(bytes.read_i64_le(loaded,9)),bytes.crc32(loaded))
+    }
+}

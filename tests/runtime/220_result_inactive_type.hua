@@ -1,0 +1,3 @@
+fn relay(r) Result<int,string> { return r }
+let r Result<int,int> = ok(3)
+relay(r)

@@ -63,6 +63,7 @@ Token Parser::expect(K kind, std::string_view reason) {
         ++second.span.start_offset; ++second.span.column;
         return first;
     }
+    if(kind==K::Greater&&at(K::GreaterEqual)){auto first=peek();first.kind=K::Greater;first.text=">";--first.span.end_offset;auto& second=tokens_[pos_];second.kind=K::Assign;second.text="=";++second.span.start_offset;++second.span.column;return first;}
     if (!at(kind)) fail(peek(), std::string(reason) + "; got " +
         (peek().text.empty() ? std::string(token_name(peek().kind)) : "`" + peek().text + "`"));
     return take();
@@ -89,13 +90,41 @@ NodePtr Parser::parse() {
 NodePtr Parser::statement() {
     Depth depth(depth_, peek().span);
     NodePtr node;
-    if (at(K::Let) || at(K::Var) || at(K::Const)) node = variable();
+    if(at(K::At)) {
+        std::vector<std::string> attributes;
+        while(accept(K::At)) {
+            auto name=expect(K::Identifier,"expected attribute name");std::string value=name.text;
+            if(value!="deprecated"&&value!="doc"&&value!="inline"&&value!="noinline"&&value!="entry")fail(name,"unsupported attribute `"+value+"`","E2002");
+            if(accept(K::LParen)){auto argument=expect(K::String,"attribute argument must be a string");if(name.text!="deprecated"&&name.text!="doc")fail(name,"attribute takes no arguments","E2002");value+="=";for(unsigned char c:argument.text){constexpr char hex[]="0123456789abcdef";value+=hex[c>>4];value+=hex[c&15];}expect(K::RParen,"expected ) after attribute");}
+            else if(value=="deprecated"||value=="doc")fail(name,"attribute requires a string argument","E2002");
+            for(const auto& old:attributes)if(old.substr(0,old.find('='))==name.text)fail(name,"duplicate attribute","E2002");
+            attributes.push_back(value);newlines();
+        }
+        bool pub=accept(K::Pub);
+        if(accept(K::Async)){node=function(pub,false);node->text+=" async";}else if(at(K::Fn))node=function(pub,false);else if(at(K::Struct))node=structure(pub);else fail(peek(),"attributes require a function or struct declaration","E2002");
+        for(const auto& attribute:attributes){if(node->kind!=N::Function&&(attribute=="inline"||attribute=="noinline"||attribute=="entry"))fail(peek(),"function attribute used on a struct","E2002");node->text+=" @"+attribute;}
+        if(node->text.find(" @inline")!=std::string::npos&&node->text.find(" @noinline")!=std::string::npos)fail(peek(),"conflicting inline attributes","E2002");
+    }
+    else if (at(K::Let) || at(K::Var) || at(K::Const)) node = variable();
+    else if (at(K::Defer)) {
+        auto token=take();if(!function_depth_)fail(token,"defer requires a function scope","E2004");
+        node=make(N::Defer,token);node->add(expression());if(node->children[0]->kind!=N::Call)fail(token,"defer requires a function call","E2002");finish(*node);
+    }
+    else if(at(K::Async)){auto modifier=take();node=function(false,false);node->text+=" async";node->span.start_offset=modifier.span.start_offset;node->span.line=modifier.span.line;node->span.column=modifier.span.column;}
+    else if(at(K::Taskgroup)){auto token=take();if(!function_depth_)fail(token,"taskgroup requires a function scope","E2004");node=block();node->text="taskgroup";node->span.start_offset=token.span.start_offset;node->span.line=token.span.line;node->span.column=token.span.column;}
+    else if(at(K::Parallel)||at(K::Simd)){auto modifier=take();std::string mode=modifier.text;if(modifier.kind==K::Parallel&&accept(K::Simd))mode+=" simd";node=for_loop();node->text=mode;node->span.start_offset=modifier.span.start_offset;node->span.line=modifier.span.line;node->span.column=modifier.span.column;}
     else if (at(K::Fn)) node = function(false, false);
     else if (at(K::Struct)) node = structure(false);
+    else if (at(K::Interface)){if(function_depth_)fail(peek(),"interface requires module scope","E2002");node=interface_declaration(false);}
+    else if (at(K::Enum)){if(function_depth_)fail(peek(),"enum requires module scope","E2002");node=enum_declaration(false);}
+    else if (at(K::Match))node=match_statement();
     else if (at(K::Pub)) {
         auto modifier = take();
-        if (at(K::Fn)) node = function(true, false);
+        if(accept(K::Async)){node=function(true,false);node->text+=" async";}
+        else if (at(K::Fn)) node = function(true, false);
         else if (at(K::Struct)) node = structure(true);
+        else if(at(K::Interface))node=interface_declaration(true);
+        else if(at(K::Enum))node=enum_declaration(true);
         else if (accept(K::Unsafe)) {
             if (!at(K::Fn)) fail(peek(), "expected fn after pub unsafe");
             node = function(true, true);
@@ -133,32 +162,47 @@ NodePtr Parser::statement() {
         auto token = take();
         auto path = expect(K::Identifier, "expected module name");
         node = make(N::Import, token, path.text);
-        while (accept(K::Dot)) node->text += "." + expect(K::Identifier, "expected module path component").text;
+        while (accept(K::Dot)) node->text += "." + (node->text=="std"&&at(K::Simd)?take():expect(K::Identifier, "expected module path component")).text;
         if (accept(K::As)) { auto alias = expect(K::Identifier, "expected import alias"); node->add(make(N::Name, alias, alias.text)); }
         finish(*node);
     } else {
-        if ((reserved(peek().kind) && !at(K::True) && !at(K::False) && !at(K::Nil)) || at(K::At) || at(K::Question))
+        if ((reserved(peek().kind) && !at(K::True) && !at(K::False) && !at(K::Nil) && !at(K::Await) && !at(K::Spawn)) || at(K::At) || at(K::Question))
             fail(peek(), "syntax `" + peek().text + "` is not implemented in Phase 1", "E2002");
         node = make(N::ExpressionStatement, peek());
-        node->add(expression()); finish(*node);
+        auto first=expression();
+        if(accept(K::Comma)) {
+            auto targets=std::make_unique<Node>(N::BindingList,first->span);targets->add(std::move(first));
+            do {targets->add(expression(2));}while(accept(K::Comma));
+            for(const auto& t:targets->children)if(!assignable(*t))fail(peek(),"multiple assignment requires assignment targets","E2007");
+            finish(*targets);expect(K::Assign,"expected = in multiple assignment");
+            auto rhs=expression();if(accept(K::Comma)){auto pack=std::make_unique<Node>(N::Pack,rhs->span);pack->add(std::move(rhs));do{pack->add(expression());}while(accept(K::Comma));finish(*pack);rhs=std::move(pack);}
+            node=std::make_unique<Node>(N::MultiAssignment,node->span);node->add(std::move(targets));node->add(std::move(rhs));
+        }else node->add(std::move(first));finish(*node);
     }
     statement_end();
     return node;
 }
 NodePtr Parser::variable() {
-    const auto token = take();
-    const auto name = expect(K::Identifier, "expected binding name");
-    auto node = make(token.kind == K::Let ? N::Let : token.kind == K::Var ? N::Var : N::Const, token, name.text);
-    if (!at(K::Assign)) node->add(type());
-    expect(K::Assign, "expected = and an initializer for this Phase 1 declaration");
-    node->add(expression()); finish(*node);
-    return node;
+    const auto token=take();const auto name=expect(K::Identifier,"expected binding name");
+    auto item=make(N::Parameter,name,name.text);if(!at(K::Assign)&&!at(K::Comma))item->add(type());finish(*item);
+    if(accept(K::Comma)) {
+        if(token.kind==K::Const)fail(token,"multiple const bindings are not supported","E2002");
+        auto list=make(N::BindingList,name);list->add(std::move(item));
+        do {auto next=expect(K::Identifier,"expected binding name");auto p=make(N::Parameter,next,next.text);if(!at(K::Assign)&&!at(K::Comma))p->add(type());finish(*p);list->add(std::move(p));}while(accept(K::Comma));
+        finish(*list);expect(K::Assign,"expected = and an initializer for this declaration");auto rhs=expression();
+        if(accept(K::Comma)){auto pack=std::make_unique<Node>(N::Pack,rhs->span);pack->add(std::move(rhs));do{pack->add(expression());}while(accept(K::Comma));finish(*pack);rhs=std::move(pack);}
+        auto node=make(N::MultiBinding,token,token.text);node->add(std::move(list));node->add(std::move(rhs));finish(*node);return node;
+    }
+    auto node=make(token.kind==K::Let?N::Let:token.kind==K::Var?N::Var:N::Const,token,name.text);
+    if(!item->children.empty())node->add(std::move(item->children[0]));
+    expect(K::Assign,"expected = and an initializer for this Phase 1 declaration");node->add(expression());finish(*node);return node;
 }
-NodePtr Parser::function(bool is_public, bool is_unsafe) {
+NodePtr Parser::function(bool is_public, bool is_unsafe, bool prototype) {
     const auto token = expect(K::Fn, "expected fn");
     auto name = expect(K::Identifier, "expected function name");
     if (accept(K::Dot)) name.text += "." + expect(K::Identifier, "expected method name").text;
     auto node = make(N::Function, token, name.text + (is_public ? " pub" : "") + (is_unsafe ? " unsafe" : ""));
+    if(at(K::Less))node->add(generic_parameters());
     Restore unsafe(unsafe_depth_, is_unsafe ? 1 : 0);
     expect(K::LParen, "expected ( before parameters"); newlines();
     if (!at(K::RParen)) {
@@ -173,7 +217,7 @@ NodePtr Parser::function(bool is_public, bool is_unsafe) {
         } while (accept(K::Comma));
     }
     expect(K::RParen, "expected ) after parameters");
-    if (!at(K::LBrace)) {
+    if (!at(K::LBrace) && !(prototype&&(at(K::Newline)||at(K::RBrace)))) {
         auto result = make(N::ReturnTypes, peek());
         if (accept(K::LParen)) {
             newlines(); result->add(type()); newlines();
@@ -184,13 +228,47 @@ NodePtr Parser::function(bool is_public, bool is_unsafe) {
     }
     Restore fn(function_depth_, function_depth_ + 1);
     Restore loops(loop_depth_, 0);
-    node->add(block()); finish(*node);
+    if(prototype){node->add(make(N::Block,peek()));node->text+=" abstract";}else node->add(block());finish(*node);
     return node;
+}
+NodePtr Parser::interface_declaration(bool pub){
+    auto token=expect(K::Interface,"expected interface"),name=expect(K::Identifier,"expected interface name");auto node=make(N::Interface,token,name.text+(pub?" pub":""));
+    expect(K::LBrace,"expected { before interface methods");newlines();
+    while(!at(K::RBrace)&&!at(K::End)){bool mut=at(K::Identifier)&&peek().text=="mut";if(mut)take();auto method=function(pub,false,true);method->text=name.text+"."+method->text+(mut?" mutreceiver":"");node->add(std::move(method));statement_end();}
+    expect(K::RBrace,"expected } after interface");finish(*node);return node;
+}
+NodePtr Parser::enum_declaration(bool pub){
+    auto token=expect(K::Enum,"expected enum"),name=expect(K::Identifier,"expected enum name");auto node=make(N::Enum,token,name.text+(pub?" pub":""));expect(K::LBrace,"expected { before variants");newlines();
+    while(!at(K::RBrace)&&!at(K::End)){auto variant=expect(K::Identifier,"expected variant name");auto entry=make(N::Variant,variant,variant.text);if(accept(K::LParen)){newlines();if(!at(K::RParen))do{entry->add(type());newlines();}while(accept(K::Comma));expect(K::RParen,"expected ) after variant payload");}finish(*entry);node->add(std::move(entry));if(!accept(K::Comma))statement_end();newlines();}
+    expect(K::RBrace,"expected } after enum");finish(*node);return node;
+}
+NodePtr Parser::match_statement(){
+    auto node=make(N::Match,expect(K::Match,"expected match"));{Restore header(in_header_,true);node->add(expression());}
+    expect(K::LBrace,"expected { after match value");newlines();
+    while(!at(K::RBrace)&&!at(K::End)){
+        auto arm=make(N::MatchArm,peek());NodePtr pattern;
+        if(at(K::Identifier)){auto token=take();pattern=make(N::Name,token,token.text);while(accept(K::Dot))pattern->text+="."+expect(K::Identifier,"expected qualified variant").text;}
+        else {auto token=take();if(token.kind==K::Integer)pattern=make(N::Integer,token,token.text);else if(token.kind==K::String)pattern=make(N::String,token,token.text);else if(token.kind==K::True||token.kind==K::False)pattern=make(N::Boolean,token,token.text);else if(token.kind==K::Nil)pattern=make(N::Nil,token);else fail(token,"match requires a literal, variant or _","E2002");}
+        arm->add(std::move(pattern));auto bindings=make(N::BindingList,peek());if(accept(K::LParen)){if(!at(K::RParen))do{auto token=expect(K::Identifier,"expected payload binding");bindings->add(make(N::Parameter,token,token.text));}while(accept(K::Comma));expect(K::RParen,"expected ) after payload bindings");}arm->add(std::move(bindings));
+        expect(K::Arrow,"expected => after match pattern");if(at(K::LBrace))arm->add(block());else {auto body=make(N::Block,peek()),statement=make(N::ExpressionStatement,peek());statement->add(expression());body->add(std::move(statement));arm->add(std::move(body));}finish(*arm);node->add(std::move(arm));if(!accept(K::Comma))statement_end();newlines();
+    }
+    expect(K::RBrace,"expected } after match");finish(*node);return node;
+}
+NodePtr Parser::generic_parameters(){
+    auto node=make(N::GenericParameters,expect(K::Less,"expected <"));
+    do{auto name=expect(K::Identifier,"expected generic type parameter");for(const auto& p:node->children)if(p->text==name.text)fail(name,"duplicate generic parameter","E2006");node->add(make(N::TypeName,name,name.text));}while(accept(K::Comma));
+    expect(K::Greater,"expected > after generic parameters");finish(*node);return node;
+}
+bool Parser::specialization_ahead() const {
+    if(!at(K::Less))return false;int depth=0;
+    for(std::size_t i=pos_;i<tokens_.size()&&i<pos_+192;++i){auto k=tokens_[i].kind;if(k==K::Less)++depth;else if(k==K::Greater)--depth;else if(k==K::ShiftRight)depth-=2;else if(k==K::Newline||k==K::End||k==K::Assign)return false;if(depth<=0)return i+1<tokens_.size()&&(tokens_[i+1].kind==K::LParen||tokens_[i+1].kind==K::LBrace);}
+    return false;
 }
 NodePtr Parser::structure(bool is_public) {
     const auto token = expect(K::Struct, "expected struct");
     const auto name = expect(K::Identifier, "expected struct name");
     auto node = make(N::Struct, token, name.text + (is_public ? " pub" : ""));
+    if(at(K::Less))node->add(generic_parameters());
     expect(K::LBrace, "expected { before struct fields"); newlines();
     while (!at(K::RBrace) && !at(K::End)) {
         auto field = expect(K::Identifier, "expected field name");
@@ -272,15 +350,14 @@ NodePtr Parser::type() {
         } else {
             while (accept(K::Dot)) name.text += "." + expect(K::Identifier, "expected qualified type name").text;
             if (accept(K::Less)) {
-                if (name.text != "ptr" && name.text != "ref" && name.text != "Result")
-                    fail(name, "user-defined generic types are not implemented in Phase 1", "E2002");
+
                 if (name.text == "ptr" && !unsafe_depth_)
                     fail(name, "raw ptr<T> requires an unsafe declaration or block", "E2010");
                 result = make(N::GenericType, name, name.text); result->add(type());
                 while (accept(K::Comma)) result->add(type());
                 auto close = expect(K::Greater, "expected > after type arguments");
                 if ((name.text == "Result" && result->children.size() > 2) ||
-                    (name.text != "Result" && result->children.size() != 1))
+                    ((name.text=="ptr"||name.text=="ref"||name.text=="List"||name.text=="Task") && result->children.size() != 1))
                     fail(name, "incorrect number of type arguments", "E2006");
                 result->span.end_offset = close.span.end_offset;
             } else {
@@ -315,6 +392,12 @@ NodePtr Parser::primary(bool multiline) {
     case K::True: case K::False: return make(N::Boolean, token, token.text);
     case K::Nil: return make(N::Nil, token);
     case K::Identifier: {
+        if(token.text=="map"&&at(K::LBracket)) {
+            auto map=make(N::MapLiteral,token);auto t=make(N::GenericType,token,"map");take();t->add(type());expect(K::RBracket,"expected ] after map key type");t->add(type());finish(*t);map->add(std::move(t));
+            expect(K::LBrace,"expected { after map value type");newlines();
+            if(!at(K::RBrace))do{auto entry=make(N::MapEntry,peek());entry->add(expression(2,true));expect(K::Colon,"expected : after map key");entry->add(expression(1,true));finish(*entry);map->add(std::move(entry));newlines();}while(accept(K::Comma));
+            expect(K::RBrace,"expected } after map literal");finish(*map);return map;
+        }
         if (!struct_literal_ahead()) return make(N::Name, token, token.text);
         auto node = make(N::StructLiteral, token, token.text); take(); newlines();
         if (!at(K::RBrace)) {
@@ -354,7 +437,9 @@ NodePtr Parser::postfix(NodePtr left, bool multiline) {
     for (;;) {
         if (multiline) newlines();
         if (++suffixes > 192) fail(peek(), "postfix chain limit exceeded", "E2008");
-        if (accept(K::LParen)) {
+        if(at(K::Less)&&specialization_ahead()) {
+            auto node=std::make_unique<Node>(N::Specialize,left->span);node->add(std::move(left));take();node->add(type());while(accept(K::Comma))node->add(type());expect(K::Greater,"expected > after specialization");finish(*node);left=std::move(node);
+        } else if (accept(K::LParen)) {
             auto node = std::make_unique<Node>(N::Call, left->span); node->add(std::move(left));
             Restore header(in_header_, false);
             newlines();
@@ -384,7 +469,7 @@ NodePtr Parser::postfix(NodePtr left, bool multiline) {
                 node->add(std::move(left)); node->add(std::move(first));
                 expect(K::RBracket, "expected ] after index"); finish(*node); left = std::move(node);
             }
-        } else if (struct_literal_ahead() && left->kind == N::Member) {
+        } else if (struct_literal_ahead() && (left->kind == N::Member||left->kind==N::Specialize)) {
             std::function<std::string(const Node&)> path = [&](const Node& n) -> std::string {
                 if (n.kind == N::Name) return n.text;
                 if (n.kind == N::Member) {
@@ -393,9 +478,10 @@ NodePtr Parser::postfix(NodePtr left, bool multiline) {
                 }
                 return "";
             };
-            auto name = path(*left);
+            auto name = path(left->kind==N::Specialize?*left->children[0]:*left);
             if (name.empty()) fail(peek(), "struct initializer requires a qualified type name");
             auto node = std::make_unique<Node>(N::StructLiteral, left->span, name);
+            if(left->kind==N::Specialize){auto types=std::make_unique<Node>(N::GenericType,left->span,name);for(std::size_t i=1;i<left->children.size();++i)types->add(std::move(left->children[i]));node->add(std::move(types));}
             take(); newlines();
             if (!at(K::RBrace)) {
                 do {
@@ -410,7 +496,10 @@ NodePtr Parser::postfix(NodePtr left, bool multiline) {
             auto op = take(); if (!assignable(*left)) fail(op, "update requires a name, member or index", "E2007");
             auto node = std::make_unique<Node>(N::Update, left->span, op.text);
             node->add(std::move(left)); finish(*node); left = std::move(node);
-        } else if (at(K::Question)) fail(peek(), "Result propagation is not implemented in Phase 1", "E2002");
+        } else if (at(K::Question)) {
+            auto q=take();if(!function_depth_)fail(q,"Result propagation requires a function","E2004");
+            auto node=std::make_unique<Node>(N::Propagate,left->span);node->add(std::move(left));finish(*node);left=std::move(node);
+        }
         else break;
     }
     return left;
@@ -419,9 +508,10 @@ NodePtr Parser::expression(int minimum, bool multiline) {
     Depth depth(depth_, peek().span);
     if (multiline) newlines();
     NodePtr left;
-    if (at(K::Not) || at(K::BitNot) || at(K::Plus) || at(K::Minus) || at(K::BitAnd)) {
-        auto op = take(); left = make(N::Unary, op, op.text);
+    if (at(K::Await) || at(K::Spawn) || at(K::Not) || at(K::BitNot) || at(K::Plus) || at(K::Minus) || at(K::BitAnd)) {
+        auto op = take();if((op.kind==K::Await||op.kind==K::Spawn)&&!function_depth_)fail(op,"await/spawn requires a function scope","E2004");left = make(N::Unary, op, op.text);
         newlines(); left->add(expression(12, multiline)); finish(*left);
+        if(op.kind==K::Await&&left->children[0]->kind==N::Propagate){auto propagation=std::move(left->children[0]);left->add(std::move(propagation->children[0]));left->children.erase(left->children.begin());propagation->children.clear();propagation->add(std::move(left));left=std::move(propagation);}
     } else left = postfix(primary(multiline), multiline);
     std::size_t operators = 0;
     for (;;) {

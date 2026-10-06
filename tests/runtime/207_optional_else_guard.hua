@@ -1,0 +1,5 @@
+fn use(x int?) { if x==nil { print("none") } else { print(x+1) }
+if x==nil || x>0 { print("pass") }
+}
+use(2)
+use(nil)

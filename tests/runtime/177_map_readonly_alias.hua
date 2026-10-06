@@ -1,0 +1,3 @@
+let m=map[string]int{}
+var alias=m
+alias["x"]=1

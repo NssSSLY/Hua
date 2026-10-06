@@ -1,0 +1,31 @@
+# Address-stable GC, asynchronous tasks, independent CPU work and vector arithmetic.
+import std.task as task
+import std.gc as gc
+import std.simd as vector
+
+async fn compute(x int) int {
+    task.sleep(10)
+    defer print("task cleaned", x)
+    return x * 2
+}
+
+fn main() {
+    taskgroup {
+        let a = compute(3)
+        let b = spawn compute(5)
+        print(await a, await b)
+    }
+    var output [4]f32 = [0, 0, 0, 0]
+    let data [4]f32 = [1, 2, 3, 4]
+    parallel simd for i in 0..4 {
+        output[i] = data[i] * f32(2)
+    }
+    print(output)
+    print(unwrap(vector.add(data, data)))
+    let slow = compute(7)
+    print(await slow)
+    print(task.timeout(slow, 0))
+    print(task.done(slow))
+    gc.collect()
+    print("GC ready")
+}

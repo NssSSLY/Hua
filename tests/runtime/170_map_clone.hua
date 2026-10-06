@@ -1,0 +1,5 @@
+var m=map[string][]int{"a":[1,2]}
+let r=m
+var c=clone(r)
+c["a"]= [9,8]
+print(unwrap(m["a"]),unwrap(c["a"]))

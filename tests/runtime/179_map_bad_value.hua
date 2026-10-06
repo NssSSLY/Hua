@@ -1,0 +1,1 @@
+let m=map[string]int{"x":"bad"}

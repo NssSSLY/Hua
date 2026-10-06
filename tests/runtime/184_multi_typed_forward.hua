@@ -1,0 +1,5 @@
+fn values() (float,string) { return 2,"ok" }
+fn forward() (float,string) { return values() }
+let n,text=forward()
+let a float,b int=3,4
+print(type(n),text,type(a),b)

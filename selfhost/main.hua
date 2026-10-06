@@ -1,0 +1,18 @@
+import lexer as lexer
+import std.fs as fs
+import std.os as os
+import std.json as json
+fn main() {
+    let args = os.args()
+    if len(args) != 1 { print("usage: selfhost/main.hua -- source.hua")
+return }
+    let source = fs.read_text(args[0])
+    if is_err(source) { print("error", unwrap_err(source))
+return }
+    let tokens = lexer.scan(unwrap(source))
+    if is_err(tokens) { print("error", unwrap_err(tokens))
+return }
+    for token in unwrap(tokens) {
+        print(token.kind, token.line, token.column, unwrap(json.encode(token.text)))
+    }
+}

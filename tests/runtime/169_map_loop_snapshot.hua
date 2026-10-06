@@ -1,0 +1,11 @@
+var m=map[int]int{1:10,2:20}
+var sum=0
+for k,v in m {
+    sum+=k+v
+    m[3]=99
+    delete(m,k)
+}
+print(sum,len(m),unwrap(m[3]))
+var keys=0
+for k in m { keys+=k }
+print(keys)

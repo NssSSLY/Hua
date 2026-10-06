@@ -1,0 +1,2 @@
+fn work() int { let x=ok(3)?
+return x }

@@ -1,0 +1,4 @@
+let good Result<int> = ok(42)
+let bad Result<int> = err("bad")
+print(good,bad,is_ok(good),is_err(bad))
+print(unwrap(good),unwrap_err(bad),unwrap_or(bad,7))

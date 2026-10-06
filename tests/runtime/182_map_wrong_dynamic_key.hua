@@ -1,0 +1,4 @@
+fn key() { print("key")
+return true }
+var m=map[string]int{}
+m[key()]=4

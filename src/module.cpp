@@ -1,7 +1,9 @@
 #include "hua/module.hpp"
+#include "hua/lowering.hpp"
 #include "hua/lexer.hpp"
 #include "hua/parser.hpp"
 #include "hua/value.hpp"
+#include "hua/runtime.hpp"
 #include <algorithm>
 #include <cwctype>
 #include <fstream>
@@ -37,6 +39,7 @@ const Node& ModuleLoader::load(const std::filesystem::path& entry) {
     root_=path.parent_path();external_=std::make_shared<ExternalRegistry>(root_);auto& main=visit(path,{utf8(path),0,0,1,1},true);
     linked_=std::make_unique<Node>(N::Program,main.tree->span);
     for(auto module:ordered_) {auto tree=link(*module);for(auto& n:tree->children)linked_->add(std::move(n));}
+    lower_language(*linked_);
     return *linked_;
 }
 std::filesystem::path ModuleLoader::resolve(const std::string& name,const SourceSpan& site) const {
@@ -112,15 +115,18 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
         external_->add(std::move(external));
         module.tree->children.insert(module.tree->children.begin(),std::make_unique<Node>(N::ExternalInit,module.tree->span,module.prefix+"module"));
     }
+    if(!native&&!wasm)lower_declarations(*module.tree);
     bool declarations=false;
     for(const auto& n:module.tree->children) {
         if(n->kind==N::Import) {
             if(declarations)error(n->span,"imports must precede all declarations and statements","E5004");
             auto binding=n->children.empty()?n->text:n->children[0]->text;
             if(module.imports.contains(binding))error(n->span,"duplicate import namespace `"+binding+"`","E5004");
-            auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));
+            if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
+            else {auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}
         }else {
-            declarations=true;
+            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
+            if(n->kind==N::MultiBinding){for(const auto& p:n->children[0]->children)if(p->text!="_")module.globals.emplace(p->text,module.prefix+p->text);}
             if(n->kind==N::Function || n->kind==N::Struct || n->kind==N::Let || n->kind==N::Var || n->kind==N::Const) {
                 auto name=declared_name(*n);module.globals.emplace(name,module.prefix+name);
                 if(n->text.find(" pub")!=std::string::npos)module.exports.emplace(name,n.get());
@@ -131,13 +137,27 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
         error(module.tree->span,"import namespace conflicts with declaration `"+name+"`","E5004");
     loading_.pop_back();module.state=Module::State::Loaded;ordered_.push_back(&module);return module;
 }
+ModuleLoader::Module& ModuleLoader::standard(const std::string& name,const SourceSpan& site) {
+    auto id="builtin:"+name;if(auto found=cache_.find(id);found!=cache_.end())return *found->second;
+    if(!standard_module(name))error(site,"unknown standard module `"+name+"`");
+    if(modules_.size()>=128)error(site,"module graph limit exceeded","E5005");
+    auto owned=std::make_unique<Module>();owned->standard=true;owned->state=Module::State::Loaded;
+    std::string text="# built-in standard interface; implemented by the shared runtime\n";
+    for(const auto& f:standard_functions())if(name=="std."+f.module){text+="pub fn "+f.name+"(";for(std::size_t i=0;i<f.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i);if(!f.parameters[i].empty())text+=" "+f.parameters[i];}text+=") "+f.result+" {}\n";owned->globals.emplace(f.name,"$core$"+standard_name(f));}
+    if(name=="std.json"){text+="pub struct Value {}\n";owned->globals.emplace("Value","Json");}
+    owned->source=std::make_unique<Source>("<"+name+">",std::move(text));owned->tree=Parser(Lexer(*owned->source).scan()).parse();
+    for(const auto& n:owned->tree->children)owned->exports.emplace(declared_name(*n),n.get());
+    auto& module=*owned;modules_.push_back(std::move(owned));cache_.emplace(id,&module);ordered_.push_back(&module);return module;
+}
 NodePtr ModuleLoader::link(Module& module) {
+    if(module.standard)return std::make_unique<Node>(N::Program,module.tree->span);
     std::vector<std::unordered_set<std::string>> locals;
+    std::vector<std::unordered_set<std::string>> local_types;
     auto local=[&](const std::string& name){for(auto i=locals.rbegin();i!=locals.rend();++i)if(i->contains(name))return true;return false;};
     auto imported=[&](const std::string& name,const SourceSpan& span,bool require_type)->std::string {
         auto root=name.substr(0,name.find('.'));if(!require_type && local(root))return "";
         for(const auto& [prefix,target]:module.imports)if(name.starts_with(prefix+".")) {
-            auto member=name.substr(prefix.size()+1);if(member.find('.')!=std::string::npos)continue;
+            auto member=name.substr(prefix.size()+1);
             auto found=target->exports.find(member);
             if(found==target->exports.end())error(span,"module `"+prefix+"` has no public export `"+member+"`","E5003");
             if(require_type && found->second->kind!=N::Struct)error(span,"module export `"+name+"` is not a struct type","E5003");
@@ -147,8 +167,10 @@ NodePtr ModuleLoader::link(Module& module) {
         return "";
     };
     auto type=[&](const std::string& name,const SourceSpan& span) {
+        if(name.empty())return std::string{};
+        for(auto i=local_types.rbegin();i!=local_types.rend();++i)if(i->contains(name))return name;
         if(auto linked=imported(name,span,true);!linked.empty())return linked;
-        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result"};
+        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task"};
         if(primitives.contains(name))return name;
         if(auto found=module.globals.find(name);found!=module.globals.end())return found->second;
         return module.prefix+name;
@@ -159,35 +181,48 @@ NodePtr ModuleLoader::link(Module& module) {
         if(n.kind==N::Member) {
             auto path=dotted(n);auto linked=imported(path,n.span,false);
             if(!linked.empty())return std::make_unique<Node>(N::Name,n.span,linked);
+            if(auto found=module.globals.find(path);found!=module.globals.end())return std::make_unique<Node>(N::Name,n.span,found->second);
         }
         auto out=std::make_unique<Node>(n.kind,n.span,n.text);
+        if(n.kind==N::MatchArm){out->add(rewrite(*n.children[0],false));out->add(rewrite(*n.children[1],false));locals.emplace_back();for(const auto& p:n.children[1]->children)locals.back().insert(p->text);out->add(rewrite(*n.children[2],false));locals.pop_back();return out;}
         if(n.kind==N::Name) {
+            if(n.text.find('.')!=std::string::npos){auto linked=imported(n.text,n.span,false);if(!linked.empty()){out->text=linked;return out;}}
             if(!local(n.text)) {
                 for(const auto& [prefix,_]:module.imports)if(prefix.substr(0,prefix.find('.'))==n.text)
                     error(n.span,"module namespace `"+n.text+"` must be used as a qualified export","E5003");
                 if(auto found=module.globals.find(n.text);found!=module.globals.end())out->text=found->second;
                 else {
-                    static const std::unordered_set<std::string> core={"print","str","int","float","len","clone","sqrt","min","max","abs","clamp","type"};
-                    out->text=core.contains(n.text)?"$core$"+n.text:module.prefix+n.text;
+                    out->text=builtin_names().contains(n.text)?"$core$"+n.text:module.prefix+n.text;
                 }
             }
             return out;
         }
-        if(n.kind==N::TypeName || n.kind==N::StructLiteral)out->text=type(n.text,n.span);
+        if(n.kind==N::MultiAssignment) {
+            auto list=std::make_unique<Node>(N::BindingList,n.children[0]->span);for(const auto& t:n.children[0]->children)list->add(t->kind==N::Name&&t->text=="_"?std::make_unique<Node>(N::Name,t->span,"_"):rewrite(*t,false));out->add(std::move(list));out->add(rewrite(*n.children[1],false));return out;
+        }
+        if(n.kind==N::TypeName || n.kind==N::StructLiteral || (n.kind==N::GenericType&&n.text!="map"&&n.text!="Result"&&n.text!="List"&&n.text!="Task"&&n.text!="ptr"&&n.text!="ref"))out->text=type(n.text,n.span);
         if(n.kind==N::Function) {
+            if(!top && !locals.empty())locals.back().insert(declared_name(n));
             if(top)out->text=module.prefix+n.text;
+            local_types.emplace_back();for(const auto& c:n.children)if(c->kind==N::GenericParameters)for(const auto& p:c->children)local_types.back().insert(p->text);
             locals.emplace_back();for(const auto& c:n.children)if(c->kind==N::Parameter)locals.back().insert(declared_name(*c));
             if(declared_name(n).find('.')!=std::string::npos)locals.back().insert("self");
-            for(const auto& c:n.children)out->add(rewrite(*c,false));locals.pop_back();return out;
+            for(const auto& c:n.children)out->add(rewrite(*c,false));locals.pop_back();local_types.pop_back();return out;
         }
-        if(n.kind==N::Struct && top)out->text=module.prefix+n.text;
+        if(n.kind==N::Struct){if(top)out->text=module.prefix+n.text;else if(!local_types.empty())local_types.back().insert(declared_name(n));local_types.emplace_back();for(const auto& c:n.children)if(c->kind==N::GenericParameters)for(const auto& p:c->children)local_types.back().insert(p->text);for(const auto& c:n.children)out->add(rewrite(*c,false));local_types.pop_back();return out;}
+        if(n.kind==N::MultiBinding) {
+            auto list=std::make_unique<Node>(N::BindingList,n.children[0]->span);
+            for(const auto& p:n.children[0]->children){auto item=rewrite(*p,false);if(top&&p->text!="_")item->text=module.prefix+p->text;list->add(std::move(item));}
+            out->add(std::move(list));out->add(rewrite(*n.children[1],false));
+            if(!top&&!locals.empty())for(const auto& p:n.children[0]->children)if(p->text!="_")locals.back().insert(p->text);return out;
+        }
         if(n.kind==N::Let || n.kind==N::Var || n.kind==N::Const) {
             if(top)out->text=module.prefix+n.text;
             for(const auto& c:n.children)out->add(rewrite(*c,false));
             if(!top && !locals.empty())locals.back().insert(n.text);return out;
         }
         if(n.kind==N::Block) {
-            locals.emplace_back();for(const auto& c:n.children)out->add(rewrite(*c,false));locals.pop_back();return out;
+            locals.emplace_back();local_types.emplace_back();for(const auto& c:n.children)out->add(rewrite(*c,false));locals.pop_back();local_types.pop_back();return out;
         }
         if(n.kind==N::For) {
             auto count=n.children.size()-2;
@@ -196,7 +231,7 @@ NodePtr ModuleLoader::link(Module& module) {
             for(std::size_t i=0;i<count;++i)locals.back().insert(n.children[i]->text);
             out->add(rewrite(*n.children.back(),false));locals.pop_back();return out;
         }
-        for(const auto& c:n.children)out->add(rewrite(*c,false));return out;
+        for(const auto& c:n.children)out->add(rewrite(*c,false));if(n.kind==N::Field&&n.text.starts_with('$')&&n.text.find('#')!=std::string::npos&&out->children.size()>1)out->text=n.text.substr(0,n.text.rfind('#')+1)+type_name(*out->children[1]);return out;
     };
     auto program=std::make_unique<Node>(N::Program,module.tree->span);
     for(const auto& n:module.tree->children)if(n->kind!=N::Import)program->add(rewrite(*n,true));return program;

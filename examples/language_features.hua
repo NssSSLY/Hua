@@ -1,0 +1,41 @@
+interface Named { fn name() string }
+struct Item { value string }
+fn Item.name() string { return self.value }
+fn describe(value Named) string { return value.name() }
+fn id<T>(value T) T { return value }
+struct Box<T> { value T }
+enum Event { Text(string), Number(int), Empty }
+fn score(event Event) int {
+    match event {
+        Number(n) => { return n }
+        Text(_) => { return 0 }
+        Empty => { return 0 }
+    }
+}
+fn guard(value int?) int {
+    if value == nil { return 0 }
+    return value + 1
+}
+fn owned() []int { return [1,2] }
+fn forward() []int { return owned() }
+@entry
+fn start() {
+    let box = Box<string>{value: id<string>("Hua")}
+    print(box.value, describe(Item{value:"interface"}), score(Event.Number(8)))
+    var captured = 3
+    fn snapshot() int { return captured }
+    captured = 9
+    struct Local { value i16 }
+    let local = Local{value:9}
+    print(snapshot(), local.value)
+    var array [3]u16 = [1,2,65535]
+    var copied = array
+    copied[0] = 9
+    var view = array[1:]
+    view[0] = 7
+    print(array, copied, sizeof(array), alignof(array))
+    var values = forward()
+    values[0] = 4
+    print(guard(4), guard(nil), values)
+    defer print("done")
+}

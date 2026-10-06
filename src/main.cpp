@@ -24,37 +24,40 @@ void usage(std::ostream& out) {
         << "Usage: hua version\n"
         << "       hua check <file.hua|file.huab>\n"
         << "       hua ast <file.hua>\n"
-        << "       hua run <file.hua|file.huab>\n"
-        << "       hua interpret <file.hua>\n"
+        << "       hua run <file.hua|file.huab> [-- args...]\n"
+        << "       hua interpret <file.hua> [-- args...]\n"
         << "       hua bytecode <file.hua|file.huab>\n"
         << "       hua build <file.hua> [-o file.huab]\n";
 }
 int cli(const std::vector<std::string>& args) {
     if (args.size() == 2 && (args[1] == "version" || args[1] == "--version")) {
-        std::cout << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 1\n"; return 0;
+        std::cout << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
     }
     if (args.size() == 2 && (args[1] == "--help" || args[1] == "help")) { usage(std::cout); return 0; }
     bool build = args.size() >= 3 && args[1] == "build";
+    bool execute=args.size()>=3&&(args[1]=="run"||args[1]=="interpret");
+    bool valid_size=args.size()==3||(execute&&args.size()>=4&&args[3]=="--");
     if (build ? !(args.size() == 3 || (args.size() == 5 && args[3] == "-o")) :
-        (args.size() != 3 || (args[1] != "check" && args[1] != "ast" && args[1] != "run" && args[1] != "interpret" && args[1] != "bytecode"))) { usage(std::cerr); return 2; }
+        (!valid_size || (args[1] != "check" && args[1] != "ast" && args[1] != "run" && args[1] != "interpret" && args[1] != "bytecode"))) { usage(std::cerr); return 2; }
     std::unique_ptr<hua::Source> source;
     hua::ModuleLoader loader;
     std::unique_ptr<hua::BytecodeImage> image;
     try {
+        hua::RuntimeContext context;context.input=&std::cin;context.working_directory=std::filesystem::current_path();if(execute&&args.size()>=4)context.arguments.assign(args.begin()+4,args.end());
         auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
         if(path.extension()==".huab") {
             if(build || args[1]=="ast" || args[1]=="interpret") { usage(std::cerr); return 2; }
             image=std::make_unique<hua::BytecodeImage>(hua::read_huab(path));
             if(args[1]=="check")std::cout<<"OK\n";
             else if(args[1]=="bytecode")std::cout<<hua::disassemble(image->bytecode);
-            else hua::VirtualMachine(image->model,std::cout).run(image->bytecode);
+            else hua::VirtualMachine(image->model,std::cout,&context).run(image->bytecode);
             return 0;
         }
         if (args[1] != "ast") {
             const auto& tree = loader.load(path);
             auto model = hua::SemanticAnalyzer{}.analyze(tree,loader.externals());
             if (args[1] == "check") std::cout << "OK\n";
-            else if (args[1] == "interpret") hua::Interpreter(model, std::cout).run(tree);
+            else if (args[1] == "interpret") hua::Interpreter(model, std::cout,&context).run(tree);
             else {
                 auto bytecode = hua::BytecodeCompiler{}.compile(tree, model);
                 if(build) {
@@ -63,7 +66,7 @@ int cli(const std::vector<std::string>& args) {
                     if(out.extension()!=".huab") { usage(std::cerr); return 2; }
                     hua::write_huab(out,bytecode,model,loader.sources());auto out_utf8=out.u8string();std::cout<<"Built "<<std::string(out_utf8.begin(),out_utf8.end())<<'\n';
                 } else if (args[1] == "bytecode") std::cout << hua::disassemble(bytecode);
-                else hua::VirtualMachine(model, std::cout).run(bytecode);
+                else hua::VirtualMachine(model, std::cout,&context).run(bytecode);
             }
             return 0;
         }
@@ -101,6 +104,7 @@ int cli(const std::vector<std::string>& args) {
 }
 #ifdef _WIN32
 int wmain(int argc, wchar_t** argv) {
+    SetConsoleCP(CP_UTF8);SetConsoleOutputCP(CP_UTF8);
     std::vector<std::string> args;
     for (int i = 0; i < argc; ++i) {
         const int size = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);

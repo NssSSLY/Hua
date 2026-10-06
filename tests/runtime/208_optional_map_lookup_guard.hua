@@ -1,0 +1,4 @@
+fn main() { let m=map[string]int{"x":5}
+let x=m["x"]
+if x!=nil { print(x+1) }
+}

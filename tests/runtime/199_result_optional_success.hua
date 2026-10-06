@@ -1,0 +1,2 @@
+fn value() Result<int?> { return ok(nil) }
+print(is_ok(value()),unwrap(value()))

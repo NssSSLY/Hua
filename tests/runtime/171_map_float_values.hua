@@ -1,0 +1,3 @@
+var m=map[int]float{1:2}
+m[2]=3
+print(unwrap(m[1]),unwrap(m[2]))

@@ -1,0 +1,2 @@
+fn value() Result<float> { return ok(3) }
+print(type(unwrap(value())))

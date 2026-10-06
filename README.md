@@ -1,6 +1,11 @@
 # Hua 0.1.0-dev
 
-轻量系统脚本语言。当前完成 **前端、基础语义、栈式字节码 VM、`.huab` 文件读写与本地源码/Native/WASM 模块加载**。
+轻量系统脚本语言。当前完成 **前端、基础语义、Map/多返回/Result/Optional 常用语义、栈式字节码 VM、`.huab` 文件读写、本地源码/Native/WASM 模块加载，以及程序输入/文本与二进制文件/字符串/JSON/动态列表/缓冲标准库，以及可选嵌入式 Python Bridge；本轮加入 interface/enum/match、泛型、闭包/defer、精确数值与固定数组布局**。
+
+写好第一个程序后：保存为main.hua，在它所在目录的VS Code终端输入 `hua run .\main.hua`。详细步骤和找不到hua时的处理见 [第一个程序怎么运行](docs/第一个程序运行指南.md)。
+
+先读 [当前完成度与使用说明](docs/当前完成度与使用说明.md)：已完成什么、尚缺什么、现在能做什么，以及入门/构建/部署步骤。此说明随每次功能更新维护。
+全部文档的中文文件名和历史资料入口见 [文档目录](docs/文档目录.md)。
 
 ```powershell
 .\scripts\build.ps1
@@ -38,6 +43,19 @@ ctest --test-dir build -C Release --output-on-failure
 运行目录须保留 `hua.exe` 与 `wasmtime.dll`；Native 模块还需要其动态库。SDK 来源、许可证与校验值见 Phase 4 文档。
 本次实际验证的是 Windows Clang 23.1.2；未宣称跨平台工具链全部实测。
 
+## 可选 Python 包兼容
+
+独立 Native 插件可嵌入 CPython 3.12，导入现成 Python 包并调用函数、类/方法；复杂对象使用句柄，基础数据通过 Json 交换。普通 Hua 核心不链接 Python，插件默认不构建。
+
+```powershell
+.\scripts\build.ps1 -PythonBridge -PythonHome 'C:\Users\liqia\AppData\Local\Programs\Python\Python312'
+.\build\hua.exe run .\build\python_bridge\main.hua
+```
+
+输出 `Python sqrt: 9`、`missing package: true`、`handles: 0`。
+本机还验证 packaging 26.3 的类实例与属性，以及解释器/VM/无源码 HUAB 对照；其他包需按 CPython 版本/平台/外部依赖单独验收。
+完整 13 个接口、pip 项目安装、部署/释放/错误与兼容边界见 [Phase 8 Python Bridge](docs/第八阶段_可选外部解释器桥接.md)。这是调用 Python 库，未提供自动转为 Hua 库的工具。
+
 ## 语义与执行
 
 - 词法作用域、同层重复声明、未定义名称和声明顺序检查。
@@ -48,11 +66,42 @@ ctest --test-dir build -C Release --output-on-failure
 - struct 值复制、具名字段、普通方法；分析方法直接/间接 self 写入，要求可变 receiver。
 - Slice 零复制 view；只读能力不能通过 var 别名升级；clone 深复制后可独立修改。
 - Slice 参数默认只读；`mut []T` 允许修改传入的可变视图。
-- 基础 int/float/bool/string/nil、Optional 的 nil 返回、算术/比较/位运算和显式转换。
-- core：print、str、int、float、len、clone、sqrt、min/max、abs、clamp、type。
+- 基础 int/float/bool/string/nil、算术/比较/位运算和显式转换。
+- Map 构造/索引/缺失 nil/has/delete/快照遍历；多返回、逐项绑定、交换与 `_` 丢弃。
+- Result<T,E>、ok/err、解包和 `?` 传播；Optional 检测/解包与不可重绑局部名称的 nil 分支收窄。
+- core：print、str、int、float、len、clone、sqrt、min/max、abs、clamp、type，以及 has/delete、ok/err、is_ok/is_err、unwrap/unwrap_err/unwrap_or、is_some/is_none。
+
+新能力的完整规则与运行例子见 [Phase 5](docs/第五阶段_映射多返回与结果语义.md) 和 [values.hua](examples/values.hua)。
 
 执行顺序：登记函数/struct，按依赖顺序初始化模块一次，执行入口顶层语句，自动调用入口零参数 main（若存在）。
 函数使用模块词法环境，不读取调用者的局部变量。所有源码先检查，再开始产生执行副作用。
+
+## 程序输入与基础标准库
+
+已提供 std.os、std.io、std.fs、std.strings、std.json、std.bytes、std.buffer、std.list，共 73 个函数。文件/输入/JSON 的可恢复错误返回 Result。
+
+```powershell
+'hello' | .\build\hua.exe run .\examples\standard_library.hua -- .\examples\data\profile.json
+.\build\hua.exe build .\examples\standard_library.hua -o .\build\standard_library.huab
+'hello' | .\build\hua.exe run .\build\standard_library.huab -- .\examples\data\profile.json
+```
+
+输出 `HUA:3:hello`。参数在 `--` 后，文件相对路径基于工作目录，导入相对入口目录；check/build 不执行 I/O。
+完整接口、JSON 数值/UTF-8/资源边界及解释器对照命令见 [Phase 6 标准库](docs/第六阶段_程序输入与基础标准库.md)。
+网络与数据库按用户选择留到后续阶段；当前没有 HTTP/SQLite 或文件流句柄接口。
+
+## 字节、动态列表与缓冲
+
+Bytes 保存任意字节，Buffer 支持追加文本/小端整数，List<T> 支持 append/extend/pop 与快照。修改需 var 或 mut 参数，clone 获得独立内容。
+
+```powershell
+.\build\hua.exe run .\examples\binary_collections.hua -- .\build\bootstrap.bin
+.\build\hua.exe build .\examples\binary_collections.hua -o .\build\binary_collections.huab
+.\build\hua.exe run .\build\binary_collections.huab -- .\build\bootstrap.bin
+```
+
+示例写入 17 字节并读回验证，输出与解释器对照见 [Phase 7 合同](docs/第七阶段_字节与动态容器.md)。
+本阶段补齐自举基础设施，Hua 版本编译器与自举闭环仍未实现。
 
 ## 本地模块
 
@@ -67,7 +116,7 @@ print(p.length())
 无别名时以 `a.b.name` 访问；支持 `pub fn`、`pub struct`、限定类型和具名初始化。
 导入位于文件顶部；私有接口、缺失模块、循环与命名冲突均有定位诊断。
 重复导入和菱形依赖共享缓存，仅初始化一次；依赖模块的 main 不自动调用。
-模块测试和基础规则见 [VM/模块规则](docs/PHASE3_VM_MODULES.md)。
+模块测试和基础规则见 [VM/模块规则](docs/第三阶段_虚拟机与模块.md)。
 
 ## HUAB 与扩展
 
@@ -86,7 +135,7 @@ print(p.length())
 Native 使用 `include/hua/native.h` 的 opaque C ABI v1，支持标量与字符串；WASM 支持 i32/i64/f32/f64 导出函数，无 host imports/WASI。
 Native DLL 不嵌入文件，需按原相对路径放在 HUAB 目录内；Native 是可信的同进程代码。
 扩展示例输出 `42 42`、`hello Hua true`、`5 7`。
-格式、接口、资源上限和部署方法见 [HUAB / Native / WASM](docs/PHASE4_ARTIFACTS_EXTENSIONS.md)。
+格式、接口、资源上限和部署方法见 [HUAB / Native / WASM](docs/第四阶段_字节码文件与扩展.md)。
 
 ## 已冻结的运算符与注释规则
 
@@ -108,20 +157,21 @@ let c = 7 % 2 # 1
 文件第一行的 `#!...` 是 shebang，由 Lexer 忽略；其他位置的 `#!` 按普通 `#` 行注释处理。
 `//` 在所有位置只表示整除，不再识别为注释；`/* ... */` 不再是 Hua 注释。
 Lexer 用 depth 计数处理嵌套，并记录各层普通/文档闭合标记；注释换行保留 NEWLINE。
-字符串中的所有注释标记保持字面内容。完整规则见 `docs/LEXER_PARSER.md`。
+字符串中的所有注释标记保持字面内容。完整规则见 `docs/词法与语法规则.md`。
 
 ## 当前限制
 
 当前 VM 覆盖基础语言子集，不是完整 Hua V0.1：
 
-- int 暂用有溢出检查的 int64，float 暂用有限 float64；这不代表全部数值规则永久冻结。
+- int/float 仍为有界 int64/有限 float64；精确 i/u/f 尺寸类型、显式转换与溢出检查已实现。
 - 普通二元运算不隐式混合 int/float；浮点上下文可接收可精确表示的整数**字面量**。
 - `float ** int` 支持整数指数，满足规范 Point.length 示例；整数负指数暂拒绝。
-- 支持固定数组的类型/长度检查，但暂用 Slice 存储，不承诺底层固定布局。
-- 多返回绑定/执行、Result 传播、Map 执行、精确宽度类型、ref/ptr 执行和 unsafe/FFI 仍未实现。
-- 本地源码/Native/WASM 已加载；标准模块命名空间、包管理与选择导入尚未实现。
-- `.huab` 是完整可执行程序，不能作为 import 模块；尚无自动磁盘编译缓存；嵌套函数/struct 仍不执行。
-- 尚无 Hua GC、async、parallel/SIMD、Web/AI 库、LLVM 后端或 AOT。
+- 固定数值/bool/嵌套数组使用连续小端布局；非平凡元素仍是受管理 Value 槽位，不等于 C ABI 布局。
+- 已有局部 Optional 分支/循环/早退收窄和已知调用的返回写能力推断；动态函数、深层字段别名仍保守。Optional<Result>、Map 直接 Result 值、通用 Tuple 尚未实现。
+- ref/ptr 执行、unsafe 内存操作及复杂 FFI 仍未实现。
+- 本地源码/Native/WASM 与 std.os/io/fs/strings/json/bytes/buffer/list 已加载；包管理、选择导入及其他标准模块尚未实现。
+- `.huab` 是完整可执行程序，不能作为 import 模块；尚无自动磁盘编译缓存；局部函数与结构已执行，闭包捕获只读快照。
+- GC/async/parallel/SIMD 当前合同见 Phase 10；事件循环、通用自动 SIMD、Web/AI 库、LLVM 后端和 AOT 尚未完成。
 - VM 默认最多 1,000,000 条指令、128 层函数调用；超限 E4099。
 - 本地模块图最多 128 文件/64 依赖层/64 MiB 源码，单文件 16 MiB。
 - check 不是完整静态类型证明；动态值、索引、别名和数值边界仍需运行时检查。
@@ -129,19 +179,78 @@ Lexer 用 depth 计数处理嵌套，并记录各层普通/文档闭合标记；
 ## 文件与验证
 
 `include/hua` 和 `src` 保持前端、语义、值运算、解释器、编译器、VM 和模块加载分层。
-CTest 9/9 通过。`tests/spec`：99 个语法样例、2405 检查；`tests/runtime`：119 个样例各跑两种引擎。
-另有 114 项 VM/模块 CLI、38 项原 CLI、368 项 HUAB/Native/WASM CLI 检查，80 个持久化运行样例及 30 次 CRC 修复随机变异检查；stdout 与错误均有独立预期。
+2026-10-06 开启可选 Python Bridge 的 CTest18/18通过（含GC/任务/并发、自举词法器与插件测试，桥接可选）。`tests/spec`：100 个语法样例、2608 检查；`tests/runtime`：187 个样例各跑两种引擎。
+另有 114 项 VM/模块 CLI、46 项原 CLI、551 项 HUAB/Native/WASM CLI 检查，126 个持久化运行样例及 30 次 CRC 修复随机变异检查；stdout 与错误均有独立预期。
+另有 269 项输入/标准库/JSON、185 项字节/列表/缓冲 CLI 检查，对照解释器/VM/无源码 HUAB，验证实际容量边界与独立 Python 字节/CRC。
+HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
+桥接新增 53 项离线对照，提供真实 packaging 26.3 路径时共 61 项；独立关闭桥接构建能运行 quickstart，核心无 Python 链接依赖。
+
 原始 Nova 规范保留，Hua 命名副本及当前决定见：
 
-- [设计决定](docs/HUA_DECISIONS.md)
-- [Lexer/Parser 规则](docs/LEXER_PARSER.md)
-- [Phase 2 语义与执行规则](docs/PHASE2_SEMANTICS.md)
-- [Phase 3 VM/模块规则](docs/PHASE3_VM_MODULES.md)
-- [Phase 4 HUAB/扩展规则](docs/PHASE4_ARTIFACTS_EXTENSIONS.md)
-- [未决问题](docs/OPEN_QUESTIONS.md)
-- [项目交接与测试结果](docs/CODEX_HUA_HANDOFF.md)
+- [设计决定](docs/设计决策.md)
+- [Lexer/Parser 规则](docs/词法与语法规则.md)
+- [Phase 2 语义与执行规则](docs/第二阶段_语义分析与解释器.md)
+- [Phase 3 VM/模块规则](docs/第三阶段_虚拟机与模块.md)
+- [Phase 4 HUAB/扩展规则](docs/第四阶段_字节码文件与扩展.md)
+- [Phase 5 Map/多返回/Result/Optional 规则](docs/第五阶段_映射多返回与结果语义.md)
+- [Phase 6 程序输入/文件/字符串/JSON](docs/第六阶段_程序输入与基础标准库.md)
+- [Phase 7 字节/二进制文件/动态列表/缓冲](docs/第七阶段_字节与动态容器.md)
+- [Phase 8 可选 Python Bridge](docs/第八阶段_可选外部解释器桥接.md)
+- [未决问题](docs/未决问题.md)
+- [项目交接与测试结果](docs/当前项目交接.md)
 
 ## 仓库与许可证
 
 项目仓库：[NssSSLY/Hua](https://github.com/NssSSLY/Hua)。沿用仓库已有的 [Apache 2.0 许可证](LICENSE)。
 `.tools/`、`build*/`、`.hua/` 缓存和生成的 `.huab` 不提交，源码 `.huam` 接口清单正常保存。
+
+## Phase 9 语言与类型示例
+
+接口符合性、带数据枚举与穷尽 match、显式用户泛型、局部函数/结构、词法块 defer 已可在两种执行器与 HUAB 中使用。
+精确数值和固定数组支持范围/溢出检查及 sizeof/alignof；已知调用图推断容器返回写能力。
+
+```powershell
+.\build\hua.exe run .\examples\language_features.hua
+.\build\hua.exe build .\examples\language_features.hua -o .\build\language_features.huab
+.\build\hua.exe run .\build\language_features.huab
+```
+
+97 个新增用例、549 项检查通过。语法、复制/捕获/布局规则和未开放项见 [Phase 9 语言与类型合同](docs/第九阶段_语言结构与类型系统.md)。
+
+## GC、异步任务与并行计算
+
+专用地址稳定GC已接入。async/await/spawn、Task<T>、结构化taskgroup，以及std.task取消/毫秒超时/all/race可运行。
+parallel for支持独立数组计算，最多8线程块；simd for为受检查提示，std.simd.add/sub/mul使用实际SSE2浮点向量运算，无SSE2时采用标量后备。
+标准库90接口、HUAB writer6/reader1–6；Native ABI1与可选Python接口不变。任务采用私有深复制快照，禁止跨任务可变借用/全局写入、stdin和后台Native/WASM/Python调用。事件循环、async方法、Channel、通用自动SIMD仍待完成。
+
+```powershell
+.\build\hua.exe run .\examples\concurrency.hua
+.\build\hua.exe interpret .\examples\concurrency.hua
+.\build\hua.exe build .\examples\concurrency.hua -o .\build\concurrency.huab
+.\build\hua.exe run .\build\concurrency.huab
+```
+
+完整规则和输出见 [Phase 10 GC与并发](docs/第十阶段_垃圾回收异步与并行.md)。新增68用例、409项检查和完整CTest16/16通过；GC根/循环、真实线程屏障/64上限、取消清理、SSE2指令和独立关闭Python构建均已核对。
+
+
+## 本地安装、VS Code 与自举起步
+
+现在可把核心安装到用户目录并配置PATH；默认使用build-python-off的hua.exe和wasmtime.dll。不需要为运行普通Hua程序安装C++工具链或Python。
+
+```powershell
+.\scripts\install-local.ps1 -AddToUserPath
+hua run .\examples\hello.hua
+hua build .\examples\hello.hua -o .\build\hello.huab
+hua run .\build\hello.huab
+code --install-extension .\build\hua-language-0.1.0.vsix
+```
+
+安装包不存在时运行 `python .\scripts\package-vscode.py`。首次构建请先用build.ps1（可指定-BuildDirectory build-python-off）或前文CMake方式生成核心；其他构建可传安装脚本-BuildDirectory。配置用户PATH后重新打开其他终端/VS Code。
+基础插件源码在 [editors/vscode](editors/vscode/README.md)：高亮、片段、保存检查和检查/运行/构建命令；无LSP、定义跳转或调试器。
+Hua编写的 [词法器](selfhost/lexer.hua) 已能扫描自身源码；135输入、541项进程检查对照C++/解释器/VM/移除源码后的HUAB。插件6项针对性测试及真实VS Code隔离安装通过。
+
+```powershell
+hua run .\selfhost\main.hua -- .\selfhost\lexer.hua
+```
+
+完整自举仍缺Hua Parser/AST、语义与降级、字节码/HUAB生成、连续编译自身比较。安装、限制与分阶段路线见 [Phase11开发与自举指南](docs/第十一阶段_本地开发与自举.md)。

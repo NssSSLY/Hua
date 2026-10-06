@@ -1,0 +1,5 @@
+struct Item { n int }
+var m=map[string]Item{"x":Item{n:1}}
+var item=unwrap(m["x"])
+item.n=3
+print(unwrap(m["x"]).n,item.n)

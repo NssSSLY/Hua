@@ -1,0 +1,4 @@
+HUA_NATIVE 1
+# Optional embedded CPython bridge; Python starts only on initialize().
+pub fn initialize(home string) string {}
+pub fn request(message string) string {}

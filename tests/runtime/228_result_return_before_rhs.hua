@@ -1,0 +1,6 @@
+fn bad() Result<int> { return err("stop") }
+fn value() int { print("must not run")
+return 4 }
+fn work() Result<int> { let a,b=bad()?,value()
+return ok(a+b) }
+print(work())

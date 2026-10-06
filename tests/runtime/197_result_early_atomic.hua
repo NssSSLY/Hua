@@ -1,0 +1,10 @@
+var m=map[string]int{"a":1,"b":2}
+fn fail() Result<int> { return err("stop") }
+fn work() Result<int> {
+for i in 0..3 {
+m["a"],m["b"] = 10,fail()?
+}
+return ok(9)
+}
+print(work(),unwrap(m["a"]),unwrap(m["b"]))
+print(work(),unwrap(m["a"]))

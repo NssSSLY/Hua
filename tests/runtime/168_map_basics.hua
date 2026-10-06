@@ -1,0 +1,5 @@
+var m=map[string]int{"a":1,"b":2}
+print(len(m),m.len,unwrap(m["a"]),m["none"],has(m,"none"))
+m["a"]+=4
+m["c"]=3
+print(unwrap(m["a"]),len(m),delete(m,"b"),delete(m,"b"),has(m,"b"))

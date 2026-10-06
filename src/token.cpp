@@ -19,6 +19,7 @@ TokenKind identifier_kind(std::string_view text) {
 std::string_view token_name(TokenKind kind) {
     using K = TokenKind;
     switch (kind) {
+    case TokenKind::Arrow:return "=>";
     case K::End: return "end of file";
     case K::Newline: return "newline";
     case K::Identifier: return "identifier";

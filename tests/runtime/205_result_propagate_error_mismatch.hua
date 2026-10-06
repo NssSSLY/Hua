@@ -1,0 +1,2 @@
+fn fail() Result<int,int> { return err(7) }
+fn work() Result<int> { return ok(fail()?) }

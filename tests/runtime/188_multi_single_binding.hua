@@ -1,0 +1,2 @@
+fn values() (int,int) { return 1,2 }
+let x=values()

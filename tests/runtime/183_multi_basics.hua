@@ -1,0 +1,7 @@
+fn divmod(a int,b int) (int,int) { return a//b,a%b }
+let q,r=divmod(10,3)
+var a,b=1,2
+a,b=b,a
+print(q,r,a,b)
+let _,last=divmod(17,5)
+print(last)

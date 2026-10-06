@@ -1,0 +1,2 @@
+let r Result<float>,n float = ok(2),3
+print(type(unwrap(r)),unwrap(r),type(n),n)

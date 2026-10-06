@@ -1,0 +1,7 @@
+fn pair() (int,int) { return 1,2 }
+fn step() Result<int> {
+let x=ok(1)?
+return ok(x) }
+var m=map[string]int{"x":1,"y":2}
+let a int,b=pair()
+m["x"],_=a,b

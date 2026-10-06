@@ -3,7 +3,15 @@
 namespace hua {
 std::string_view node_name(NodeKind kind) {
     switch (kind) {
+    case NodeKind::Defer:return "Defer";case NodeKind::Attribute:return "Attribute";case NodeKind::GenericParameters:return "GenericParameters";case NodeKind::Specialize:return "Specialize";case NodeKind::Interface:return "Interface";case NodeKind::Enum:return "Enum";case NodeKind::Variant:return "Variant";case NodeKind::Match:return "Match";case NodeKind::MatchArm:return "MatchArm";
     case NodeKind::ExternalInit: return "ExternalInit";
+    case NodeKind::MapLiteral: return "MapLiteral";
+    case NodeKind::MapEntry: return "MapEntry";
+    case NodeKind::Pack: return "Pack";
+    case NodeKind::BindingList: return "BindingList";
+    case NodeKind::MultiBinding: return "MultiBinding";
+    case NodeKind::MultiAssignment: return "MultiAssignment";
+    case NodeKind::Propagate: return "Propagate";
 #define HUA_NODE(x) case NodeKind::x: return #x;
     HUA_NODE(Program) HUA_NODE(Block) HUA_NODE(Let) HUA_NODE(Var) HUA_NODE(Const)
     HUA_NODE(Function) HUA_NODE(Parameter) HUA_NODE(ReturnTypes) HUA_NODE(Struct) HUA_NODE(Field)

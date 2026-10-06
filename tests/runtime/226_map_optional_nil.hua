@@ -1,0 +1,4 @@
+var m=map[string]int?{"x":nil}
+print(has(m,"x"),is_none(m["x"]),has(m,"missing"))
+m["x"]=3
+print(unwrap(m["x"]))

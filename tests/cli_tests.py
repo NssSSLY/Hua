@@ -19,7 +19,7 @@ def run(args, code, stdout=None, stderr=None):
     checks += 1
     return result
 
-run(["version"], 0, "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 1\n")
+run(["version"], 0, "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n")
 run(["--version"], 0, "Hua 0.1.0-dev")
 run(["--help"], 0, "Usage:")
 for args in ([], ["run"], ["ast"], ["check"], ["version", "extra"], ["unknown", "file"]):

@@ -1,0 +1,22 @@
+# 程序参数中的文件路径相对运行目录；标准输入读一行。
+import std.os as os
+import std.io as io
+import std.fs as fs
+import std.strings as strings
+import std.json as json
+
+fn report() Result<string> {
+    let args=os.args()
+    if len(args)!=1 { return err("usage: standard_library.hua -- profile.json") }
+    let document=json.decode(fs.read_text(args[0])?)?
+    let name=json.as_string(json.get(document,"name")?)?
+    let tags=json.get(document,"tags")?
+    let count=json.len(tags)?
+    let line=io.read_line()?
+    return ok(strings.upper_ascii(name)+":"+str(count)+":"+unwrap_or(line,"EOF"))
+}
+fn main() {
+    let result=report()
+    if is_err(result) { print("error:",unwrap_err(result)) }
+    else { print(unwrap(result)) }
+}

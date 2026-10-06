@@ -1,0 +1,4 @@
+fn write(mut m map[string]int) { m["x"]=3 }
+fn apply(f,m) { f(m) }
+let m=map[string]int{}
+apply(write,m)

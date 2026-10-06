@@ -1,0 +1,38 @@
+# Optional Native module; copy this wrapper and its DLL/manifest together.
+import python_native as native
+import std.json as json
+
+fn response(raw string) Result<Json> {
+    let message=json.decode(raw)?
+    let success=json.as_bool(json.get(message,"ok")?)?
+    if !success { return err(json.as_string(json.get(message,"error")?)?) }
+    return json.get(message,"value")
+}
+fn exchange(request string) Result<Json> { return response(native.request(request)) }
+fn number(request string) Result<int> { return json.as_int(exchange(request)?) }
+fn boolean(request string) Result<bool> { return json.as_bool(exchange(request)?) }
+fn text(request string) Result<string> { return json.as_string(exchange(request)?) }
+
+pub fn init(home string) Result<bool> { return json.as_bool(response(native.initialize(home))?) }
+pub fn version() Result<string> { return text("{\"op\":\"version\"}") }
+pub fn add_path(path string) Result<bool> {
+    return boolean("{\"op\":\"add_path\",\"path\":"+json.encode(path)?+"}")
+}
+pub fn import_module(name string) Result<int> {
+    return number("{\"op\":\"import\",\"name\":"+json.encode(name)?+"}")
+}
+pub fn getattr(object int,name string) Result<int> {
+    return number("{\"op\":\"getattr\",\"target\":"+str(object)+",\"name\":"+json.encode(name)?+"}")
+}
+pub fn from_value(value) Result<int> {
+    return number("{\"op\":\"from_json\",\"value\":"+json.encode(value)?+"}")
+}
+pub fn call_kw(function int,args []int,kwargs map[string]int) Result<int> {
+    return number("{\"op\":\"call\",\"target\":"+str(function)+",\"args\":"+json.encode(args)?+",\"kwargs\":"+json.encode(kwargs)?+"}")
+}
+pub fn call(function int,args []int) Result<int> { return call_kw(function,args,map[string]int{}) }
+pub fn to_json(object int) Result<Json> { return exchange("{\"op\":\"to_json\",\"target\":"+str(object)+"}") }
+pub fn to_string(object int) Result<string> { return text("{\"op\":\"to_string\",\"target\":"+str(object)+"}") }
+pub fn release(object int) Result<bool> { return boolean("{\"op\":\"release\",\"target\":"+str(object)+"}") }
+pub fn active_handles() Result<int> { return number("{\"op\":\"count\"}") }
+pub fn shutdown() Result<bool> { return boolean("{\"op\":\"shutdown\"}") }

@@ -1,0 +1,6 @@
+struct Pair { a int
+b int }
+fn Pair.swap() { self.a,self.b=self.b,self.a }
+var p=Pair{a:1,b:2}
+p.swap()
+print(p.a,p.b)
