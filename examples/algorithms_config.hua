@@ -1,0 +1,13 @@
+import std.alg as alg
+import std.math as math
+import std.time as time
+import std.os as os
+
+fn main() {
+    let begin = time.monotonic_ns()
+    let values = unwrap(alg.sorted([7, 2, 5, 2]))
+    print(values, alg.binary_search(values, 2), unwrap(alg.sum(values)))
+    print(unwrap(math.round(2.5)), unwrap(math.hypot(3.0, 4.0)))
+    print("elapsed_ns", time.monotonic_ns() - begin)
+    print("HUA_MODE", unwrap_or(unwrap(os.getenv("HUA_MODE")), "local"))
+}

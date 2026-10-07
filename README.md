@@ -1,11 +1,17 @@
 # Hua 0.1.0-dev
 
+从设计思想开始系统学习、检查每项规则，请先读 [Hua语言百科与设计核对](docs/语言百科与设计核对.md)：36章、206个编号条目，已有内容填入，未定结论留空，可逐项确认。
+
+
 轻量系统脚本语言。当前完成 **前端、基础语义、Map/多返回/Result/Optional 常用语义、栈式字节码 VM、`.huab` 文件读写、本地源码/Native/WASM 模块加载，以及程序输入/文本与二进制文件/字符串/JSON/动态列表/缓冲标准库，以及可选嵌入式 Python Bridge；本轮加入 interface/enum/match、泛型、闭包/defer、精确数值与固定数组布局**。
 
-写好第一个程序后：保存为main.hua，在它所在目录的VS Code终端输入 `hua run .\main.hua`。详细步骤和找不到hua时的处理见 [第一个程序怎么运行](docs/第一个程序运行指南.md)。
+写好第一个程序后：保存为main.hua，在它所在目录的VS Code终端输入 `hua run .\main.hua`。详细步骤和找不到hua时的处理见 [第一个程序怎么运行](docs/开发与运行指南.md)。
 
-先读 [当前完成度与使用说明](docs/当前完成度与使用说明.md)：已完成什么、尚缺什么、现在能做什么，以及入门/构建/部署步骤。此说明随每次功能更新维护。
-全部文档的中文文件名和历史资料入口见 [文档目录](docs/文档目录.md)。
+先读 [项目概览与进度](docs/项目概览与进度.md)：已完成什么、尚缺什么、现在能做什么，以及入门/构建/部署步骤。文档按改动涉及的内容维护，无需全量同步。
+全部文档的中文文件名和历史资料入口见 [文档目录](docs/文档目录.md)。运行耗时测量、应用模块布局和编译器目录说明见 [运行计时与模块结构](docs/开发与运行指南.md)。
+第一批25接口（数学/算法/时钟/getenv）已实现，见 [数学与算法接口合同](docs/标准库与内建接口.md)，可运行examples/algorithms_config.hua。
+标准库补齐计划与算法/Agent能力差距见 [标准库设计与实现路线](docs/标准库设计与实现路线.md)。
+标准库和公开函数清单：[标准库与内建接口](docs/标准库与内建接口.md)。
 
 ```powershell
 .\scripts\build.ps1
@@ -54,7 +60,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 输出 `Python sqrt: 9`、`missing package: true`、`handles: 0`。
 本机还验证 packaging 26.3 的类实例与属性，以及解释器/VM/无源码 HUAB 对照；其他包需按 CPython 版本/平台/外部依赖单独验收。
-完整 13 个接口、pip 项目安装、部署/释放/错误与兼容边界见 [Phase 8 Python Bridge](docs/第八阶段_可选外部解释器桥接.md)。这是调用 Python 库，未提供自动转为 Hua 库的工具。
+完整 13 个接口、pip 项目安装、部署/释放/错误与兼容边界见 [Python Bridge合同](docs/运行时与扩展设计.md)。这是调用 Python 库，未提供自动转为 Hua 库的工具。
 
 ## 语义与执行
 
@@ -71,7 +77,7 @@ ctest --test-dir build -C Release --output-on-failure
 - Result<T,E>、ok/err、解包和 `?` 传播；Optional 检测/解包与不可重绑局部名称的 nil 分支收窄。
 - core：print、str、int、float、len、clone、sqrt、min/max、abs、clamp、type，以及 has/delete、ok/err、is_ok/is_err、unwrap/unwrap_err/unwrap_or、is_some/is_none。
 
-新能力的完整规则与运行例子见 [Phase 5](docs/第五阶段_映射多返回与结果语义.md) 和 [values.hua](examples/values.hua)。
+新能力的完整规则与运行例子见 [值与结果规则](docs/语言设计与类型规则.md) 和 [values.hua](examples/values.hua)。
 
 执行顺序：登记函数/struct，按依赖顺序初始化模块一次，执行入口顶层语句，自动调用入口零参数 main（若存在）。
 函数使用模块词法环境，不读取调用者的局部变量。所有源码先检查，再开始产生执行副作用。
@@ -87,7 +93,7 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 输出 `HUA:3:hello`。参数在 `--` 后，文件相对路径基于工作目录，导入相对入口目录；check/build 不执行 I/O。
-完整接口、JSON 数值/UTF-8/资源边界及解释器对照命令见 [Phase 6 标准库](docs/第六阶段_程序输入与基础标准库.md)。
+完整接口、JSON 数值/UTF-8/资源边界及解释器对照命令见 [基础标准接口](docs/标准库与内建接口.md)。
 网络与数据库按用户选择留到后续阶段；当前没有 HTTP/SQLite 或文件流句柄接口。
 
 ## 字节、动态列表与缓冲
@@ -100,7 +106,7 @@ Bytes 保存任意字节，Buffer 支持追加文本/小端整数，List<T> 支�
 .\build\hua.exe run .\build\binary_collections.huab -- .\build\bootstrap.bin
 ```
 
-示例写入 17 字节并读回验证，输出与解释器对照见 [Phase 7 合同](docs/第七阶段_字节与动态容器.md)。
+示例写入 17 字节并读回验证，输出与解释器对照见 [字节与容器合同](docs/标准库与内建接口.md)。
 本阶段补齐自举基础设施，Hua 版本编译器与自举闭环仍未实现。
 
 ## 本地模块
@@ -116,7 +122,7 @@ print(p.length())
 无别名时以 `a.b.name` 访问；支持 `pub fn`、`pub struct`、限定类型和具名初始化。
 导入位于文件顶部；私有接口、缺失模块、循环与命名冲突均有定位诊断。
 重复导入和菱形依赖共享缓存，仅初始化一次；依赖模块的 main 不自动调用。
-模块测试和基础规则见 [VM/模块规则](docs/第三阶段_虚拟机与模块.md)。
+模块测试和基础规则见 [VM/模块规则](docs/运行时与扩展设计.md)。
 
 ## HUAB 与扩展
 
@@ -135,7 +141,7 @@ print(p.length())
 Native 使用 `include/hua/native.h` 的 opaque C ABI v1，支持标量与字符串；WASM 支持 i32/i64/f32/f64 导出函数，无 host imports/WASI。
 Native DLL 不嵌入文件，需按原相对路径放在 HUAB 目录内；Native 是可信的同进程代码。
 扩展示例输出 `42 42`、`hello Hua true`、`5 7`。
-格式、接口、资源上限和部署方法见 [HUAB / Native / WASM](docs/第四阶段_字节码文件与扩展.md)。
+格式、接口、资源上限和部署方法见 [HUAB / Native / WASM](docs/运行时与扩展设计.md)。
 
 ## 已冻结的运算符与注释规则
 
@@ -157,7 +163,7 @@ let c = 7 % 2 # 1
 文件第一行的 `#!...` 是 shebang，由 Lexer 忽略；其他位置的 `#!` 按普通 `#` 行注释处理。
 `//` 在所有位置只表示整除，不再识别为注释；`/* ... */` 不再是 Hua 注释。
 Lexer 用 depth 计数处理嵌套，并记录各层普通/文档闭合标记；注释换行保留 NEWLINE。
-字符串中的所有注释标记保持字面内容。完整规则见 `docs/词法与语法规则.md`。
+字符串中的所有注释标记保持字面内容。完整规则见 `docs/语言设计与类型规则.md`。
 
 ## 当前限制
 
@@ -187,17 +193,13 @@ HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
 
 原始 Nova 规范保留，Hua 命名副本及当前决定见：
 
-- [设计决定](docs/设计决策.md)
-- [Lexer/Parser 规则](docs/词法与语法规则.md)
-- [Phase 2 语义与执行规则](docs/第二阶段_语义分析与解释器.md)
-- [Phase 3 VM/模块规则](docs/第三阶段_虚拟机与模块.md)
-- [Phase 4 HUAB/扩展规则](docs/第四阶段_字节码文件与扩展.md)
-- [Phase 5 Map/多返回/Result/Optional 规则](docs/第五阶段_映射多返回与结果语义.md)
-- [Phase 6 程序输入/文件/字符串/JSON](docs/第六阶段_程序输入与基础标准库.md)
-- [Phase 7 字节/二进制文件/动态列表/缓冲](docs/第七阶段_字节与动态容器.md)
-- [Phase 8 可选 Python Bridge](docs/第八阶段_可选外部解释器桥接.md)
-- [未决问题](docs/未决问题.md)
-- [项目交接与测试结果](docs/当前项目交接.md)
+- [项目概览与进度](docs/项目概览与进度.md)
+- [开发与运行指南](docs/开发与运行指南.md)
+- [语言设计与类型规则](docs/语言设计与类型规则.md)
+- [运行时与扩展设计](docs/运行时与扩展设计.md)
+- [标准库与内建接口](docs/标准库与内建接口.md)
+- [标准库设计与实现路线](docs/标准库设计与实现路线.md)
+- [设计决策与未决事项](docs/设计决策与未决事项.md)
 
 ## 仓库与许可证
 
@@ -215,13 +217,13 @@ HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
 .\build\hua.exe run .\build\language_features.huab
 ```
 
-97 个新增用例、549 项检查通过。语法、复制/捕获/布局规则和未开放项见 [Phase 9 语言与类型合同](docs/第九阶段_语言结构与类型系统.md)。
+97 个新增用例、549 项检查通过。语法、复制/捕获/布局规则和未开放项见 [语言与类型规则](docs/语言设计与类型规则.md)。
 
 ## GC、异步任务与并行计算
 
 专用地址稳定GC已接入。async/await/spawn、Task<T>、结构化taskgroup，以及std.task取消/毫秒超时/all/race可运行。
 parallel for支持独立数组计算，最多8线程块；simd for为受检查提示，std.simd.add/sub/mul使用实际SSE2浮点向量运算，无SSE2时采用标量后备。
-标准库90接口、HUAB writer6/reader1–6；Native ABI1与可选Python接口不变。任务采用私有深复制快照，禁止跨任务可变借用/全局写入、stdin和后台Native/WASM/Python调用。事件循环、async方法、Channel、通用自动SIMD仍待完成。
+标准库115接口、HUAB writer6/reader1–6；Native ABI1与可选Python接口不变。任务采用私有深复制快照，禁止跨任务可变借用/全局写入、stdin和后台Native/WASM/Python调用。事件循环、async方法、Channel、通用自动SIMD仍待完成。
 
 ```powershell
 .\build\hua.exe run .\examples\concurrency.hua
@@ -230,7 +232,7 @@ parallel for支持独立数组计算，最多8线程块；simd for为受检查�
 .\build\hua.exe run .\build\concurrency.huab
 ```
 
-完整规则和输出见 [Phase 10 GC与并发](docs/第十阶段_垃圾回收异步与并行.md)。新增68用例、409项检查和完整CTest16/16通过；GC根/循环、真实线程屏障/64上限、取消清理、SSE2指令和独立关闭Python构建均已核对。
+完整规则和输出见 [GC与并发合同](docs/运行时与扩展设计.md)。新增68用例、409项检查和当时完整CTest16/16通过（当前最新结果见项目概览）；GC根/循环、真实线程屏障/64上限、取消清理、SSE2指令和独立关闭Python构建均已核对。
 
 
 ## 本地安装、VS Code 与自举起步
@@ -253,4 +255,4 @@ Hua编写的 [词法器](selfhost/lexer.hua) 已能扫描自身源码；135输�
 hua run .\selfhost\main.hua -- .\selfhost\lexer.hua
 ```
 
-完整自举仍缺Hua Parser/AST、语义与降级、字节码/HUAB生成、连续编译自身比较。安装、限制与分阶段路线见 [Phase11开发与自举指南](docs/第十一阶段_本地开发与自举.md)。
+完整自举仍缺Hua Parser/AST、语义与降级、字节码/HUAB生成、连续编译自身比较。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。

@@ -430,6 +430,13 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
             if(auto f=standard_function(name)){
                 if(args.size()!=f->parameters.size())error(n,"standard function argument count mismatch","E3005");
                 std::vector<std::string> types;for(const auto& a:args)types.push_back(a.type);
+                if(f->module=="math")for(std::size_t i=0;i<types.size();++i)if(!types[i].empty()&&types[i]!="float")error(*n.children[i+1],"math requires explicit default float arguments","E3004");
+                if(f->module=="alg"&&!types[0].empty()){
+                    auto element=element_type(types[0]);
+                    if(!types[0].starts_with('[')||(element!="int"&&element!="float"&&element!="string"))error(n,"algorithm requires int/float/string array or slice","E3004");
+                    if(f->name=="sum"&&element=="string")error(n,"sum requires int/float array or slice","E3004");
+                    if(types.size()==2&&!types[1].empty()&&types[1]!=element)error(*n.children[2],"algorithm target requires identical element type","E3004");
+                }
                 if(f->module=="list"&&!types.empty()&&!types[0].empty()){
                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
                     else if(type_arguments(types[0],"List").size()!=1)error(n,"expected List<T>","E3004");

@@ -16,6 +16,8 @@ struct RuntimeContext {
 struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; };
 struct StandardSignature { std::vector<std::string> parameters; std::string result; };
 StandardSignature standard_signature(const StandardFunction& function,const std::vector<std::string>& argument_types);
+Value invoke_algorithm_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
+Value invoke_system_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 Value invoke_binary_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 const std::vector<StandardFunction>& standard_functions();
 std::string standard_name(const StandardFunction& function);

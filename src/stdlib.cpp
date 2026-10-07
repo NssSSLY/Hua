@@ -17,6 +17,31 @@ void bounded(const std::string& text,const SourceSpan& s){if(text.size()>max_tex
 }
 const std::vector<StandardFunction>& standard_functions() {
     static const std::vector<StandardFunction> functions={
+        {"math","floor",{"float"},"Result<float,string>",false,false,6},
+        {"math","ceil",{"float"},"Result<float,string>",false,false,6},
+        {"math","trunc",{"float"},"Result<float,string>",false,false,6},
+        {"math","round",{"float"},"Result<float,string>",false,false,6},
+        {"math","sin",{"float"},"Result<float,string>",false,false,6},
+        {"math","cos",{"float"},"Result<float,string>",false,false,6},
+        {"math","tan",{"float"},"Result<float,string>",false,false,6},
+        {"math","exp",{"float"},"Result<float,string>",false,false,6},
+        {"math","log",{"float"},"Result<float,string>",false,false,6},
+        {"math","log2",{"float"},"Result<float,string>",false,false,6},
+        {"math","log10",{"float"},"Result<float,string>",false,false,6},
+        {"math","hypot",{"float","float"},"Result<float,string>",false,false,6},
+        {"alg","sorted",{""},"",false,false,6},
+        {"alg","reverse",{""},"",false,false,6},
+        {"alg","contains",{"",""},"",false,false,6},
+        {"alg","index",{"",""},"",false,false,6},
+        {"alg","lower_bound",{"",""},"",false,false,6},
+        {"alg","upper_bound",{"",""},"",false,false,6},
+        {"alg","binary_search",{"",""},"",false,false,6},
+        {"alg","sum",{""},"",false,false,6},
+        {"alg","min",{""},"",false,false,6},
+        {"alg","max",{""},"",false,false,6},
+        {"time","monotonic_ns",{},"int",false,false,6},
+        {"time","unix_ms",{},"int",false,false,6},
+        {"os","getenv",{"string"},"Result<string?,string>",false,false,6},
         {"simd","backend",{},"string",false,false,6},
         {"simd","add",{"",""},"",false,true,6},
         {"simd","sub",{"",""},"",false,true,6},
@@ -123,8 +148,16 @@ std::string text_utf8_error(std::string_view s) {
 Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,const SourceSpan& s,std::ostream& output,RuntimeContext* context) {
     if(input.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
     std::vector<std::string> types;for(const auto& v:input)types.push_back(value_type(v));auto signature=standard_signature(f,types);
+    if(f.module=="math"){
+        for(const auto& value:input)if(value_type(value)!="float")runtime_error(s,"math requires explicit default float arguments","E4003");
+        return invoke_algorithm_standard(f,input,s,context);
+    }
+    if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=signature.parameters[1])
+        runtime_error(s,"algorithm target requires identical element type","E4003");
     std::vector<Value> args;for(std::size_t i=0;i<input.size();++i){if(signature.parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(signature.parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],signature.parameters[i],s));}
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data))writable=p->writable;if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
+    if(f.module=="alg")return invoke_algorithm_standard(f,args,s,context);
+    if(f.module=="time"||(f.module=="os"&&f.name=="getenv"))return invoke_system_standard(f,args,s,context);
     if(f.module=="simd")return simd_standard(f.name,args,s,context);
     if(f.module=="gc"){auto& heap=managed_heap();return Value(static_cast<I>(f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected()));}
     if(f.module=="task")return task_standard(f.name,args,s,context);

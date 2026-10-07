@@ -11,6 +11,16 @@ std::string item_type(const std::string& type){auto items=type_arguments(type,"L
 }
 StandardSignature standard_signature(const StandardFunction& f,const std::vector<std::string>& types){
     StandardSignature out{f.parameters,f.result};
+    if(f.module=="alg"&&!types.empty()){
+        auto close=types[0].find(']');auto element=types[0].starts_with('[')&&close!=std::string::npos?types[0].substr(close+1):"";
+        out.parameters[0]="[]"+element;if(out.parameters.size()==2)out.parameters[1]=element;
+        if(f.name=="sorted"||f.name=="reverse")out.result="Result<[]"+element+",string>";
+        else if(f.name=="contains")out.result="bool";
+        else if(f.name=="binary_search")out.result=element.empty()?"":"int?";
+        else if(f.name=="sum"||f.name=="min"||f.name=="max")out.result="Result<"+element+",string>";
+        else out.result="int";
+        return out;
+    }
     if(f.module=="simd"&&f.name!="backend"&&types.size()==2){auto close=types[0].find(']');auto element=types[0].starts_with('[')&&close!=std::string::npos?types[0].substr(close+1):"";if(!element.empty()){out.parameters={"[]"+element,"[]"+element};out.result="Result<[]"+element+",string>";}return out;}
     if(f.module=="task"&&!types.empty()){
         auto task=type_arguments(types[0],"Task");if(task.size()==1){out.parameters[0]=types[0];if(f.name=="all"||f.name=="race")out.parameters[1]=types[0];

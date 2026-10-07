@@ -24,4 +24,4 @@ hua run .\main.hua
 & "C:\file\project\hua\build-python-off\hua.exe" run .\main.hua
 ```
 
-hua.compilerPath仅配置插件，不设置终端PATH。安装步骤、Hello Hua示例及字节码运行见 [第一个程序怎么运行](../../docs/第一个程序运行指南.md)。
+hua.compilerPath仅配置插件，不设置终端PATH。安装步骤、Hello Hua示例及字节码运行见 [第一个程序怎么运行](../../docs/开发与运行指南.md)。
