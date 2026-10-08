@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "project_id": "aab00f84-5a35-48b3-973b-4ccd29e3d31c",
+  "project_name": "hua",
+  "repository": "https://github.com/NssSSLY/Hua.git",
+  "repository_root": ".",
+  "default_branch": "main",
+  "created_at": "2026-10-08T15:06:46+00:00",
+  "updated_at": "2026-10-08T15:06:48+00:00"
+}
