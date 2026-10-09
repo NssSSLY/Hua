@@ -26,3 +26,5 @@ E1阶段历史证据：完整24/24（116.27秒，Windows x64 Release，Python Br
 2026-10-09最新：用户确认ER-DEC-01–08并明确授权执行ER0/ER1基础。原125标准接口、38内建、13Python源码审阅完成；Result<void,E>无载荷ok()及std.error.Value只读名义值16接口已实现，当前16模块/141函数。旧默认string/125签名/Diagnostic/取消/预算/defer/ABI1保留；普通HUAB6、新Error/void能力7，读1–7，旧Runtime拒绝7且普通6可用。最终完整26/26及35/179已通过；百科0.9/207条确认原值/E0 43/history38保持。未提交推送，不自动启动ER2–ER4/其他HUA-D项。权威入口error-foundation-review、er0-interface-audit、er1-confirmed-contract、er1-runtime、er-foundation-verification。
 
 2026-10-09远程交付授权：用户要求推送当前累积工作到NssSSLY/Hua main，包含S1a/E0/E1/ER0/ER1及相关文档；普通推送不覆盖远程。过往未提交记录仅描述当时状态，最终交付以Git HEAD与origin/main实际核对为准。
+
+本次实际交付结果：S1a/E0/E1/ER0/ER1及文档累积改动已由6934825提交，换行修正011aaa8，已普通推送并核对远程main同SHA。后续交付记录本身也随Git保存；今后以本地HEAD/origin/main实际状态核对是否同步。
