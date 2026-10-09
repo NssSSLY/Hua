@@ -11,7 +11,7 @@ Value snapshot(const Value& input,const std::function<Callable(const Callable&,u
     if(auto p=std::get_if<StructValue>(&input.data)){auto d=managed<StructData>();d->name=p->data->name;for(const auto& [k,v]:p->data->fields)d->fields.emplace(k,snapshot(v,copy,depth+1));return Value(StructValue{d,false});}
     if(auto p=std::get_if<MapValue>(&input.data)){auto d=managed<MapData>();d->key_type=p->data->key_type;d->item_type=p->data->item_type;for(const auto& [k,v]:p->data->entries)d->entries.emplace(k,snapshot(v,copy,depth+1));return Value(MapValue{d,false});}
     if(auto p=std::get_if<ListValue>(&input.data)){auto d=managed<ListData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(ListValue{d,false});}
-    if(auto p=std::get_if<ResultValue>(&input.data)){auto r=*p;r.payload=managed<Value>(snapshot(*p->payload,copy,depth+1));r.writable=false;return Value(r);}
+    if(auto p=std::get_if<ResultValue>(&input.data)){auto r=*p;if(p->payload)r.payload=managed<Value>(snapshot(*p->payload,copy,depth+1));r.writable=false;return Value(r);}
     if(auto p=std::get_if<MultiValue>(&input.data)){auto d=managed<MultiData>();d->contextual=p->data->contextual;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(MultiValue{d});}
     if(auto p=std::get_if<SliceValue>(&input.data);p&&!p->packed){auto d=managed<std::vector<Value>>();for(std::size_t i=0;i<p->length;++i)d->push_back(snapshot(sequence_read(*p,i),copy,depth+1));auto s=*p;s.storage=d;s.start=0;s.writable=false;return Value(s);}
     return read_only(copy_value(input,true));
@@ -23,7 +23,7 @@ void transferable(const Value& v,unsigned depth=0){
     if(auto p=std::get_if<MapValue>(&v.data))for(const auto& [_,x]:p->data->entries)transferable(x,depth+1);
     if(auto p=std::get_if<ListValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
     if(auto p=std::get_if<SliceValue>(&v.data))for(std::size_t i=0;i<p->length;++i)transferable(sequence_read(*p,i),depth+1);
-    if(auto p=std::get_if<ResultValue>(&v.data))transferable(*p->payload,depth+1);
+    if(auto p=std::get_if<ResultValue>(&v.data);p&&p->payload)transferable(*p->payload,depth+1);
     if(auto p=std::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
 }
 std::vector<I> indices(const std::vector<Value>& args,const SourceSpan& span){

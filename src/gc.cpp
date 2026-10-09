@@ -28,6 +28,7 @@ void heap_edges(const Value& v,const HeapVisitor& visit){
         else if constexpr(std::is_same_v<T,Callable>){visit(x.closure.get());if(x.receiver)visit(x.receiver->data.get());}
     },v.data);
 }
+void heap_edges(const ErrorData& x,const HeapVisitor& v){v(x.cause.get());}
 void heap_edges(const StructData& x,const HeapVisitor& v){for(const auto& [_,item]:x.fields)heap_edges(item,v);}
 void heap_edges(const MapData& x,const HeapVisitor& v){for(const auto& [_,item]:x.entries)heap_edges(item,v);}
 void heap_edges(const ListData& x,const HeapVisitor& v){heap_edges(x.values,v);}

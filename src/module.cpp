@@ -144,6 +144,7 @@ ModuleLoader::Module& ModuleLoader::standard(const std::string& name,const Sourc
     auto owned=std::make_unique<Module>();owned->standard=true;owned->state=Module::State::Loaded;
     std::string text="# built-in standard interface; implemented by the shared runtime\n";
     for(const auto& f:standard_functions())if(name=="std."+f.module){text+="pub fn "+f.name+"(";for(std::size_t i=0;i<f.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i);if(!f.parameters[i].empty())text+=" "+f.parameters[i];}text+=") "+f.result+" {}\n";owned->globals.emplace(f.name,"$core$"+standard_name(f));}
+    if(name=="std.error"){text+="pub struct Value {}\n";owned->globals.emplace("Value","std.error.Value");}
     if(name=="std.json"){text+="pub struct Value {}\n";owned->globals.emplace("Value","Json");}
     owned->source=std::make_unique<Source>("<"+name+">",std::move(text));owned->tree=Parser(Lexer(*owned->source).scan()).parse();
     for(const auto& n:owned->tree->children)owned->exports.emplace(declared_name(*n),n.get());

@@ -1,6 +1,6 @@
 # Hua 0.1.0-dev
 
-从设计思想开始系统学习、检查每项规则，请先读 [Hua语言百科与设计核对](docs/语言百科与设计核对.md)：36章、206个编号条目，已有内容填入，未定结论留空，可逐项确认。
+从设计思想开始系统学习、检查每项规则，请先读 [Hua语言百科与设计核对](docs/语言百科与设计核对.md)：36章、207个编号条目，已有内容填入，未定结论留空，可逐项确认。
 
 
 轻量系统脚本语言。当前完成 **前端、基础语义、Map/多返回/Result/Optional 常用语义、栈式字节码 VM、`.huab` 文件读写、本地源码/Native/WASM 模块加载，以及程序输入/文本与二进制文件/字符串/JSON/动态列表/缓冲标准库，以及可选嵌入式 Python Bridge；本轮加入 interface/enum/match、泛型、闭包/defer、精确数值与固定数组布局**。
@@ -182,10 +182,24 @@ Lexer 用 depth 计数处理嵌套，并记录各层普通/文档闭合标记；
 - 本地模块图最多 128 文件/64 依赖层/64 MiB 源码，单文件 16 MiB。
 - check 不是完整静态类型证明；动态值、索引、别名和数值边界仍需运行时检查。
 
+## S1a：本地路径与文件状态
+
+新增`std.path.join/normalize/basename/dirname/ext/relative`和`std.fs.stat/rename/replace/temp_file`；当前15模块/125函数。路径为宿主纯词法处理；rename不覆盖，replace同卷普通文件改名，temp排他创建并关闭，由调用者删除。
+
+```powershell
+.\build\hua.exe check .\examples\local_paths.hua
+.\build\hua.exe run .\examples\local_paths.hua
+.\build\hua.exe interpret .\examples\local_paths.hua
+.\build\hua.exe build .\examples\local_paths.hua -o .\build\local_paths.huab
+.\build\hua.exe run .\build\local_paths.huab
+```
+
+输出`b demo.txt .txt`和`file 8`。错误、资源和平台边界见 [S1a合同](docs/标准库与内建接口.md#s1a路径与文件状态详细合同)。本次Windows验收；POSIX/第二卷未实测，不承诺断电持久提交。下一切片S1b JSON/配置。
+
 ## 文件与验证
 
 `include/hua` 和 `src` 保持前端、语义、值运算、解释器、编译器、VM 和模块加载分层。
-2026-10-06 开启可选 Python Bridge 的 CTest18/18通过（含GC/任务/并发、自举词法器与插件测试，桥接可选）。`tests/spec`：100 个语法样例、2608 检查；`tests/runtime`：187 个样例各跑两种引擎。
+2026-10-08 开启可选 Python Bridge 的完整CTest22/22通过（含GC/任务/并发、自举词法器与插件测试，桥接可选）。`tests/spec`：100 个语法样例、2608 检查；`tests/runtime`：187 个样例各跑两种引擎。
 另有 114 项 VM/模块 CLI、46 项原 CLI、551 项 HUAB/Native/WASM CLI 检查，126 个持久化运行样例及 30 次 CRC 修复随机变异检查；stdout 与错误均有独立预期。
 另有 269 项输入/标准库/JSON、185 项字节/列表/缓冲 CLI 检查，对照解释器/VM/无源码 HUAB，验证实际容量边界与独立 Python 字节/CRC。
 HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
@@ -223,7 +237,7 @@ HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
 
 专用地址稳定GC已接入。async/await/spawn、Task<T>、结构化taskgroup，以及std.task取消/毫秒超时/all/race可运行。
 parallel for支持独立数组计算，最多8线程块；simd for为受检查提示，std.simd.add/sub/mul使用实际SSE2浮点向量运算，无SSE2时采用标量后备。
-标准库115接口、HUAB writer6/reader1–6；Native ABI1与可选Python接口不变。任务采用私有深复制快照，禁止跨任务可变借用/全局写入、stdin和后台Native/WASM/Python调用。事件循环、async方法、Channel、通用自动SIMD仍待完成。
+标准库125接口、HUAB writer6/reader1–6；Native ABI1与可选Python接口不变。任务采用私有深复制快照，禁止跨任务可变借用/全局写入、stdin和后台Native/WASM/Python调用。事件循环、async方法、Channel、通用自动SIMD仍待完成。
 
 ```powershell
 .\build\hua.exe run .\examples\concurrency.hua
@@ -256,3 +270,5 @@ hua run .\selfhost\main.hua -- .\selfhost\lexer.hua
 ```
 
 完整自举仍缺Hua Parser/AST、语义与降级、字节码/HUAB生成、连续编译自身比较。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
+
+错误基础新增Result<void,E>与只读std.error.Value，默认string错误保持。当前16标准模块/141函数。运行`.\build\hua.exe run .\examples\error_foundation.hua`；[Error接口与逐接口盘点](docs/标准库与内建接口.md#standard-error-contract)、[本轮验收与边界](docs/项目概览与进度.md#er-foundation-verification)。普通HUAB写6，新错误能力写7，读1–7；Native ABI1保持。

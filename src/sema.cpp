@@ -54,7 +54,7 @@ void SemanticAnalyzer::define(const std::string& name,Symbol symbol,const Source
     if(!scopes_.back().emplace(name,std::move(symbol)).second)throw Diagnostic("E3002",span,"duplicate declaration `"+name+"` in this scope");
 }
 void SemanticAnalyzer::validate_type(const Node& n) {
-    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task"};
+    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","Json","Bytes","Buffer","Task"};
     if(n.kind==N::TypeName&&n.text.empty())return;
     if(n.kind==N::TypeName && !types.contains(n.text) && !model_.structures.contains(n.text)) {
         if(n.text.find('.')==std::string::npos)error(n,"unknown type `"+n.text+"`","E3004");
@@ -67,7 +67,7 @@ void SemanticAnalyzer::validate_type(const Node& n) {
         if(type_name(*n.children[1])=="void")error(n,"map values cannot be void","E3004");
         if(type_name(*n.children[1]).starts_with("Result<"))error(n,"map Result values require unsupported Optional<Result> lookup","E3004");
     }
-    if(n.kind==N::GenericType && n.text=="Result")for(const auto& t:n.children)if(type_name(*t)=="void")error(n,"Result payload cannot be void; use nil in a supported Optional success type","E3004");
+    if(n.kind==N::GenericType && n.text=="Result"&&n.children.size()>1&&type_name(*n.children[1])=="void")error(n,"Result error type cannot be void","E3004");
     if(n.kind==N::OptionalType && type_name(*n.children[0]).starts_with("Result<"))error(n,"Optional<Result> is not supported; use Result<T?>","E3004");
     for(const auto& c:n.children)validate_type(*c);
 }
@@ -76,6 +76,8 @@ void SemanticAnalyzer::require(const std::string& expected,const Info& actual,co
     if(expected.starts_with('[')&&n.kind==N::Array){auto close=expected.find(']');if(close==std::string::npos)error(n,"invalid array type","E3004");auto element=expected.substr(close+1);for(const auto& c:n.children)require(element,{model_.types.at(c.get()),model_.writable.at(c.get())},*c);return;}
     if(expected=="float" && actual.type=="int" && numeric_literal(n))return;
     auto es=type_arguments(expected,"Result"),as=type_arguments(actual.type,"Result");
+    if(as.size()==2&&as[0]=="void"&&as[1].empty()&&n.kind==N::Call&&n.children.size()==1){if(es.size()!=2||es[0]!="void"||es[1].empty())error(n,"ok() requires an explicit Result<void,E> context","E3004");model_.types[&n]=expected;return;}
+    if(actual.type=="void"&&expected!="void")error(n,"void has no usable value","E3004");
     if(es.size()==2&&as.size()==2&&n.kind==N::Call&&n.children.size()==2&&contextual_literal(*n.children[1])) {
         auto ct=model_.types.find(n.children[0].get());if(ct!=model_.types.end()&&(ct->second=="builtin:ok"||ct->second=="builtin:err")){
             auto side=ct->second=="builtin:ok"?0u:1u;if(compatible(es[1-side],as[1-side])){require(es[side],{as[side],actual.writable},*n.children[1]);return;}
@@ -184,6 +186,7 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
             error(*fn,"typed function may reach its end without returning a value","E3006");
         scopes_.pop_back();current_function_=nullptr;
     }
+    for(const auto& [node,type]:model_.types)if(node->kind==N::Call&&node->children.size()==1&&type=="Result<void,>")error(*node,"ok() requires an explicit Result<void,E> context","E3004");
     return model_;
 }
 void SemanticAnalyzer::statements(const Node& block,bool scope) {
@@ -207,7 +210,7 @@ void SemanticAnalyzer::statement(const Node& n) {
     switch(n.kind) {
     case N::Block:statements(n);break;
     case N::Let:case N::Var:case N::Const: {
-        auto info=expression(*n.children.back());if(!type_arguments(info.type,"multi").empty())error(n,"multiple values require positional binding","E3006");auto declared=n.children.size()==2 ? type_name(*n.children[0]):info.type;
+        auto info=expression(*n.children.back());if(info.type=="void")error(n,"void cannot be bound","E3004");if(!type_arguments(info.type,"multi").empty())error(n,"multiple values require positional binding","E3006");auto declared=n.children.size()==2 ? type_name(*n.children[0]):info.type;
         if(n.children.size()==2){validate_type(*n.children[0]);require(declared,info,*n.children.back());}
         std::optional<Value> folded;
         if(n.kind==N::Const){folded=enforce_type(constant(*n.children.back()),declared,n.span,numeric_literal(*n.children.back()));model_.constants[&n]=*folded;}
@@ -303,7 +306,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     case N::String:out={"string",false};break;case N::Boolean:out={"bool",false};break;case N::Nil:out={"nil",false};break;
     case N::Name:{auto& s=lookup(n.text,n.span);out={s.type,s.writable};break;}
     case N::Pack: {
-        std::string type="multi<";bool writable=true;for(std::size_t i=0;i<n.children.size();++i){auto x=expression(*n.children[i]);if(!type_arguments(x.type,"multi").empty())error(n,"nested multiple values are not supported","E3006");if(i)type+=',';type+=x.type;if(x.type.starts_with('[')||x.type.starts_with("map<")||x.type.starts_with("Result<")||x.type.starts_with("List<")||x.type=="Buffer")writable=writable&&x.writable;}out={type+">",writable};break;
+        std::string type="multi<";bool writable=true;for(std::size_t i=0;i<n.children.size();++i){auto x=expression(*n.children[i]);if(x.type=="void")error(n,"void cannot be packed as a value","E3004");if(!type_arguments(x.type,"multi").empty())error(n,"nested multiple values are not supported","E3006");if(i)type+=',';type+=x.type;if(x.type.starts_with('[')||x.type.starts_with("map<")||x.type.starts_with("Result<")||x.type.starts_with("List<")||x.type=="Buffer")writable=writable&&x.writable;}out={type+">",writable};break;
     }
     case N::MapLiteral: {
         validate_type(*n.children[0]);auto type=type_name(*n.children[0]);auto ts=type_arguments(type,"map");
@@ -317,11 +320,12 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     }
     case N::Array: {
         std::string element;
-        for(const auto& c:n.children){auto x=expression(*c);if(element.empty())element=x.type;else require(element,x,*c);}
+        for(const auto& c:n.children){auto x=expression(*c);if(x.type=="void")error(*c,"void cannot be an array element","E3004");if(element.empty())element=x.type;else require(element,x,*c);}
         out={"[]"+element,true};break;
     }
     case N::Unary: {
         auto x=expression(*n.children[0]);
+        if(x.type=="void")error(n,"void is not an operand","E3004");
         if(auto numeric=numeric_spec(x.type);numeric&&x.type!="int"&&x.type!="float"&&n.text!="&"&&n.text!="!"){if(n.text=="~"&&numeric->category=='f')error(n,"bitwise unary requires an integer","E3004");if(n.text=="-"&&numeric->category=='u')error(n,"unsigned negation requires explicit signed conversion","E3004");out={x.type,false};break;}
         if(n.text=="&"){out={"ref<"+x.type+">",false};break;}
         if(n.text=="!"){require("bool",x,n);out={"bool",false};break;}
@@ -331,6 +335,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     }
     case N::Binary: {
         auto a=expression(*n.children[0]);auto op=n.text;auto before=scopes_;if(op=="&&"||op=="||")narrow(*n.children[0],op=="&&");auto b=expression(*n.children[1]);if(op=="&&"||op=="||")join_flow(before);
+        if(a.type=="void"||b.type=="void")error(n,"void is not an operand","E3004");
         if(op=="&&" || op=="||"){require("bool",a,n);require("bool",b,n);out={"bool",false};break;}
         if(op=="==" || op=="!=") {
             if(a.type!="nil" && b.type!="nil")require(a.type,b,n);
@@ -371,6 +376,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         out={n.kind==N::Slice ? "[]"+element:element,base.writable};break;
     }
     case N::StructLiteral: {
+        if(n.text=="std.error.Value")error(n,"standard Error must be constructed through std.error","E3004");
         auto found=model_.structures.find(n.text);if(found==model_.structures.end())error(n,"unknown struct `"+n.text+"`","E3004");
         if(found->second->text.find(" interface")!=std::string::npos)error(n,"interface cannot be constructed directly","E3004");
         std::unordered_set<std::string> seen;
@@ -399,7 +405,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     }
     case N::Call: {
         auto callee=expression(*n.children[0]);std::vector<Info> args;
-        for(std::size_t i=1;i<n.children.size();++i){auto a=expression(*n.children[i]);if(!type_arguments(a.type,"multi").empty())error(n,"multiple values require positional binding","E3006");args.push_back(a);}
+        for(std::size_t i=1;i<n.children.size();++i){auto a=expression(*n.children[i]);if(!type_arguments(a.type,"multi").empty())error(n,"multiple values require positional binding","E3006");if(a.type=="void")error(*n.children[i],"void cannot be passed as a value","E3004");args.push_back(a);}
         if(callee.type.starts_with("fn:")) {
             auto key=callee.type.substr(3);auto fn=model_.functions.at(key);if(fn->text.find(" abstract")!=std::string::npos&&n.children[0]->kind!=N::Member)error(n,"interface prototype requires a concrete receiver","E3004");auto ps=parameters(*fn);
             if(ps.size()!=args.size())error(n,"function argument count mismatch","E3005");
@@ -456,12 +462,13 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                 out={signature.result,f->writable_result};break;
             }
             const std::size_t arity=(name=="min"||name=="max"||name=="has"||name=="delete"||name=="unwrap_or")?2:name=="clamp"?3:1;
-            if(name!="print" && args.size()!=arity)error(n,"builtin argument count mismatch","E3005");
+            if(name!="print" && !(name=="ok"&&args.empty()) && args.size()!=arity)error(n,"builtin argument count mismatch","E3005");
             if(numeric_spec(name)&&name!="int"&&name!="float"){if(!args[0].type.empty()&&!numeric_spec(args[0].type)&&args[0].type!="string")error(n,"numeric conversion requires a number or string","E3004");out={name,false};break;}
+            if(name=="ok"&&args.empty()){out={"Result<void,>",false};break;}
             if(name=="ok"||name=="err"){out={name=="ok"?"Result<"+args[0].type+",>":"Result<,"+args[0].type+">",args[0].writable};if(args[0].type!="void"&&args[0].type!="nil"&&!args[0].type.starts_with('[')&&!args[0].type.starts_with("map<")&&!args[0].type.starts_with("List<")&&args[0].type!="Buffer")out.writable=true;if(args[0].type=="void")error(n,"Result payload cannot be void","E3004");break;}
             if(name=="is_some"||name=="is_none"){out={"bool",false};break;}
             if(name=="is_ok"||name=="is_err"||name=="unwrap_err"){auto ts=type_arguments(args[0].type,"Result");if(!args[0].type.empty()&&ts.size()!=2)error(n,"expected Result","E3004");out={name=="unwrap_err"?(ts.empty()?"":ts[1]):"bool",args[0].writable};break;}
-            if(name=="unwrap"||name=="unwrap_or"){auto ts=type_arguments(args[0].type,"Result");std::string type=ts.size()==2?ts[0]:args[0].type;if(ts.empty()&&type.ends_with('?'))type.pop_back();if(type=="nil")type="";if(name=="unwrap_or"){require(type,args[1],*n.children[2]);if(type.empty())type=args[1].type;}out={type,args[0].writable&&(name=="unwrap"||args[1].writable)};break;}
+            if(name=="unwrap"||name=="unwrap_or"){auto ts=type_arguments(args[0].type,"Result");std::string type=ts.size()==2?ts[0]:args[0].type;if(ts.empty()&&type.ends_with('?'))type.pop_back();if(type=="nil")type="";if(name=="unwrap_or"){if(type=="void")error(n,"Result<void> has no fallback value","E3004");require(type,args[1],*n.children[2]);if(type.empty())type=args[1].type;}out={type,args[0].writable&&(name=="unwrap"||args[1].writable)};break;}
             if(name=="has"||name=="delete"){auto ts=type_arguments(args[0].type,"map");if(!args[0].type.empty()&&ts.size()!=2)error(n,"expected map","E3004");if(!ts.empty())require(ts[0],args[1],*n.children[2]);if(name=="delete"&&!args[0].writable)error(n,"cannot mutate a read-only map","E3003");out={"bool",false};break;}
             if(!args.empty() && !args[0].type.empty()) {
                 const auto& t=args[0].type;

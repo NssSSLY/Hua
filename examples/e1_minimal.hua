@@ -1,0 +1,11 @@
+# E1 内部 IR 验证示例：仅使用标量、普通函数和控制流。
+fn factorial(n int) int {
+    if n<=1 {return 1}
+    return n*factorial(n-1)
+}
+fn main() {
+    var sum=0
+    for i in 1..=5 {sum+=factorial(i)}
+    let okay=sum==153 && true
+    print(sum,okay,-7//3,-7%3)
+}

@@ -1,7 +1,7 @@
 #pragma once
 #include "hua/sema.hpp"
 namespace hua {
-// In-memory instruction storage; archive.cpp defines HUAB v6; the reader also accepts v1-v5.
+// In-memory instruction storage; archive.cpp writes HUAB v6, or v7 for Error/void Result; reads v1-v7.
 enum class Op {
     Constant, Load, Bind, Pop, Unary, Binary, Jump, JumpFalse, JumpTrue,
     EnterScope, LeaveScope, Unwind, LocateName, LocateField, LocateIndex, Store,

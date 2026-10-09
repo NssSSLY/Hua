@@ -89,6 +89,17 @@ Code code(Reader& r,const Sources& sources,std::size_t& total) {
     }
     return c;
 }
+unsigned required_format(const Bytecode& bytecode,const SemanticModel& model){
+    unsigned format=6;
+    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=7;};
+    std::function<void(const Node&)> declaration=[&](const Node& n){if(n.kind==NodeKind::TypeName||n.kind==NodeKind::GenericType)type(type_name(n));for(const auto& c:n.children)declaration(*c);};
+    for(const auto& [_,n]:model.functions)declaration(*n);
+    for(const auto& [_,n]:model.structures)declaration(*n);
+    auto code=[&](const Code& c){for(const auto& op:c.instructions){type(op.type);auto name=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(auto f=standard_function(name))format=std::max(format,f->since);}};
+    code(bytecode.initializer);for(const auto& [_,c]:bytecode.functions)code(c);
+    return format;
+}
+
 struct State {std::vector<bool> stack;std::size_t scopes{},iterators{};bool operator==(const State&)const=default;};
 void verify(const Code& c,const SemanticModel& model) {
     if(c.instructions.empty() || c.instructions.size()>250000)bad({},"empty/oversized code chunk");
@@ -201,7 +212,7 @@ void write_huab(const std::filesystem::path& path,const Bytecode& b,const Semant
         for(const auto& e:m.exports){w.str(e.name);w.str(e.linked_name);w.str(e.result);w.count(e.parameters.size());for(const auto& t:e.parameters)w.str(t);}
     }
     code(w,b.initializer,src);w.count(b.functions.size());for(const auto& [name,n]:functions)if(auto c=b.functions.find(n);c!=b.functions.end())code(w,c->second,src);
-    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(6);header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
+    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(required_format(b,model));header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
     auto tmp=path;std::random_device random;tmp+=".tmp-"+std::to_string(random())+"-"+std::to_string(random());
     try {
         std::ofstream out(tmp,std::ios::binary|std::ios::trunc);if(!out)throw std::runtime_error("cannot create .huab output");out.write(header.bytes.data(),header.bytes.size());out.write(w.bytes.data(),w.bytes.size());out.flush();if(!out)throw std::runtime_error("failed to write complete .huab output");out.close();
@@ -216,7 +227,7 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     std::ifstream in(path,std::ios::binary|std::ios::ate);SourceSpan site{utf8(path),0,0,1,1};if(!in)bad(site,"cannot read file");auto size=in.tellg();if(size<32||size>static_cast<std::streamoff>(max_file))bad(site,"file size is outside 32 bytes..128 MiB");
     std::string data(static_cast<std::size_t>(size),'\0');in.seekg(0);if(!in.read(data.data(),size))bad(site,"truncated file");
     if(data.substr(0,8)!="HUAB\r\n\x1a\n")bad(site,"magic header mismatch");Reader header{std::string_view(data).substr(8,24),0,site};
-    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
+    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6&&format!=7)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
     if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site,format};BytecodeImage image;
     auto source_count=r.count(128);if(!source_count)bad(site,"missing source table");std::size_t text_bytes=0;
     for(std::size_t i=0;i<source_count;++i){auto file=r.str(),text=r.str();if(file.empty()||file.size()>16384||file.find('\0')!=std::string::npos)bad(site,"invalid source id");text_bytes+=text.size();if(text_bytes>64*1024*1024)bad(site,"source table exceeds 64 MiB");auto source=std::make_unique<Source>(file,std::move(text));if(image.source(file))bad(site,"duplicate source id");image.sources.push_back(std::move(source));}
@@ -248,6 +259,6 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     }
     std::size_t instructions=0;image.bytecode.initializer=code(r,src,instructions);if(image.bytecode.initializer.name!="<initialize>")bad(site,"invalid initializer code name");
     auto chunks=r.count(16384);for(std::size_t j=0;j<chunks;++j){auto c=code(r,src,instructions);auto fn=image.model.functions.find(c.name);if(fn==image.model.functions.end()||fn->second->text.find(" external")!=std::string::npos||!image.bytecode.functions.emplace(fn->second,std::move(c)).second)bad(site,"missing/duplicate function code metadata");}
-    if(r.offset!=r.bytes.size())bad(site,"trailing payload data");image.model.relations=interface_relations(image.model);verify_bytecode(image.bytecode,image.model);return image;
+    if(r.offset!=r.bytes.size())bad(site,"trailing payload data");if(format<7&&required_format(image.bytecode,image.model)==7)bad(site,"error/void-result capability requires HUAB7");image.model.relations=interface_relations(image.model);verify_bytecode(image.bytecode,image.model);return image;
 }
 }

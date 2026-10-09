@@ -16,12 +16,13 @@ Value invoke_builtin(const std::string& name,const std::vector<Value>& args,cons
     if(name=="simd_check"){if(args.size()!=1)runtime_error(span,"invalid SIMD metadata","E4104");auto array=std::get_if<SliceValue>(&args[0].data);if(!array||!numeric_spec(array->element_type))runtime_error(span,"SIMD requires a numeric array","E4104");return {};}
     if(auto standard=standard_function(name))return invoke_standard(*standard,args,span,output,context);
     auto arity=(name=="min"||name=="max"||name=="has"||name=="delete"||name=="unwrap_or")?2u:name=="clamp"?3u:1u;
-    if(name!="print" && args.size()!=arity)runtime_error(span,"builtin argument count mismatch","E4003");
+    if(name!="print" && !(name=="ok"&&args.empty()) && args.size()!=arity)runtime_error(span,"builtin argument count mismatch","E4003");
     if(numeric_spec(name)&&name!="int"&&name!="float"){
         if(auto text=std::get_if<std::string>(&args[0].data)){auto spec=*numeric_spec(name);if(spec.category=='u'){std::uint64_t value{};auto [end,err]=std::from_chars(text->data(),text->data()+text->size(),value);if(err!=std::errc{}||end!=text->data()+text->size())runtime_error(span,"invalid unsigned conversion","E4003");return convert_numeric(Value(NumericValue{"u64",value}),name,span,true);}return convert_numeric(invoke_builtin(spec.category=='i'?"int":"float",args,span,output),name,span,true);}
         return convert_numeric(args[0],name,span,true);
     }
     if((name=="int"||name=="float")&&std::holds_alternative<NumericValue>(args[0].data))return convert_numeric(args[0],name,span,true);
+    if(name=="ok"&&args.empty()){auto types=type_arguments(result_type,"Result");if(types.size()!=2||types[0]!="void"||types[1].empty())runtime_error(span,"ok() requires Result<void,E> metadata","E4003");return Value(ResultValue{true,nullptr,"void",types[1],false,false});}
     if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);return Value(ResultValue{ok,managed<Value>(v),ok?value_type(v):"",ok?"":value_type(v),true,!contextual.empty()&&contextual[0]});}
     if(name=="is_ok"||name=="is_err"){auto r=std::get_if<ResultValue>(&args[0].data);if(!r)runtime_error(span,"expected Result","E4003");return Value(r->ok==(name=="is_ok"));}
     if(name=="is_some"||name=="is_none")return Value((args[0].data.index()!=0)==(name=="is_some"));

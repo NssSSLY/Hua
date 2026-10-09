@@ -5,12 +5,13 @@
 #include <cstddef>
 namespace hua {
 using HeapVisitor=std::function<void(const void*)>;
-struct Value;struct StructData;struct MapData;struct ListData;struct MultiData;
+struct Value;struct StructData;struct MapData;struct ListData;struct MultiData;struct ErrorData;
 void heap_edges(const Value&,const HeapVisitor&);
 void heap_edges(const StructData&,const HeapVisitor&);
 void heap_edges(const MapData&,const HeapVisitor&);
 void heap_edges(const ListData&,const HeapVisitor&);
 void heap_edges(const MultiData&,const HeapVisitor&);
+void heap_edges(const ErrorData&,const HeapVisitor&);
 void heap_edges(const std::vector<Value>&,const HeapVisitor&);
 class ManagedHeap {
     struct Record {std::weak_ptr<const void> pointer;std::function<void(const void*,const HeapVisitor&)> edges;std::function<void(const void*)> clear;};

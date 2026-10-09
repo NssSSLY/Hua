@@ -1,0 +1,22 @@
+import std.path as p
+import std.fs as f
+import std.json as j
+
+fn publish() Result<bool,string> {
+    let pending=f.temp_file(".","hua-pending-")?
+    defer f.remove(pending)
+    let target=f.temp_file(".","hua-target-")?
+    defer f.remove(target)
+    let wrote=f.write_text(pending,"Hua S1a\n")?
+    let changed=f.replace(pending,target)?
+    let info=f.stat(target)?
+    let kind=j.as_string(j.get(info,"kind")?)?
+    let bytes=j.as_int(j.get(info,"size_bytes")?)?
+    print(p.normalize("a/../b")?,p.basename("folder/demo.txt")?,p.ext("demo.txt")?)
+    print(kind,bytes)
+    return ok(changed)
+}
+fn main() {
+    let result=publish()
+    if is_err(result) {print("failed:",unwrap_err(result))}
+}

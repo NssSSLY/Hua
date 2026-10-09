@@ -14,12 +14,15 @@ using TypeRelations=std::map<std::string,std::set<std::string>>;
 struct TypeRelationScope { const TypeRelations* previous;explicit TypeRelationScope(const TypeRelations& relations);~TypeRelationScope(); };
 std::vector<std::pair<std::string,std::vector<std::string>>> enum_cases(const Node& structure);
 struct Value;
+struct VoidValue {};
 struct TaskState;
 struct TaskValue {std::shared_ptr<TaskState> data;};
 struct StructData;
 struct MapData;
 struct MultiData;
 struct JsonData;
+struct ErrorData;
+struct ErrorValue { std::shared_ptr<const ErrorData> data; };
 struct ListData;
 struct NumericValue { std::string type;std::variant<std::int64_t,std::uint64_t,double> number; };
 struct NumericSpec {char category;unsigned bits;};
@@ -53,10 +56,17 @@ struct Callable { const Node* function{}; std::string builtin; std::optional<Str
     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
 };
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue>;
     Data data;
     Value() = default;
     template<class T> explicit Value(T value) : data(std::move(value)) {}
+};
+struct ErrorData {
+    std::string domain, code, message, origin, native_domain;
+    std::optional<std::int64_t> native_code;
+    std::vector<std::string> contexts;
+    std::shared_ptr<const ErrorData> cause;
+    bool truncated{};
 };
 struct ListData { std::string element_type; std::vector<Value> values; };
 struct StructData { std::string name; std::map<std::string, Value> fields; };

@@ -17,6 +17,32 @@ void bounded(const std::string& text,const SourceSpan& s){if(text.size()>max_tex
 }
 const std::vector<StandardFunction>& standard_functions() {
     static const std::vector<StandardFunction> functions={
+        {"error","make",{"string","string","string"},"Result<std.error.Value,string>",false,false,7},
+        {"error","wrap",{"string","string","string","std.error.Value"},"Result<std.error.Value,string>",false,false,7},
+        {"error","from_string",{"string","string"},"std.error.Value",false,false,7},
+        {"error","with_context",{"std.error.Value","string"},"std.error.Value",false,false,7},
+        {"error","with_origin",{"std.error.Value","string"},"std.error.Value",false,false,7},
+        {"error","with_native",{"std.error.Value","string","int"},"std.error.Value",false,false,7},
+        {"error","domain",{"std.error.Value"},"string",false,false,7},
+        {"error","code",{"std.error.Value"},"string",false,false,7},
+        {"error","message",{"std.error.Value"},"string",false,false,7},
+        {"error","cause",{"std.error.Value"},"std.error.Value?",false,false,7},
+        {"error","origin",{"std.error.Value"},"string?",false,false,7},
+        {"error","native_domain",{"std.error.Value"},"string?",false,false,7},
+        {"error","native_code",{"std.error.Value"},"int?",false,false,7},
+        {"error","contexts",{"std.error.Value"},"[]string",false,false,7},
+        {"error","truncated",{"std.error.Value"},"bool",false,false,7},
+        {"error","format",{"std.error.Value"},"string",false,false,7},
+        {"path","join",{"[]string"},"Result<string,string>",false,false,6},
+        {"path","normalize",{"string"},"Result<string,string>",false,false,6},
+        {"path","basename",{"string"},"Result<string,string>",false,false,6},
+        {"path","dirname",{"string"},"Result<string,string>",false,false,6},
+        {"path","ext",{"string"},"Result<string,string>",false,false,6},
+        {"path","relative",{"string","string"},"Result<string,string>",false,false,6},
+        {"fs","stat",{"string"},"Result<Json,string>",false,false,6},
+        {"fs","rename",{"string","string"},"Result<bool,string>",false,false,6},
+        {"fs","replace",{"string","string"},"Result<bool,string>",false,false,6},
+        {"fs","temp_file",{"string","string"},"Result<string,string>",false,false,6},
         {"math","floor",{"float"},"Result<float,string>",false,false,6},
         {"math","ceil",{"float"},"Result<float,string>",false,false,6},
         {"math","trunc",{"float"},"Result<float,string>",false,false,6},
@@ -156,6 +182,8 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
         runtime_error(s,"algorithm target requires identical element type","E4003");
     std::vector<Value> args;for(std::size_t i=0;i<input.size();++i){if(signature.parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(signature.parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],signature.parameters[i],s));}
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data))writable=p->writable;if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
+    if(f.module=="error")return invoke_error_standard(f,args,s);
+    if(f.module=="path"||(f.module=="fs"&&(f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
     if(f.module=="alg")return invoke_algorithm_standard(f,args,s,context);
     if(f.module=="time"||(f.module=="os"&&f.name=="getenv"))return invoke_system_standard(f,args,s,context);
     if(f.module=="simd")return simd_standard(f.name,args,s,context);

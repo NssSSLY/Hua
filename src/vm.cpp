@@ -177,6 +177,7 @@ void VirtualMachine::dispatch(std::size_t stop_depth) {
             auto view=*slice;view.start+=static_cast<std::size_t>(a);view.length=static_cast<std::size_t>(b-a);view.fixed=false;stack_.emplace_back(Value(view));break;
         }
         case Op::MakeStruct: {
+            if(op.text=="std.error.Value")runtime_error(s,"standard Error must be constructed through std.error","E4003");
             auto object=managed<StructData>();object->name=op.text;stack_.emplace_back(Value(StructValue{object,true}));break;
         }
         case Op::InitField: {

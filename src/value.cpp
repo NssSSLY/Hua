@@ -56,6 +56,8 @@ std::string value_type(const Value& v) {
     case 15:{auto type=std::get<NumericValue>(v.data).type;return type=="@integer"?"int":type;}
     case 11:return "Json";
     case 12:return "Bytes";case 13:return "Buffer";case 14:return "List<"+std::get<ListValue>(v.data).data->element_type+">";
+    case 18:return "void";
+    case 17:return "std.error.Value";
     case 16:return "Task<"+std::get<TaskValue>(v.data).data->result_type+">";
     default: return "";
     }
@@ -67,7 +69,7 @@ bool compatible(std::string_view expected, std::string_view actual) {
     if(expected.ends_with('?')) return actual=="nil" || compatible(expected.substr(0,expected.size()-1),actual);
     for(auto name:{"map","Result","multi","List","Task"}) {
         auto es=type_arguments(expected,name),as=type_arguments(actual,name);
-        if(!es.empty()&&!as.empty()){if(std::string_view(name)=="map"||std::string_view(name)=="List"||std::string_view(name)=="Task")return es==as;if(es.size()!=as.size())return false;for(std::size_t i=0;i<es.size();++i)if(!compatible(es[i],as[i]))return false;return true;}
+        if(!es.empty()&&!as.empty()){if(std::string_view(name)=="map"||std::string_view(name)=="List"||std::string_view(name)=="Task")return es==as;if(std::string_view(name)=="Result"&&es[0]=="void"&&as[0]=="nil")return false;if(es.size()!=as.size())return false;for(std::size_t i=0;i<es.size();++i)if(!compatible(es[i],as[i]))return false;return true;}
     }
     if(expected.starts_with('[') && actual.starts_with('[')) {
         auto close=expected.find(']');
@@ -155,6 +157,7 @@ Value unary_value(std::string_view op,const Value& v,const SourceSpan& s) {
     runtime_error(s,"unsupported unary operand for "+std::string(op),"E4003");
 }
 Value binary_value(std::string_view op,const Value& a,const Value& b,const SourceSpan& s,bool contextual_right) {
+    if(std::holds_alternative<VoidValue>(a.data)||std::holds_alternative<VoidValue>(b.data))runtime_error(s,"void is not an operand","E4003");
     if(contextual_right&&std::holds_alternative<NumericValue>(a.data)&&numeric_spec(value_type(b)))return binary_numeric(op,a,convert_numeric(b,value_type(a),s,true),s);
     if(std::holds_alternative<NumericValue>(a.data)||std::holds_alternative<NumericValue>(b.data))return binary_numeric(op,a,b,s);
     if(op=="==" || op=="!=") {
@@ -241,13 +244,15 @@ Value read_only(Value v) {
     return v;
 }
 Value copy_value(const Value& v,bool deep,unsigned depth) {
+    if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     if(depth>128) runtime_error({},"value nesting limit exceeded","E4099");
+    if(deep)if(auto p=std::get_if<ErrorValue>(&v.data)){auto data=*p->data;if(data.cause)data.cause=std::get<ErrorValue>(copy_value(Value(ErrorValue{data.cause}),true,depth+1).data).data;return Value(ErrorValue{managed<const ErrorData>(std::move(data))});}
     if(auto p=std::get_if<StructValue>(&v.data)) {
         auto data=managed<StructData>(); data->name=p->data->name;
         for(const auto& [k,x]:p->data->fields) data->fields.emplace(k,copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1));
         return Value(StructValue{data,true});
     }
-    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1));if(deep)r.writable=true;return Value(r);}
+    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1));if(deep)r.writable=true;return Value(r);}
     if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1));return Value(MultiValue{m});}
     if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{managed<std::string>(*p->data),true});
     if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=managed<ListData>();data->element_type=p->data->element_type;for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1));return Value(ListValue{data,true});}
@@ -260,6 +265,7 @@ Value copy_value(const Value& v,bool deep,unsigned depth) {
     return v;
 }
 Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bool contextual) {
+    if(std::holds_alternative<VoidValue>(v.data)&&expected!="void")runtime_error(span,"void has no usable value","E4003");
     if(expected.empty()) return v;
 
     if(expected.ends_with('?')) {
@@ -277,6 +283,8 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
         auto p=std::get_if<ResultValue>(&v.data);if(!p||result_types.size()!=2)runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
         auto r=*p;auto inactive=r.ok?r.error_type:r.success_type;
         if(!compatible(result_types[r.ok?1:0],inactive))runtime_error(span,"incompatible Result type metadata","E4003");
+        if(r.ok&&result_types[0]=="void"){if(r.success_type!="void"||r.payload)runtime_error(span,"void success cannot carry a payload","E4003");r.error_type=result_types[1];return Value(r);}
+        if(!r.payload)runtime_error(span,"Result payload is missing","E4003");
         auto payload=enforce_type(*r.payload,result_types[r.ok?0:1],span,r.contextual);
         r.payload=managed<Value>(copy_value(r.writable?payload:read_only(payload)));r.success_type=result_types[0];r.error_type=result_types[1];r.contextual=false;return Value(r);
     }
@@ -296,6 +304,7 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
     return v;
 }
 std::string show(const Value& v) {
+    if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no displayable value","E4003");
     if(std::holds_alternative<TaskValue>(v.data))return "<"+value_type(v)+">";
     if(auto p=std::get_if<NumericValue>(&v.data))return std::visit([](auto x)->std::string{if constexpr(std::is_same_v<decltype(x),std::uint64_t>)return std::to_string(x);else return show(Value(x));},p->number);
     if(auto p=std::get_if<BytesValue>(&v.data))return "<Bytes:"+std::to_string(p->data->size())+">";
@@ -316,7 +325,8 @@ std::string show(const Value& v) {
     }
     if(auto p=std::get_if<MapValue>(&v.data)){std::string out="map{";bool first=true;for(const auto& [k,x]:p->data->entries){if(!first)out+=", ";first=false;out+=std::visit([](const auto& v){return show(Value(v));},k)+": "+show(x);}return out+"}";}
     if(auto p=std::get_if<MultiValue>(&v.data)){std::string out="(";for(std::size_t i=0;i<p->data->values.size();++i){if(i)out+=", ";out+=show(p->data->values[i]);}return out+")";}
-    if(auto p=std::get_if<ResultValue>(&v.data))return std::string(p->ok?"ok(":"err(")+show(*p->payload)+")";
+    if(auto p=std::get_if<ResultValue>(&v.data))return p->ok&&!p->payload?"ok()":std::string(p->ok?"ok(":"err(")+show(*p->payload)+")";
+    if(auto p=std::get_if<ErrorValue>(&v.data))return p->data->domain+"."+p->data->code+": "+p->data->message;
     if(std::holds_alternative<JsonValue>(v.data))return "<Json>";
     return "<function>";
 }
@@ -348,7 +358,7 @@ Value enforce_return(Value value,const Node& fn,const SourceSpan& s,bool context
     return copy_value(value);
 }
 Value propagated_error(const Value& value) {auto r=std::get<ResultValue>(copy_value(value).data);r.success_type.clear();return Value(r);}
-Value result_payload(const Value& v,bool success,const SourceSpan& s) {auto p=std::get_if<ResultValue>(&v.data);if(!p)runtime_error(s,"expected Result","E4003");if(p->ok!=success)runtime_error(s,success?"cannot unwrap err Result":"cannot unwrap_err ok Result","E4009");return copy_value(p->writable?*p->payload:read_only(*p->payload));}
+Value result_payload(const Value& v,bool success,const SourceSpan& s) {auto p=std::get_if<ResultValue>(&v.data);if(!p)runtime_error(s,"expected Result","E4003");if(p->ok!=success)runtime_error(s,success?"cannot unwrap err Result":"cannot unwrap_err ok Result","E4009");if(success&&!p->payload&&p->success_type=="void")return Value(VoidValue{});if(!p->payload)runtime_error(s,"Result payload is missing","E4003");return copy_value(p->writable?*p->payload:read_only(*p->payload));}
 Value aggregate_member(const Value& v,const std::string& name,const SourceSpan& s) {if(name=="len"){if(auto p=std::get_if<SliceValue>(&v.data))return Value(static_cast<I>(p->length));if(auto p=std::get_if<MapValue>(&v.data))return Value(static_cast<I>(p->data->entries.size()));if(auto p=std::get_if<std::string>(&v.data))return Value(static_cast<I>(p->size()));}runtime_error(s,"unknown aggregate member","E4003");}
 
 }

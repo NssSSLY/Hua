@@ -192,6 +192,7 @@ Value Interpreter::evaluate(const Node& n) {
         auto view=*slice;view.start+=static_cast<std::size_t>(start);view.length=static_cast<std::size_t>(end-start);view.fixed=false;return Value(view);
     }
     case N::StructLiteral: {
+        if(n.text=="std.error.Value")runtime_error(n.span,"standard Error must be constructed through std.error","E4003");
         auto object=managed<StructData>();object->name=n.text;auto definition=model_.structures.at(n.text);
         for(const auto& init:n.children) {
             std::string type;for(const auto& field:definition->children)if(field->text==init->text)type=type_name(*field->children[0]);

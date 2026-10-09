@@ -1,0 +1,15 @@
+import std.error as e
+import std.json as j
+
+fn validate_config(text string) Result<void,e.Value> {
+    let parsed=j.decode(text)
+    if is_err(parsed) {
+        return err(e.with_context(e.from_string(unwrap_err(parsed),"json.decode"),"validate configuration"))
+    }
+    return ok()
+}
+fn main() {
+    print(validate_config("{}"))
+    let issue=unwrap_err(validate_config("{"))
+    print(e.domain(issue),e.code(issue),e.contexts(issue))
+}
