@@ -10,9 +10,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 def emit_error(code, stage, message, exit_code, source="", profile="C02-P1"):
-    schema="hua.bytecode.image.v1" if profile=="C06-BC1" else "hua.core.lowered.v1" if profile=="C05-L1" else "hua.types.capabilities.v1" if profile=="C04-T1" else "hua.names.modules.v1" if profile=="C03-N1" else "hua.ast.slice.v1"
-    print(json.dumps({"schema":schema,"profile":profile,"status":"error",
-                      "stage":stage,"source":source,"error":message,"code":code},ensure_ascii=False),file=sys.stderr)
+    schema="hua.archive.result.v1" if profile=="C07-HUAB1" else "hua.bytecode.image.v1" if profile=="C06-BC1" else "hua.core.lowered.v1" if profile=="C05-L1" else "hua.types.capabilities.v1" if profile=="C04-T1" else "hua.names.modules.v1" if profile=="C03-N1" else "hua.ast.slice.v1"
+    response=json.dumps({"schema":schema,"profile":profile,"status":"error",
+                         "stage":stage,"source":source,"error":message,"code":code},ensure_ascii=False)
+    if profile=="C07-HUAB1":write_archive_response(response+"\n",sys.stderr)
+    else:print(response,file=sys.stderr)
     return exit_code
 
 class CommandParser(argparse.ArgumentParser):
@@ -240,9 +242,56 @@ def validate_lowering(report,contract):
             stack.append((x,nested_function,nested_loops,depth+1))
 
 
+def expand_bytecode(report,contract):
+    """Decode bounded v2 blocks into the legacy BC1 view without changing the wire artifact."""
+    limits=contract["bytecode"];transport=limits["transport"]
+    if report.get("schema")==limits["schema"]:return report
+    if report.get("schema")!=transport["schema"] or report.get("status")!="ok":raise ValueError("invalid C06 transport version")
+    def blocks(values,maximum):
+        if not isinstance(values,list) or not values or len(values)>maximum:raise ValueError("invalid C06 blocks")
+        total=0
+        for text in values:
+            if not isinstance(text,str) or len(text.encode("utf-8"))>contract["compiler_budget"]["report_bytes"]:raise ValueError("invalid C06 block text")
+            rows=json.loads(text)
+            if not isinstance(rows,list) or not 1<=len(rows)<=transport["block_records"]:raise ValueError("invalid C06 block records")
+            total+=len(rows)
+            if total>maximum:raise ValueError("C06 decoded count budget")
+            pending=[(rows,0)];nodes=0
+            while pending:
+                value,depth=pending.pop();nodes+=1
+                if nodes>transport["block_nodes"] or depth>64:raise ValueError("C06 block node/depth budget")
+                if isinstance(value,list):pending.extend((x,depth+1) for x in value)
+                elif isinstance(value,dict):pending.extend((x,depth+1) for x in value.values())
+            yield from rows
+    def row(value,keys,numeric,strings):
+        if not isinstance(value,dict) or set(value)!=set(keys) or not isinstance(value["n"],list) or len(value["n"])!=numeric or any(type(x) is not int for x in value["n"]) or not isinstance(value["s"],list) or len(value["s"])!=strings or any(type(x) is not str for x in value["s"]):raise ValueError("invalid C06 packed row")
+    result=dict(report);result["schema"]=limits["schema"]
+    if "sites" in report:raise ValueError("mixed C06 sites transport")
+    result["sites"]=[]
+    for value in blocks(result.pop("site_blocks"),limits["sites"]):
+        row(value,("n","s"),6,2);n=value["n"];text=value["s"]
+        result["sites"].append(dict(zip(("node","origin","start","end","line","column"),n),module=text[0],role=text[1]))
+    total=0
+    def code(value):
+        nonlocal total
+        if not isinstance(value,dict) or set(value)!={"name","count","blocks"} or type(value["count"]) is not int or not 1<=value["count"]<=limits["chunk_instructions"]:raise ValueError("invalid C06 packed code")
+        ops=[]
+        for value_ in blocks(value["blocks"],value["count"]):
+            row(value_,("n","s","a","c"),6,3);n=value_["n"];text=value_["s"]
+            if n[4] not in (0,1):raise ValueError("invalid C06 packed flag")
+            ops.append({"op":n[0],"site":n[1],"argument":n[2],"target":n[3],"flag":bool(n[4]),"constant":{"kind":n[5],"text":text[2]},"text":text[0],"type_name":text[1],"names":value_["a"],"contextual":value_["c"]})
+        total+=len(ops)
+        if len(ops)!=value["count"] or total>limits["instructions"]:raise ValueError("invalid C06 packed totals")
+        return {"name":value["name"],"instructions":ops}
+    result["initializer"]=code(report["initializer"])
+    if not isinstance(report["functions"],list) or len(report["functions"])>8192:raise ValueError("invalid C06 packed declarations")
+    result["functions"]=[dict(f,code=code(f["code"])) for f in report["functions"]]
+    return result
+
 def validate_bytecode(report,contract):
     """Validate C06 transport, identities, metadata and reported bounds; Hua verifies control flow."""
     import math
+    report=expand_bytecode(report,contract)
     limits=contract["bytecode"];sites=report["sites"];sources=report["sources"]
     if report.get("schema")!=limits["schema"] or report.get("profile")!=limits["profile"]:raise ValueError("invalid C06 envelope")
     if not isinstance(sources,list) or not 1<=len(sources)<=contract["compiler_budget"]["analysis"]["modules"]:raise ValueError("invalid C06 sources")
@@ -354,19 +403,69 @@ def validate_bytecode(report,contract):
     for key,maximum in [("reachable",total),("slots",limits["state_slots"]),("work",limits["work"]),("max_stack",limits["stack"]),("max_scopes",limits["scopes"]),("max_iterators",limits["iterators"])]:
         if type(v[key]) is not int or not 0<=v[key]<=maximum:raise ValueError("invalid C06 verification budget")
     if v["reachable"]<1 or v["slots"]<v["reachable"] or v["work"]<v["reachable"]:raise ValueError("invalid C06 verification counters")
+    return report
+
+def write_archive_response(value, stream):
+    # C07 is a UTF-8 machine protocol, including filenames outside Windows ANSI.
+    binary=getattr(stream,"buffer",None)
+    if binary is None:stream.write(value)
+    else:binary.write(value.encode("utf-8"))
+    stream.flush()
+
+def build_huab(options,contract,source):
+    """Hua encodes every byte; the existing reader validates before final publication."""
+    import struct,time,zlib
+    target=options.output.resolve();temporary=None
+    limits=contract["archive_limits"];policy=contract["archive"]
+    deadline=time.monotonic()+contract["compiler_budget"]["supervisor_seconds"]
+    try:
+        with tempfile.NamedTemporaryFile(prefix=target.name+".tmp-",suffix=".huab",dir=target.parent,delete=False) as stream:
+            temporary=Path(stream.name)
+        command=[str(options.hua.resolve()),"run",str(ROOT/"selfhost/archive_main.hua"),"--execution-profile","compiler","--",str(source),str(temporary)]
+        process=subprocess.run(command,capture_output=True,encoding="utf-8",errors="strict",timeout=max(0.001,deadline-time.monotonic()))
+        if process.returncode:
+            code="E4099" if "[E4099]" in process.stderr else "E8203"
+            return emit_error(code,"host",process.stderr.strip() or "host execution failed",1 if code=="E4099" else 3,source.name,"C07-HUAB1")
+        if len(process.stdout.encode("utf-8"))>contract["compiler_budget"]["report_bytes"]:raise ValueError("archive receipt exceeds report budget")
+        receipt=json.loads(process.stdout)
+        if not isinstance(receipt,dict) or receipt.get("schema")!=policy["schema"] or receipt.get("profile")!=policy["profile"] or receipt.get("source")!=source.name:raise ValueError("invalid Hua archive envelope")
+        if receipt.get("status")=="error":
+            if set(receipt)!={"schema","profile","status","source","stage","error"} or receipt["stage"] not in {"command","types","bytecode","archive","publication"}:raise ValueError("invalid archive failure receipt")
+            match=re.match(r"(E\d+)@\d+:\d+",receipt["error"])
+            if not match:raise ValueError("invalid archive diagnostic")
+            write_archive_response(process.stdout,sys.stderr)
+            return 2 if match[1]=="E8204" else 3 if match[1]=="E8203" else 1
+        if receipt.get("status")!="ok" or set(receipt)!={"schema","profile","status","source","format","file_bytes","payload_bytes","crc32","instructions"}:raise ValueError("invalid archive success receipt")
+        if any(type(receipt[k]) is not int for k in ("format","file_bytes","payload_bytes","crc32","instructions")):raise ValueError("invalid archive receipt counters")
+        if receipt["format"] not in policy["formats"] or not 32<=receipt["file_bytes"]<=limits["file_bytes"] or receipt["payload_bytes"]!=receipt["file_bytes"]-32 or not 0<=receipt["crc32"]<=4294967295 or not 1<=receipt["instructions"]<=contract["bytecode"]["instructions"]:raise ValueError("archive receipt budget")
+        with temporary.open("rb") as stream:data=stream.read(limits["file_bytes"]+1)
+        if len(data)!=receipt["file_bytes"] or data[:8]!=bytes.fromhex(contract["huab_header"]["magic_hex"]):raise ValueError("archive size/magic mismatch")
+        format_,abi,size,crc,flags=struct.unpack_from("<IIQII",data,8)
+        if (format_,abi,size,crc,flags)!=(receipt["format"],1,receipt["payload_bytes"],receipt["crc32"],0) or zlib.crc32(data[32:])!=crc:raise ValueError("archive header/CRC mismatch")
+        # check .huab dispatches directly to read_huab, not to the source frontend.
+        remaining=deadline-time.monotonic()
+        if remaining<=0:raise subprocess.TimeoutExpired(command,contract["compiler_budget"]["supervisor_seconds"])
+        checked=subprocess.run([str(options.hua.resolve()),"check",str(temporary)],capture_output=True,encoding="utf-8",errors="strict",timeout=remaining)
+        if checked.returncode or checked.stdout!="OK\n":raise ValueError("independent HUAB reader rejected artifact: "+checked.stderr.strip())
+        with temporary.open("r+b") as stream:stream.flush();os.fsync(stream.fileno())
+        os.replace(temporary,target);temporary=None
+        write_archive_response(process.stdout,sys.stdout)
+        return 0
+    finally:
+        if temporary is not None:temporary.unlink(missing_ok=True)
 
 def main(argv=None):
-    args = CommandParser(description="Hua Parser / 分析 / 核心降级 / 指令生成；输出 JSON，HUAB 编码待 C07")
-    args.add_argument("command",choices=["parse","analyze","check","lower","emit"])
+    args = CommandParser(description="Hua Parser / 分析 / 核心降级 / 指令 JSON / 完整 HUAB 构建")
+    args.add_argument("command",choices=["parse","analyze","check","lower","emit","build"])
     args.add_argument("source",type=Path)
     args.add_argument("-o","--output",type=Path)
     args.add_argument("--profile",choices=["C02-P1","C02-P2"],default="C02-P1")
     args.add_argument("--hua",type=Path,default=ROOT/"build"/("hua.exe" if os.name=="nt" else "hua"))
     args.add_argument("--budget",choices=["slice","compiler"],default=None)
     options=args.parse_args(argv)
-    compiler=options.budget=="compiler" or options.command in ("check","lower","emit")
-    if options.command in ("check","lower","emit") and options.budget=="slice":return emit_error("E8204","command",options.command+" requires compiler budget",2,profile="C06-BC1" if options.command=="emit" else "C05-L1" if options.command=="lower" else "C04-T1")
-    profile="C06-BC1" if options.command=="emit" else "C05-L1" if options.command=="lower" else "C04-T1" if options.command=="check" else "C03-N1" if options.command=="analyze" else options.profile
+    compiler=options.budget=="compiler" or options.command in ("check","lower","emit","build")
+    if options.command in ("check","lower","emit","build") and options.budget=="slice":return emit_error("E8204","command",options.command+" requires compiler budget",2,profile="C07-HUAB1" if options.command=="build" else "C06-BC1" if options.command=="emit" else "C05-L1" if options.command=="lower" else "C04-T1")
+    profile="C07-HUAB1" if options.command=="build" else "C06-BC1" if options.command=="emit" else "C05-L1" if options.command=="lower" else "C04-T1" if options.command=="check" else "C03-N1" if options.command=="analyze" else options.profile
     schema="hua.bytecode.image.v1" if profile=="C06-BC1" else "hua.core.lowered.v1" if profile=="C05-L1" else "hua.types.capabilities.v1" if profile=="C04-T1" else "hua.names.modules.v1" if profile=="C03-N1" else "hua.ast.slice.v1"
     def fail(code,stage,message,exit_code,source=""):
         return emit_error(code,stage,message,exit_code,source,profile)
@@ -378,10 +477,13 @@ def main(argv=None):
         if compiler and profile=="C02-P1":return fail("E8204","command","compiler budget requires C02-P2",2)
         source=options.source.resolve()
         if source.suffix!=".hua":return fail("E8204","command","expected .hua source",2,str(source))
-        if options.output and options.output.suffix!=".json":return fail("E8204","command","frontend output must be .json; HUAB generation is pending C07",2,str(source))
+        if options.command=="build":
+            if not options.output or options.output.suffix!=".huab":return fail("E8204","command","build requires -o output.huab",2,str(source))
+        elif options.output and options.output.suffix!=".json":return fail("E8204","command","frontend output must be .json; use build for HUAB",2,str(source))
         # Bound the read before launching the runtime. Encoding is checked by std.fs in Hua.
         with source.open("rb") as stream:raw=stream.read(contract["budgets"]["source_bytes"]+1)
         if len(raw)>contract["budgets"]["source_bytes"]:return fail("E8202","parser","E8202@1:1 source byte budget",1,source.name)
+        if options.command=="build":return build_huab(options,contract,source)
         entry={"C02-P1":"parser_main.hua","C02-P2":"parser_extended_main.hua","C03-N1":"modules_main.hua","C04-T1":"types_main.hua","C05-L1":"lowering_main.hua","C06-BC1":"bytecode_main.hua"}[profile]
         if compiler and profile in ("C02-P2","C03-N1"):entry="parser_compiler_main.hua" if profile=="C02-P2" else "modules_compiler_main.hua"
         arguments=[str(source)] if profile in ("C03-N1","C04-T1","C05-L1","C06-BC1") else [str(source),source.name]
@@ -394,10 +496,10 @@ def main(argv=None):
             return fail(code,"host",process.stderr.strip() or "host execution failed",1 if code=="E4099" else 3,source.name)
         if len(process.stdout.encode("utf-8"))>report_limit:return fail("E8203","host","frontend report exceeds configured byte budget",3,source.name)
         report=json.loads(process.stdout)
-        if not isinstance(report,dict) or report.get("schema")!=schema or report.get("profile")!=profile or report.get("source")!=source.name:raise ValueError("invalid Hua frontend envelope")
+        if not isinstance(report,dict) or report.get("schema") not in ({schema,contract["bytecode"]["transport"]["schema"]} if profile=="C06-BC1" else {schema}) or report.get("profile")!=profile or report.get("source")!=source.name:raise ValueError("invalid Hua frontend envelope")
         if report.get("status")=="error":
             if report.get("stage") not in ({"bytecode"} if profile=="C06-BC1" else {"lowering"} if profile=="C05-L1" else {"types"} if profile=="C04-T1" else {"analysis"} if profile=="C03-N1" else {"parser","lexer","input","command"}):raise ValueError("invalid diagnostic stage")
-            if any(k in report for k in ("nodes","modules","symbols","references","initialization","graph","facts","functions","analysis","entry","sites","structures","initializer","verification","instructions","sources","stats")):raise ValueError("failed frontend included partial artifact")
+            if any(k in report for k in ("nodes","modules","symbols","references","initialization","graph","facts","functions","analysis","entry","sites","structures","initializer","verification","instructions","sources","stats","site_blocks")):raise ValueError("failed frontend included partial artifact")
             detail=report.get("error","");code=re.match(r"(E\d+)@\d+:\d+",detail)
             if not code:raise ValueError("invalid frontend diagnostic")
             code=code[1];sys.stderr.write(process.stdout)

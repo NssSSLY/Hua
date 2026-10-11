@@ -59,12 +59,12 @@
     "compiler_executable": {
       "format": 7,
       "native_abi": 1,
-      "producer": "C++ host; Hua encoder not yet implemented"
+      "producer": "C++ host first generation; Hua C07 encoder implemented; continuous generations pending C08"
     },
     "HC0_target": {
       "format": 6,
       "native_abi": 1,
-      "producer": "C06-BC1 Hua instructions implemented; complete HUAB encoding pending C07",
+      "producer": "C06-BC1 Hua instructions and C07-HUAB1 complete Hua encoding",
       "external_modules": 0
     }
   },
@@ -117,7 +117,7 @@
   },
   "determinism": {
     "frontend": "same normalized text, raw byte count, logical source ID, limits and version => same JSON; stats include raw input bytes",
-    "HUAB": "future C07 must use logical source/module IDs, deterministic tables/opcodes/constants; no timestamps/pointers/output paths",
+    "HUAB": "C07 uses logical source/module IDs and deterministic table/opcode/constant order; no timestamps/pointers/output paths; C08 continuous generations pending",
     "host_current": "repeat at same source paths is checked; relocated C++ HUAB is not claimed byte-identical"
   },
   "exit_codes": {
@@ -134,8 +134,9 @@
     "public_main_Result_semantics_changed": false
   },
   "next_components": [
-    "C07 complete HUAB encoding",
-    "C08 generations"
+    "C08 generations",
+    "C09 coverage",
+    "C10 generations and larger workloads"
   ],
   "parser_extensions": {
     "C02-P2": {
@@ -237,7 +238,7 @@
       "interfaces/methods/user generics/async/unsafe/FFI",
       "non-decimal or out-of-signed64 integer match patterns"
     ],
-    "artifact": "typed facts consumed by C05-L1 / C06-BC1; complete HUAB encoding pending C07"
+    "artifact": "typed facts consumed by C05-L1 / C06-BC1 / C07-HUAB1"
   },
   "lowering": {
     "profile": "C05-L1",
@@ -249,7 +250,7 @@
     "representation": "typed VM core tree; ordered children, logical symbols, flattened signatures, Hua enum layout/constructors; no instructions",
     "captures": "none: SB1 rejects nested declarations",
     "failure": "no input execution; C01 exit/publication unchanged",
-    "artifact": "non-executable core JSON consumed by C06-BC1; complete HUAB pending C07"
+    "artifact": "non-executable core consumed by C06-BC1; C07-HUAB1 encodes complete HUAB6/7"
   },
   "bytecode": {
     "profile": "C06-BC1",
@@ -462,10 +463,63 @@
       "builtin:std.strings#upper_ascii",
       "builtin:std.time#monotonic_ns",
       "builtin:std.time#unix_ms"
-    ]
+    ],
+    "transport": {
+      "schema": "hua.bytecode.image.v2",
+      "legacy_schema": "hua.bytecode.image.v1",
+      "block_records": 1024,
+      "block_nodes": 65536,
+      "instruction_numeric": [
+        "op",
+        "site",
+        "argument",
+        "target",
+        "flag_0_or_1",
+        "constant_kind"
+      ],
+      "instruction_strings": [
+        "text",
+        "type_name",
+        "constant_text"
+      ],
+      "instruction_vectors": {
+        "a": "names",
+        "c": "contextual"
+      },
+      "site_numeric": [
+        "node",
+        "origin",
+        "start",
+        "end",
+        "line",
+        "column"
+      ],
+      "site_strings": [
+        "module",
+        "role"
+      ],
+      "meaning": "bounded JSON string blocks, same BC1 image after expansion; original limits and legacy reader retained; not HUAB"
+    }
   },
   "components_pending": [
-    "C07 complete HUAB encoding",
-    "C08 generations"
-  ]
+    "C08 generations",
+    "C09 coverage",
+    "C10 generations and larger workloads"
+  ],
+  "archive": {
+    "schema": "hua.archive.result.v1",
+    "profile": "C07-HUAB1",
+    "source_subset": "SB1",
+    "bytecode_profile": "C06-BC1",
+    "formats": [
+      6,
+      7
+    ],
+    "native_abi": 1,
+    "source_order": "lexicographic logical module ids",
+    "declaration_order": "lexicographic lowered names",
+    "external_modules": 0,
+    "publication": "Hua encodes and stages; independent existing HUAB reader before supervisor atomic replacement",
+    "float_bits": "Hua IEEE754 binary64 encoding from existing finite JSON numeric decode; no host archive encoder"
+  }
 }

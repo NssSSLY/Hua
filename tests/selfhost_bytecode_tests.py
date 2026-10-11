@@ -61,7 +61,7 @@ def report(source):
         assert metrics['profile']=='compiler' and 0<metrics['steps']<=500000000 and 0<metrics['peak_calls']<=128
         result.append(r)
     assert all(x==result[0] for x in result)
-    return result[0]
+    return runner.validate_bytecode(result[0],contract) if result[0]["status"]=="ok" else result[0]
 def projected(r):
     def code(c):
         result=copy.deepcopy(c)

@@ -62,9 +62,10 @@ if p.returncode==0:
     if report['status']=='ok':
         spec=importlib.util.spec_from_file_location('runner',r/'tools/hua_frontend.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
         result['transport_within_budget']=len(stdout)<=contract['compiler_budget']['report_bytes']
-        try:m.validate_bytecode(report,contract)
+        view=report
+        try:view=m.validate_bytecode(report,contract)
         except (ValueError,AssertionError) as error:result['transport_error']=str(error)
-        result.update({'instructions':report['instructions'],'functions':len(report['functions']),'sites':len(report['sites']),'verification':report['verification'],'metrics':json.loads(stderr)})
+        result.update({'instructions':report['instructions'],'functions':len(report['functions']),'sites':len(view['sites']),'verification':report['verification'],'metrics':json.loads(stderr)})
     else:result['error']=report['error']
 (o/'self-scale-results.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
 result['phases_ns']={line.split()[0]:int(line.split()[1]) for line in phasefile.read_text().splitlines()}

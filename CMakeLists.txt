@@ -420,3 +420,20 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME value_copy COMMAND hua_value_copy_tests)
 endif()
+
+# C06 bounded report transport compatibility and rejection gate.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME selfhost_transport COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_transport_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_instruction_driver> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(selfhost_transport PROPERTIES TIMEOUT 600)
+endif()
+
+# C07 complete Hua HUAB encoding and atomic publication gate.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME selfhost_archive COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_archive_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_instruction_driver>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(selfhost_archive PROPERTIES TIMEOUT 2400)
+endif()

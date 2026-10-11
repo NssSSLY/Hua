@@ -1,46 +1,35 @@
 # 当前状态
 
-更新：2026-10-11。实际项目C:\file\project\hua；HEAD与本地origin/main仍8d365fba75018361255f8f8ac7255219f57f69ec。本轮未提交/推送，全部此前未提交工作保留。
+更新：2026-10-12。实际项目C:\file\project\hua；起点HEAD及origin/main e6524f196320e81f22317d2abe3c1e0eb52137e9。C06/C07工作未提交推送。
 
-## 当前用户目标与完成范围
+## 当前切片与真实结果
 
-用户授权保持A07正确性，以C04自身分析/降级为真实负载，优化符号、位置、Value/List/Result和环境复制，再决定VM架构。本批实现了局部成本优化与固定输入实测，没有开展寄存器VM/JIT或新后端。
+用户选择继续C07。C07-HUAB1当前SB1/BC1完整HUAB6/7容器、四路径样例及发布合同已验；Bridge ON/OFF各9/9定向，C07各47例904检查，C06原63/2306、A07原27/492、C04原63/892与传输保持。新完整自身13文件221754字节，正式不插桩的源码VM 600.172秒/538.391 CPU秒、C0持久化Hua组件VM 600.11秒/553.75 CPU秒，均原600秒监督失败，无最终步骤/成功自身产物或自身产物执行证明。不能关闭整条C07自身验收，C08/G3未完成。
 
-- C03私有环境按模块缓存身份、Pool和有序导入；C04以模块ID索引Unit，函数/构造器声明由已有表解析，分支环境保留普通数据及函数值/构造器值别名。
-- AST span构造/替换核对已知行区间，公共span仍upper_bound、UTF-8字节列/EOF/来源及形状验证保持。
-- C++有序Struct复制插入提示/容器预留；List已验证元数据复用，Result少一层复制，AST/VM绑定/字段/返回边界减少重复复制。新增已消费Value重载逐层检查独占；共享结构/Result仍snapshot，固定数组/deep clone/资源/只读子项/深度错误不变。
-- 实测发现原C04将for弃值位“_”记录为空名字符号，只在该存储入口修正；原失败报告保留，去除唯一错误行后所有名称/类型/能力/来源/Core字段与优化版相同。最终完整报告与第一批优化字节一致。
+Hua archive编码全部来源/声明/初始化/指令/标量/头与CRC，不调用C++写出器；Python build只监督UTF-8回执、头/CRC/尺寸、既有读取器、fsync/原子发布，不执行输入初始化/main。生产hua.exe build仍C++前端。当前完整自身预算未通过，下一步先解决此阻塞再C08，不能把样例通过写成自举通过。
 
-## A07保护及兼容
+## 本批实际验收
 
-A07-1的C++sema和Hua来源/remember/join/narrow核心保持；原27例492检查两构建继续通过，旧HUAB E4007/no stdout保持。合法标量副本/新字段替换/clone规则保留；完整跨函数逐字段效果、未知别名、混合能力字面量与多返回精度仍待，不是整个A07/G1完成。
+双配置各9定向：binary_collections、archives_extensions、filesystem_stdlib、filesystem_limits、selfhost_bytecode、selfhost_types、capability_provenance、selfhost_transport、selfhost_archive。C07四路径为组件AST/源码VM/复制组件源码移走的HUAB7/SB1，用户源码副本移走后样例输出/错误位置/清理相同，与独立C06/C++写出器完整字节相同。8坏产物E6002、7协议/发布模拟失败及真实源错保旧文件；规范化/跨根/负零/次正规数/Unicode文件名、独立进程UTF-8正反例和六指南命令通过；例子59指令4531字节格式6，输出2 2。
 
-500M步骤/128调用/GC65536/600秒监督/16MiB报告和普通百万步/GC256不变；GC算法、Task/资源/Value布局、HUAB6/7/8、reader1–8及Native ABI1不变。17标准模块153函数38内建和108个SB1标准签名保持；通用JSON仍1000000节点/64深度/16MiB。没有硬RSS或联合Task预算。
+正式自身执行与输入SHA均匹配生产源码，运行时SHA 184c0bf471cebbc3e4cef2764e5cf7f29138c7cc13c737f80ef9914c0f4eb4e2。峰值源码1056804864字节、持久化1269501952字节为观测，非硬RSS配额。源码与持久化模式均未通过；C0仅构建执行组件，不编译待编译输入。未成功则不删除测试输入或执行后继，当前没有Hua编码自身编译器的无源码运行证明。
 
-## 固定工作负载测量
+## 定位证据与误差边界
 
-13文件214439字节输入与执行分析的编译器分别冻结；before-summary与after-summary source_hashes完全相同。同输出模式（均完整Core验证、只输出摘要）528.406→343.859秒，分析累计408.278→243.655秒，降级累计527.233→342.662秒，步骤234124909→196434038，分配66073729→40694222（减少38.4%）。峰值工作集1313505280→1313669120字节约相同，不能宣称RSS同步下降。
+Kernel-Power 506/507的22:30:37–22:34:11、22:56:18–23:03:59、23:09:01–23:13:27证实Idle Timeout新型待机及触摸板唤醒，解释部分墙钟/CPU停顿；只读工具约450秒阻塞不是工具导致挂起的证明。最终脚本线程级临时阻止空闲睡眠、退出恢复，不改电源方案或600秒；正式不插桩仍失败，所以待机不是全部原因。
 
-最终完整报告401.235秒/201310397步/51调用/峰值1754341376字节；报告14786227字节、44416 Core节点，通过正式校验。原完整报告的墙钟/峰值未保存，不补造；原for错误行单独说明。单次成对样本＋最终完整报告不替代稳定分布、跨语言或跨平台基准。
+详细插桩诊断600.188秒/540.234 CPU秒：解析299.813、收集301.298、名称397.337、签名405.717、能力479.117、全局482.636秒，随后函数检查，未达指令/编码。这是定位线索，不用插桩时间当作未改源码速度；原600秒失败没有最终步数，不推断耗尽500M。先对当前真实负载核前端/运行时成本，不直接深改VM架构。默认正式源码副本不插桩；--diagnostic-phases只对执行副本加日志，--bootstrap-huab以C0引导持久化执行组件。
 
-## 当前自身链路与架构决定
+首轮辅助插桩E5004（0.562秒/0步骤）已修正；first-own/second-own/third-own/fourth-own/fifth-diagnostic/sixth-formal-source和first-bootstrap-diagnostic原件保留，不计成功。文档更新脚本误将百科两同名表行当作唯一行，已只继续尚未写入的百科/README，避免重复章节；最终保护验收通过。VM冒烟3958.812秒有约60分钟间隔未独立证实那段原因，不作速度结论。新增C07套件等待2400秒与单次600秒分开，首轮主动停止保留，双配置重新完整通过。
 
-正式当前源码13文件215190字节，分析累计256.302秒、降级364.608秒、生成403.520秒、独立指令验证481.405秒；505.687秒正常退出但报告status:error、E8202 JSON nesting/node limit exceeded。259341841步/51调用/峰值2052702208字节；198字节stdout是错误报告，未执行自身指令/适配HUAB。类型报告固定浅层，结合src/json.cpp核对为1000000节点上限；精确最终报告节点/指令数未导出。
+## 不变量与未完成
 
-上一轮A07历史链路600.109秒止于验证（13文件214439字节），不能与本次不同输入直接换算加速倍数。本次原监督和步骤预算没有触发，剩余阻塞转到报告传输/序列化。
+生产src/include、A07及前轮优化、旧C06源/测试相对本批基线原字节；500M/128调用/GC65536/600秒/16MiB/default/标准JSON百万节点64层16MiB及全部指令/元数据/可达栈验证保持。17模块153函数38内建/108 SB1签名、HUAB6/7/8与reader1–8/ABI1保持；C07写6/7，File8/FFI仍在SB1外。只有Windows x64 Release ON/OFF定向，无本轮全量/POSIX/其他架构。
 
-决定保留现有栈VM，暂不启动布局/寄存器/JIT/GC大改。下一先核C06有界编译产物表示/传输与生产者、验证器、加载器共同合同（分块或C07二进制等候选），不能仅拆json.encode绕过公共上限而让消费者继续失败。独立执行、C07完整Hua HUAB/C08连续代际/C09覆盖/C10扩大规模及G1/G2/G3仍待；用户选择后实施。
+先完成A11/C07/C10当前自身预算、产物读取和源移走后的编译器行为，再C08同源码compiler1→2→3；C09发行覆盖/C10更大规模/G3仍待。A07完整效果/未知别名、A09/A10深clone、A02尺寸身份、A12/G1与B整体/G2仍待，B不用等待C。B04历史替换可见性偶发虽本次单项通过，原因未解除。未选任务不自动开工，不提高预算凑通过。
 
-## 本批回归与真实限制
+## 权威文档与复现
 
-最终Windows x64 Release Bridge ON全量41/41、694.62秒；OFF全量39/40、690.12秒，filesystem_limits replacement visibility失败，随后该项独立连续5次通过。第一批ON也曾39/40同项失败、独立5次通过，第一批OFF39/39。失败原因未定位，不把独立通过抹掉全量失败，B04继续跟踪；该项代码与测试未改。
+运行时#c07-huab-encoding、决策#c07-complete-encoding、指南#c07-usage、进度#c07-verification。build/c07保存双配置专项/回归/指南/UTF-8/保护；build/c07-budget与c07-budget-bootstrap保存正式失败/观察/源及运行时SHA/原件，前者含standby-events.json；c07-diagnostic为180秒定位。忽略本机证据不随Git分发，tests/selfhost_archive_tests.py及selfhost_archive_budget_tests.py可复现。
 
-两配置A07 27/492、C04 63/892、A05 27/305、C05 42/1705、C06 63/2306；新增Value独占/共享/嵌套/只读/Result/Multi/固定数组/clone/void/GC/depth21项通过。旧产物两配置E4007/no stdout。没有POSIX或其他架构实测。
-
-## 证据、文档及接手
-
-build/c04-performance保存基线与固定输入、完整/摘要结果及阶段、paired-summary-comparison.json、equivalence-results.json、regression-results.json及CTest原件、measurement-environment.json、final-own-results.json及失败原件。它们是忽略的本机测量证据，不随Git分发。tests/selfhost_pipeline_budget_tests.py为新手动测量工具，tests/selfhost_budget_tests.py复现完整当前自身链路。
-
-只改五相关活文档、四上下文与新检查点；39份history原字节、36章207条/207确认、E0 43行、ER8/RS14、32任务与D001–D034保护。完整保护/链接结果见build/c04-performance/document-verification.json。权威进度docs/项目概览与进度.md#c04-pipeline-verification、决策#c04-pipeline-performance、运行时#consumed-value-copy、指南#c04-performance-usage。
-
-A/B未整体验收，B不等待C。A07剩余、A09/A10深clone、A02尺寸身份及C07所需B03/B04/B05仍按用户选择推进；不自动开始未选后端/网络/数据库，未请求不提交推送；不复制原生Codex会话、数据库或CODEX_HOME。
+C06当时13文件216762字节/484.297秒/268046189步/51调用与无源码适配HUAB证明是历史，容器由C++编码，不搬到新输入作通过或加速证明。只涉及五页及README、四上下文/新检查点，history39/36章207确认/E0 43行/ER8RS14/32任务/D001–D034保持；不提交推送，不同步原生会话/数据库/CODEX_HOME。

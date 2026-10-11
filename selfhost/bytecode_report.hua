@@ -1,3 +1,4 @@
+# C06 传输v2：有界JSON块，指令字段保留，非HUAB。
 import bytecode as bc
 import bytecode_verify as verify
 import types as types
@@ -7,8 +8,15 @@ import std.bytes as bytes
 import std.json as json
 struct Source { module string
     text string }
+struct PackedInstruction { n []int
+    s []string
+    a []string
+    c []bool }
+struct PackedSite { n []int
+    s []string }
 struct Code { name string
-    instructions []bc.Instruction }
+    count int
+    blocks []string }
 struct Function { name string
     site int
     published bool
@@ -22,7 +30,7 @@ struct Report { schema string
     source string
     entry string
     sources []Source
-    sites []bc.Site
+    site_blocks []string
     structures []bc.Structure
     functions []Function
     initializer Code
@@ -36,6 +44,42 @@ struct Failure { schema string
     stage string
     error string }
 pub fn failure(source string, detail string) string { return unwrap(json.encode(Failure{schema:"hua.bytecode.image.v1",profile:"C06-BC1",status:"error",source:source,stage:"bytecode",error:detail})) }
+fn code(c bc.Code) Result<Code> {
+    var empty []PackedInstruction = []
+    var rows = list.from_slice(empty)
+    var blank []string = []
+    var blocks = list.from_slice(blank)
+    var nodes = 1
+    for i in list.snapshot(c.instructions) {
+        let cost = 14+len(i.names)+len(i.contextual)
+        if list.len(rows)>0 && (list.len(rows)==1024 || nodes+cost>65536) {
+            list.append(blocks,json.encode(list.snapshot(rows))?)?
+            list.clear(rows)
+            nodes=1
+        }
+        var flag=0
+        if i.flag { flag=1 }
+        list.append(rows,PackedInstruction{n:[i.op,i.site,i.argument,i.target,flag,i.constant.kind],s:[i.text,i.type_name,i.constant.text],a:i.names,c:i.contextual})?
+        nodes+=cost
+    }
+    if list.len(rows)>0 { list.append(blocks,json.encode(list.snapshot(rows))?)? }
+    return ok(Code{name:c.name,count:list.len(c.instructions),blocks:list.snapshot(blocks)})
+}
+fn sites(image bc.Image) Result<[]string> {
+    var empty []PackedSite=[]
+    var rows=list.from_slice(empty)
+    var blank []string=[]
+    var blocks=list.from_slice(blank)
+    for s in list.snapshot(image.sites) {
+        list.append(rows,PackedSite{n:[s.node,s.origin,s.start,s.end,s.line,s.column],s:[s.module,s.role]})?
+        if list.len(rows)==1024 {
+            list.append(blocks,json.encode(list.snapshot(rows))?)?
+            list.clear(rows)
+        }
+    }
+    if list.len(rows)>0 { list.append(blocks,json.encode(list.snapshot(rows))?)? }
+    return ok(list.snapshot(blocks))
+}
 pub fn success(image bc.Image, model types.Model, source string, checked verify.Verification) Result<string> {
     var empty []Source = []
     var sources = list.from_slice(empty)
@@ -45,6 +89,6 @@ pub fn success(image bc.Image, model types.Model, source string, checked verify.
     }
     var fs []Function = []
     var functions = list.from_slice(fs)
-    for f in list.snapshot(image.functions) { list.append(functions,Function{name:f.name,site:f.site,published:f.published,writable:f.writable,parameters:f.parameters,returns:f.returns,code:Code{name:f.code.name,instructions:list.snapshot(f.code.instructions)}})? }
-    return json.encode(Report{schema:"hua.bytecode.image.v1",profile:"C06-BC1",status:"ok",source:source,entry:image.entry,sources:list.snapshot(sources),sites:list.snapshot(image.sites),structures:list.snapshot(image.structures),functions:list.snapshot(functions),initializer:Code{name:image.initializer.name,instructions:list.snapshot(image.initializer.instructions)},instructions:image.instructions,work:image.work,verification:checked})
+    for f in list.snapshot(image.functions) { list.append(functions,Function{name:f.name,site:f.site,published:f.published,writable:f.writable,parameters:f.parameters,returns:f.returns,code:code(f.code)?})? }
+    return json.encode(Report{schema:"hua.bytecode.image.v2",profile:"C06-BC1",status:"ok",source:source,entry:image.entry,sources:list.snapshot(sources),site_blocks:sites(image)?,structures:list.snapshot(image.structures),functions:list.snapshot(functions),initializer:code(image.initializer)?,instructions:image.instructions,work:image.work,verification:checked})
 }

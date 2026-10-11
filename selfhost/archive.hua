@@ -1,0 +1,197 @@
+# C07-HUAB1：由 Hua 编码既有完整 HUAB6/7 布局；输入仍为 BC1。
+import bytecode as bc
+import bytecode_verify as verify
+import types as types
+import ast_pool as ast
+import std.list as list
+import std.alg as alg
+import std.bytes as bytes
+import std.buffer as buffer
+import std.strings as strings
+import std.json as json
+import std.fs as fs
+import std.path as path
+pub struct Artifact { data Bytes
+    format int
+    instructions int
+    crc32 int }
+fn text(mut out Buffer, value string) Result<void> {
+    buffer.write_u32_le(out,strings.len_bytes(value))?
+    buffer.write_text(out,value)?
+    return ok()
+}
+fn boolean(mut out Buffer, value bool) Result<void> {
+    var n=0
+    if value { n=1 }
+    buffer.write_u8(out,n)?
+    return ok()
+}
+fn span(mut out Buffer, value bc.Site, ids map[string]int) Result<void> {
+    let id=ids[value.module]
+    if is_none(id) { return err("E8203@1:1 archive source identity missing") }
+    buffer.write_u32_le(out,unwrap(id))?
+    buffer.write_u32_le(out,value.start)?
+    buffer.write_u32_le(out,value.end)?
+    buffer.write_u32_le(out,value.line)?
+    buffer.write_u32_le(out,value.column)?
+    return ok()
+}
+# JSON 的有限 binary64 解码是现有数值原语；位布局和端序在 Hua 中计算。
+fn floating(mut out Buffer, literal string) Result<void> {
+    var value=json.as_float(json.decode(literal)?)?
+    var sign=0
+    if strings.starts_with(literal,"-") { sign=2147483648 }
+    if value<0.0 { value=-value }
+    var exponent=0
+    var mantissa=0
+    if value!=0.0 {
+        while value>=2.0 { value=value/2.0
+            exponent+=1 }
+        while value<1.0 { value=value*2.0
+            exponent-=1 }
+        mantissa=int((value-1.0)*4503599627370496.0)
+        exponent+=1023
+        if exponent<=0 {
+            mantissa=(4503599627370496+mantissa)>>(1-exponent)
+            exponent=0
+        }
+    }
+    buffer.write_u32_le(out,mantissa&4294967295)?
+    buffer.write_u32_le(out,(mantissa>>32)+(exponent<<20)+sign)?
+    return ok()
+}
+fn scalar(mut out Buffer, value bc.Scalar) Result<void> {
+    buffer.write_u8(out,value.kind)?
+    if value.kind==1 { boolean(out,value.text=="true")? }
+    else if value.kind==2 { buffer.write_i64_le(out,int(value.text))? }
+    else if value.kind==3 { floating(out,value.text)? }
+    else if value.kind==4 { text(out,value.text)? }
+    else if value.kind!=0 { return err("E8201@1:1 constant outside C07-BC1") }
+    return ok()
+}
+fn code(mut out Buffer, value bc.Code, sites []bc.Site, ids map[string]int) Result<void> {
+    text(out,value.name)?
+    buffer.write_u32_le(out,list.len(value.instructions))?
+    for op in list.snapshot(value.instructions) {
+        buffer.write_u8(out,op.op)?
+        span(out,sites[op.site],ids)?
+        text(out,op.text)?
+        text(out,op.type_name)?
+        buffer.write_u32_le(out,op.argument)?
+        buffer.write_u32_le(out,op.target)?
+        boolean(out,op.flag)?
+        scalar(out,op.constant)?
+        buffer.write_u32_le(out,len(op.names))?
+        for name in op.names { text(out,name)? }
+        buffer.write_u32_le(out,len(op.contextual))?
+        for flag in op.contextual { boolean(out,flag)? }
+    }
+    return ok()
+}
+fn needs_seven(t string) bool {
+    return strings.contains(t,"std.error.Value") || strings.contains(t,"Result<void,")
+}
+fn required_format(image bc.Image) int {
+    var format=6
+    for s in list.snapshot(image.structures) { for f in s.fields { if needs_seven(f.type_name) { format=7 } } }
+    for f in list.snapshot(image.functions) {
+        for p in f.parameters { if needs_seven(p.type_name) { format=7 } }
+        for t in f.returns { if needs_seven(t) { format=7 } }
+        for op in list.snapshot(f.code.instructions) { if needs_seven(op.type_name) { format=7 } }
+    }
+    for op in list.snapshot(image.initializer.instructions) { if needs_seven(op.type_name) { format=7 } }
+    return format
+}
+pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
+    verify.verify(image)?
+    let sites=list.snapshot(image.sites)
+    let units=list.snapshot(model.graph.units)
+    var blank []string=[]
+    var names=list.from_slice(blank)
+    var unit_indices=map[string]int{}
+    for i in 0..len(units) {
+        if is_some(unit_indices[units[i].id]) { return err("E8203@1:1 duplicate archive source") }
+        unit_indices[units[i].id]=i
+        list.append(names,units[i].id)?
+    }
+    let source_names=alg.sorted(list.snapshot(names))?
+    var ids=map[string]int{}
+    var out=buffer.new()
+    buffer.write_u32_le(out,len(source_names))?
+    for i in 0..len(source_names) {
+        let name=source_names[i]
+        let unit=units[unwrap(unit_indices[name])]
+        let origin=ast.source_info(unit.tree.pool,unwrap(ast.get(unit.tree.pool,unit.tree.root)).span.source)?
+        ids[name]=i
+        text(out,name)?
+        text(out,bytes.to_text(origin.data)?)?
+    }
+    list.clear(names)
+    let structures=list.snapshot(image.structures)
+    var structure_indices=map[string]int{}
+    for i in 0..len(structures) { structure_indices[structures[i].name]=i
+        list.append(names,structures[i].name)? }
+    let structure_names=alg.sorted(list.snapshot(names))?
+    buffer.write_u32_le(out,len(structure_names))?
+    for name in structure_names {
+        let s=structures[unwrap(structure_indices[name])]
+        var raw=name
+        if s.enumeration { raw+=" enum" }
+        text(out,raw)?
+        span(out,sites[s.site],ids)?
+        boolean(out,s.published)?
+        buffer.write_u32_le(out,len(s.fields))?
+        for field in s.fields { text(out,field.name)?
+            text(out,field.type_name)?
+            span(out,sites[field.site],ids)? }
+    }
+    list.clear(names)
+    let functions=list.snapshot(image.functions)
+    var function_indices=map[string]int{}
+    for i in 0..len(functions) { function_indices[functions[i].name]=i
+        list.append(names,functions[i].name)? }
+    let function_names=alg.sorted(list.snapshot(names))?
+    buffer.write_u32_le(out,len(function_names))?
+    for name in function_names {
+        let f=functions[unwrap(function_indices[name])]
+        text(out,name)?
+        span(out,sites[f.site],ids)?
+        boolean(out,f.published)?
+        # BC1 排除 unsafe/external/方法/嵌套声明；mutating 不是返回写能力。
+        boolean(out,false)?
+        boolean(out,false)?
+        boolean(out,false)?
+        buffer.write_u32_le(out,len(f.parameters))?
+        for p in f.parameters { text(out,p.name)?
+            text(out,p.type_name)?
+            boolean(out,p.writable)?
+            span(out,sites[p.site],ids)? }
+        buffer.write_u32_le(out,len(f.returns))?
+        for t in f.returns { text(out,t)? }
+    }
+    # 外部模块空表仍必须写入，不能省略。
+    buffer.write_u32_le(out,0)?
+    code(out,image.initializer,sites,ids)?
+    buffer.write_u32_le(out,len(function_names))?
+    for name in function_names { code(out,functions[unwrap(function_indices[name])].code,sites,ids)? }
+    let payload=buffer.bytes(out)
+    let checksum=bytes.crc32(payload)
+    let format=required_format(image)
+    var header=buffer.new()
+    buffer.append(header,bytes.from_ints([72,85,65,66,13,10,26,10])?)?
+    buffer.write_u32_le(header,format)?
+    buffer.write_u32_le(header,1)?
+    buffer.write_i64_le(header,bytes.len(payload))?
+    buffer.write_u32_le(header,checksum)?
+    buffer.write_u32_le(header,0)?
+    return ok(Artifact{data:bytes.concat(buffer.bytes(header),payload)?,format:format,instructions:image.instructions,crc32:checksum})
+}
+fn discard(file string) { fs.remove(file) }
+pub fn publish(data Bytes, target string) Result<void> {
+    if path.ext(target)?!=".huab" { return err("E8204@1:1 archive output must be .huab") }
+    let temporary=fs.temp_file(path.dirname(target)?,"hua-huab-")?
+    defer discard(temporary)
+    fs.write_bytes(temporary,data)?
+    fs.replace(temporary,target)?
+    return ok()
+}

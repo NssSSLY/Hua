@@ -277,7 +277,7 @@ A05节点池、P1/P2 Hua Parser、N1名称/模块和C04-T1类型/能力已通过
 python .\tools\hua_frontend.py check .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.types.json
 ```
 
-上述check由Hua分析、不执行输入，输出类型JSON；公共hua.exe check继续用C++前端。C05-L1已生成可校验VM核心树；C06-BC1已由Hua生成/验证指令，完整自举仍需C07 HUAB编码和C08连续代际；组件HUAB7仍由宿主构建。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
+上述check由Hua分析、不执行输入，输出类型JSON；公共hua.exe check继续用C++前端。C05-L1已生成可校验VM核心树；C06-BC1已由Hua生成/验证指令，C07已提供当前子集完整HUAB容器编码；新完整自身预算尚未通过，连续代际仍需C08，现有C++ Runtime保留。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
 
 错误基础新增Result<void,E>与只读std.error.Value，默认string错误保持。当前16标准模块/141函数。运行`.\build\hua.exe run .\examples\error_foundation.hua`；[Error接口与逐接口盘点](docs/标准库与内建接口.md#standard-error-contract)、[本轮验收与边界](docs/项目概览与进度.md#er-foundation-verification)。普通HUAB写6，新错误能力写7，读1–7；Native ABI1保持。
 
@@ -298,4 +298,14 @@ Hua指令生成命令（不执行输入；输出已回填/验证的指令JSON）
 python .\tools\hua_frontend.py emit .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.bytecode.json
 ```
 
-查看[C06命令与指令加载器](docs/开发与运行指南.md#c06-usage)。Hua已生成指令，完整文件容器编码待C07，代际待C08；[A/B阶段仍未整体验收](docs/设计决策与未决事项.md#abc-current-status)，基础库可独立推进。
+查看[C06命令与指令加载器](docs/开发与运行指南.md#c06-usage)。Hua已生成指令，C07完整容器/样例已验，完整自身预算及C08代际仍待；[A/B阶段仍未整体验收](docs/设计决策与未决事项.md#abc-current-status)，基础库可独立推进。
+
+
+Hua完整HUAB构建（当前SB1/BC1，不执行输入）：
+
+```powershell
+python tools/hua_frontend.py build examples/frontend_modules/main.hua --hua build/hua.exe -o build/frontend-hua.huab
+.\build\hua.exe run .\build\frontend-hua.huab
+```
+
+示例输出`2 2`。Hua完成分析、降级、指令与二进制编码，Python监督/独立读取/安全发布；[用法](docs/开发与运行指南.md#c07-usage)。当前完整自身预算未通过，不能视为完整自举，[实测与下一步](docs/项目概览与进度.md#c07-verification)。
