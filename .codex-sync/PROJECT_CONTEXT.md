@@ -1,30 +1,117 @@
 # Hua 项目背景
 
-Hua 是轻量系统脚本语言原型。当前入口是 README.md 和 docs/文档目录.md；学习与规则确认使用 docs/语言百科与设计核对.md，实际能力、最近验收和限制看 docs/项目概览与进度.md，设计合同以对应专题文档为准。
+更新：2026-10-11。项目实际目录为C:\file\project\hua，Git项目身份aab00f84-5a35-48b3-973b-4ccd29e3d31c。Hua是轻量静态类型脚本与计算语言原型；当前用户希望先解决语言和本地开发基础，再达到编译器自举，之后扩应用与执行优化。
 
-主要目录：src/ 为 C++20 前端、语义、VM 和标准库实现；include/hua/ 为接口；selfhost/ 为 Hua 自举起步；examples/、tests/ 为示例和回归；scripts/ 为构建与安装入口；editors/ 为 VS Code 集成。依赖 CMake、Wasmtime，Python Bridge 是可选插件，核心不依赖 Python。
+## 最新切片：A07保护与C04真实工作负载优化（2026-10-11）
 
-本目录只记录便于换电脑继续工作的摘要，不替代九份权威文档。docs/history/ 保留历史原字节，历史建议不是任务授权。项目身份使用 project.json 中稳定的 UUID，不依赖电脑盘符。
+已优化模块/符号/位置查询、函数环境复制与Value/List/Result临时复制，A07已知只读子项来源和旧动态拒绝保持；新增for弃值不产生空名字符号修复。固定13文件214439字节成对摘要528.406→343.859秒（减少34.9%），分配减少38.4%，峰值工作集约相同；最终完整分析/降级报告401.235秒、44416 Core节点，正式校验与字段对照通过。不是跨平台或稳定性能承诺。
 
-2026-10-08新增长期方向：公共Typed HIR/Hua MIR驱动开发VM、CPU原生缓存和发布AOT；可选HHR/AEE处理合格计算的设备/数据/成本。E0六类43条合同已冻结；E1先单模块int/float/bool/void、小控制流/普通函数与旧字节码降级。E1最小IR已完成内部实现；完整IR/恢复帧/AOT/GPU未实现，性能目标与设备API后置，当前栈VM/HUAB6/ABI1不变。权威设计见docs/设计决策与未决事项.md，百科18.06/23.02/31.04/34.03是对应学习入口。
+当前自身13文件215190字节已生成并独立验证指令，验证累计481.405秒；505.687秒因JSON1000000节点合同返回E8202错误，原600秒/500M步骤未触发，无成功自身指令/适配HUAB执行证明。决定保留栈VM，下一核C06有界产物传输/表示及生产者、验证器、加载器共同合同，再接C07/C08；不提高通用JSON或compiler预算，不自动重构VM。
 
-2026-10-08 E0合同入口：docs/语言设计与类型规则.md负责数值/错误，docs/运行时与扩展设计.md负责所有权/Task恢复/预算/兼容；设计决策ADR-HUA-CONTRACT-001负责结论，百科0.5保留36章/207条。当前实现定向核对31场景/194断言通过，不证明新机制实现。
+最终ON41/41；OFF39/40文件替换可见性失败，该项随后独立连续5次通过，原因未定位、B04跟踪。两配置A07各27/492、C04各63/892、A05各27/305与Value21检查保持。详细当前验证只维护CURRENT_STATE.md及docs/项目概览与进度.md#c04-pipeline-verification；以下切片属于历史，不能作为本批全量无失败或自举通过。
 
-2026-10-09归并下一代方向：Simple Code, Adaptive Execution, Explicit Control。HXE协调程序VM/原生路径，Flow复用Task/资源，HHR是异构底座、AEE是计算成本策略；Smart Memory/Explain/Capability/Replay/组件包分发/UI状态迁移逐步建立。E1a–d为最近实现任务；E2→E3单CPU后端→E4缓存/发布，E5/E6a可配合推进后E6b单显式GPU→E7自动策略。完整规划只维护设计决策文档integrated-implementation-plan，百科0.6仍207条。
+## 前轮A07历史
+
+A07-1修复已知只读子项来源与结构副本混淆，C++与Hua同步；合法标量/新字段替换、E4007保持，完整效果/未知别名仍待。当时13文件214439字节链路生成累计554.771秒，600.109秒在验证终止；ON40项/OFF39项覆盖通过、A07各27/492。本批当前结果见上文，旧记录见进度#a07-budget-verification。
+
+## 当前路线与权威入口
+
+用户已要求按“语言基础→基础标准库→编译器自举→后续扩展/优化”重整。docs/设计决策与未决事项.md保持原入口，现为三步规划：A01–A12、B01–B10、C01–C10共32个实施任务，G1/G2/G3分别验收。HUA-D001–D033保留身份并重排，新增D034语言基线与自举闸门；旧E2a默认下一步和多线并行不再有效。
+
+旧版完整工作树文档原样移动docs/history/设计决策与未决事项_旧路线归档_2026-10-10.md，SHA256为7477599bd56e8d8b394db6bc0125e55b04111314115b95f1d0d2f10843603c34。旧记录用于追溯，不授权继续原优先级或批量实现。九份活文档继续按涉及更新，history39原件停止维护。
+
+## 当前已有工程
+
+src/与include/hua/是C++20前端、语义、VM、GC/Task与标准库；examples/tests为示例与回归，scripts为构建安装，editors为基础VS Code集成。selfhost/有Hua词法器、A05节点池/递归对照、C02-P1/P2 Parser、N1名称/模块、A11完整前端规模、C04-T1类型/能力与HC-CONTRACT-1；Hua降级C05-L1及指令C06-BC1功能切片已完成；完整Hua HUAB编码及代际闭环尚缺。默认VM、解释器对照、源码与无源码HUAB、本地模块、Native/WASM与可选CPython3.12 Bridge已有。Wasmtime当前构建必选，Python包不是核心/自举依赖。
+
+当前17标准模块/153函数与38公开内建；ER0源码分类/Result<void,E>/std.error.Value已实现，File/IOFailure12接口与D002-a资源模型、D002-c/E5 CPU恢复/文件阻塞适配已验收。E1标量Typed HIR/MIR及直接旧字节码保留，未覆盖全语言。普通HUAB6/Error7/File8、reader1–8、Native ABI1；活File/协程不持久化。
+
+更早代码证据来自D002-c/E5：Windows x64 Release Bridge ON完整32/32（64.82秒）、OFF定向7/7（12.68秒）、恢复压力80次。它们是前轮实际运行，不是文档重整的新测试。POSIX未编译运行，本机WSL未启用；条件/命令在开发指南。
+
+## 维护与接手
+
+当前Git HEAD仍8d365fba75018361255f8f8ac7255219f57f69ec，工作树含D002-a/b/c及本轮文档未提交成果，远程克隆不含本轮工作。未明确请求不得提交/推送。接手时读取四份上下文、最新检查点、Git状态和九份权威文档；不复制原生Codex会话/数据库/CODEX_HOME。
+
+百科0.13保持36章/207条/207用户确认原值；E0六类43冻结行保持，ER8/RS14确认不重置。当前规划不改变/、//、#注释、错误默认string、能力/预算/取消/资源语义和产物兼容。详细内容分别查语言规则、运行时、实际API、开发指南和百科；本目录不维护第二套完整任务表。
+
+## 既有切片A01（2026-10-10）
+
+A01当时用户仅选择A01，已验收：61例／580检查，发行基线/源码SB1/编译覆盖HC0–HC2分开报告；内部hua_subset_probe检查完整本地源码闭包，不是Hua编译器。A01当时词法器符合SB1、Hua Parser/sema/代码生成/HUAB编码未实现；最新C02-P1仅补最小解析。SB1排除方法/interface/用户泛型/嵌套声明/属性/Task/parallel/SIMD/外接模块与结构化Error/File，运行时的这些已实现能力保持。
+
+未开放unsafe/ref/ptr/取址保留解析，静态E3008拒绝；旧未实现操作HUAB加载E6002拒绝。不是新增内存功能，合法格式1–8/ABI1/153接口保持。本轮Windows ON33/33、OFF32/32全回归；POSIX未实测，旧D002压力结果不冒充本轮。下一建议A05→C01/A06→C02，均未授权自动实施。详见docs/设计决策与未决事项.md#a01-capability-audit及build/a01证据。
+
+## 历史切片A05（2026-10-10）
+
+用户选择的A05已验收：SB1内6个struct/18种enum的NodeId＋List池，Bytes来源表、位置/顺序/读取/修改/验证、迭代遍历和路径复制；直接递归值对照与构造示例可运行。首个Parser建议沿用内部池，公共AST ABI未冻结；Parser/sema/字节码/HUAB编码器和代际闭环尚缺。
+
+Windows ON/OFF相关5/5、最终专项各26例／296检查；源码AST/VM及删除整个复制.hua闭包HUAB7，独立C++7节点结构/span及6来源36字节位置/完整规范化字节，深链256/宽子项256。真实证据build/a05与build-python-off/a05；生产源码/现有语法/API/预算/格式未变。递归81节点clone误报File/E4007与Result子项动态只读拒绝归A09/A10/A07后续核对；Pool不支持直接字段改写/整池clone/跨Task/池持久化。下一建议C01→C02，剩余30任务未自动授权。实际规则只维护docs/设计决策与未决事项.md#a05-ast-pool。
+
+## 历史切片C01-1/C02-P1（2026-10-10）
+
+用户明确选择C01→C02，已验收HC-CONTRACT-1和Hua最小Parser。SB1是组件自身源码子集，C02-P1输入仅单文件标量/名称/调用/绑定/普通函数/if/while/块/退出；不做语义分析或执行输入。Token补规范化字节start/end，池载荷18→27，公共AST ABI未冻结。tools/hua_frontend.py只处理命令/0-1-2-3退出/JSON验证与原子发布，解析和报告投影由Hua完成。
+
+Windows ON/OFF各88例／922检查，相关六项CTest均通过，最后参数错误JSON修正仅复跑Parser专项。独立C++ AST/span/code行列、AST/VM/删除整个复制.hua闭包HUAB7、SB1、预算/失败/旧文件保护/JSON确定性及现有HUAB6门禁；新指南示例7命令实际通过，普通程序两执行器输出10。当前Parser HUAB7与HC0参考HUAB6均由C++宿主生成，Hua编码器仍待C06/C07。
+
+8192源字节/512 Token/1024池节点/16解析嵌套/8192逻辑工作只可降低，不改变宿主100万步/128调用。256平铺表达式先触发宿主E4099，命令明确失败/旧JSON保留；规模成本与完整编译任务预算留A11。C02自身语法扩展、C03名称/模块、C04类型/能力、C05降级、C06字节码、C07完整HUAB、C08代际仍待用户选择，G1/G2/G3/POSIX未通过。
+
+本批只改Lexer/池和新增前端/工具/测试/CMake，生产C++语义/运行时/格式/API不改。六份相关活文档和项目上下文更新，history39/207用户确认/E0 43行/ER8/RS14保持。main HEAD未变、未提交推送。详细合同只维护docs/设计决策与未决事项.md#c01-bootstrap-contract和#c02-parser-slice，实际结果见build/c01-c02及build-python-off/c01-c02。
+
+## 历史切片C02-P2/C03-N1（2026-10-11）
+
+用户明确授权扩字符串/容器/结构/导入至自身所需语法并接名称/模块。P2保留P1默认，补现有SB1语法族，池59载荷；N1有Hua模块图、声明/词法作用域/公开导出/名称绑定与初始化计划，输入不执行，Python只监管报告/退出/原子发布。Hua代码生成/完整HUAB编码和代际仍缺。
+
+Windows ON/OFF各96例791项，新专项/独立C++参照/AST-VM-无源码HUAB7-SB1均通过，真实源码46观察；33片段接受，13整文件6接受7预算拒绝。相关6/6与最终受影响前端2/2，P1仍88/922；例子指南10命令、两执行器2 2。生产C++/格式/预算/API与历史原件未改，六页相关文档/四上下文更新，主线不变、未提交推送。
+
+N1严格范围及最新证据只查设计决策#c03-names-modules和进度#c02-c03-verification；直接阻塞A11完整文件/图规模与显式编译预算，再C04类型/能力、C05–C08；G1/G2/G3/POSIX未验收。基本语义、GC/Task、ER/RS和普通6/7/8能力保持，不自动实现后端优化。
+
+## 历史A11-1/C04-T1（2026-10-11）
+
+- 新include/hua/execution.hpp及解释器/VM/RuntimeContext/Task/CLI/probe接入显式--execution-profile default|compiler与--report-budget。默认百万步/128调用/GC周期256保持；compiler固定5亿步/128调用/周期65536，Task继承策略但每执行器独立计步，恢复不重置，报告聚合实际尝试步骤/最高调用。策略不嵌HUAB。
+- HC-CONTRACT-1新增A11-COMPILER-1：单文件131072字节/32768词元/32768池节点/48综合嵌套/524288解析工作；图32文件/12层/1MiB/8192符号/32768引用/64遍历层/262144名称工作；类型64表达式深度/1048576逻辑工作；工具600秒/16MiB报告。旧P1/P2/N1 slice默认及只可降低接口不变，不接受任意数值/无限配置，不保证预算内任意输入都完成。
+- 名称全局查找Map索引、Parser报告Buffer累积及编译专用GC周期调节；非移动RC＋循环回收、默认布局/GC算法、资源/Task/取消/defer合同保持。没有硬RSS/联合Task额度/OS沙箱；宿主长调用不受Hua步数直接约束。
+- 新type_rules/signatures/types/type_report/types_main五模块，基于P2池/C03逻辑符号实现C04-T1：类型/签名/字段/集合/enum/Result<void>/Optional/多值、局部if/短路/早退/循环/match收窄、let/var/mut与跨函数返回写能力有限迭代；输入初始化/main不执行。12个SB1标准模块108函数签名与真实宿主元数据逐项比较，生产17模块153函数38内建保持。
+- 开发工具check固定compiler预算，输出hua.types.capabilities.v1/C04-T1；parse/analyze新增--budget compiler。Python仅监管响应/ID/span/事实/计数、退出0/1/2/3与完整验证后的原子发布，实际分析在Hua。公共hua.exe check仍C++；直接Hua入口错误JSON可能退出0，CI用开发工具。
+- T1排除const/常量折叠、缺参数注解/值返回注解或完整绑定类型、非十进制固定长度/整数match、方法/interface/用户泛型/嵌套声明、async/unsafe/FFI与SB1外标准模块。保留[]等上下文事实，不是完整HIR/效果/数值溢出证明，也不是发行语言功能删减。
+
+## 本轮实际结果
+
+Windows x64 Release Bridge ON/OFF各55例750检查，AST/VM/删除复制组件闭包源码后的HUAB7/SB1 VM。独立C++类型/可写性/函数能力与反例code/行列、108签名、无输入副作用/预算/无效响应/旧输出保护通过；新增Task长循环yield/恢复默认超限、compiler成功在AST/VM/无源码HUAB6通过。
+
+全部CTest两批验证：ON旧36/36（231.78秒）＋最终专项1/1（127.44秒），OFF旧35/35（217.29秒）＋最终专项1/1（127.29秒），合计37/36全部通过。P1仍88/922；本轮P2/N1为96/878及69语料（49片段/20整文件）；之前96/791及46语料是历史证据，不能混用。
+
+ON独立实际规模验收：20整文件、2完整闭包、152检查；类型入口11文件/155561字节/1385符号/8535引用，18746事实/3能力收敛轮，VM185074669步/最高46调用。四路径输出一致，与独立C++AST/span及完整语义接受性核对；18741事实与独立C++同span匹配，0记录差异；其余事实无对应记录，不声称完整模型等价。每路径步骤/深度/耗时/Windows峰值工作集和源码哈希在build/a11-c04/scale-results.json，差异见self-fact-differences.json，完整报告self-types-final.json。OFF没有重复整套大规模四路径测量。新指南10命令实际通过，正常示例两执行器仍输出2 2。
 
 
-2026-10-09 E1a–d已交付：include/hua/ir.hpp与src/hir.cpp、mir.cpp、ir_verify.cpp、ir_bytecode.cpp；内部tests/ir_driver.cpp生成hua_ir_probe，默认main/旧编译器/VM/HUAB6/ABI1保持。强类型稠密ID只保证同一模块修订的确定性，不是编辑后永久身份；HIR/MIR及ScalarConstant不保存AST指针。MIR是带失败/预算/取消记录的栈序SSA，直接生成旧指令，桥接仅保活旧函数声明。
+当时停止点为C04；当前限制看CURRENT_STATE/TODO及最新C06记录。前文各轮下一建议是历史，不覆盖本轮授权与停止点。
 
-E1范围单模块int/float/bool/void、绑定/名称赋值、显式标量签名普通函数、if/短路/while/int范围for/退出、标量print/int/float；不覆盖尺寸类型/容器/Result/泛型实例/defer/Task/导入。unsupported整体初始化前E8001，非法内部IR/桥接E8002；旧CLI能力继续可用。内部Explain区分证明与Runtime检查，不提供性能结论。
+## 历史C05-L1（2026-10-11）
 
-E1阶段历史证据：完整24/24（116.27秒，Windows x64 Release，Python Bridge ON，CTest并行2）；Bridge OFF独立构建IR定向2/2（15.09秒）；44项C++检查、37四路径场景/10类拒绝/779断言；两构建示例与HUAB及3个无CPython DLL导入通过。913本地链接、36章207条/207确认栏、43 E0合同和38 history文件原值通过。详见docs/运行时与扩展设计.md#e1-ir-runtime、docs/项目概览与进度.md#e1-verification、docs/开发与运行指南.md#e1-internal-tool；下一步E2a，不自动开始E2或提交/推送。
+用户选择C05，已实现Hua带类型VM核心树：模块/保留名称/类型、签名摊平、枚举布局/构造器、来源角色和验证；输入不执行，短路/控制流/Result/defer沿用旧VM。捕获/高级构造保持T1/SB1排除。工具lower输出hua.core.lowered.v1，名称/类型/来源/计划全验证及0/1/2/3原子发布；报告容量E8202，T1补main无参E3005。
 
-2026-10-09五份材料的历史设计归并阶段，非代码任务：docs/设计决策与未决事项.md#design-synthesis-20261009综合网络、轻量Core/SDK/Extensions与Result错误增强；统一实施仍以integrated-implementation-plan为唯一入口。ER错误切片服务S路线，N网络接E5/E6a，D发行解耦为E4服务；S1b＋ER0为近期应用，E2a继续编译主线。百科0.8只补30条，207确认栏与43 E0规则保持；catch/标准Error/Result<void>/入口报告仍待确认且未实现。当前Wasmtime必选，默认Result错误为string，旧CLI/HUAB6/ABI1/Task快照与取消合同不变。
+ON/OFF各42例1705检查/C04各56例757；定向ON9/OFF3、指南11命令。ON/VM完整自身13文件175117字节，21157事实/36847核心节点/7645生成节点/224函数，252567264步/46调用/466.015秒/1357.86MiB/11.44MiB报告；源SHA与最终文件一致。完整源闭包独立宿主接受，核心经测试适配3.188秒产生2660065字节HUAB，删除测试源副本后核心AST/VM/适配HUAB组件处理示例，与原组件输出一致；不是C06/C07或代际。
 
-2026-10-09待完成设计维护入口（错误审阅准备时历史记录）：docs/设计决策与未决事项.md#design-backlog，HUA-D001–D033固定ID。助手判断优先级/影响/依赖，用户选择执行；新增设计/需求提炼更新同一列表，完成保留证据不重编号。#error-foundation-review是当前ER0/ER1审阅入口，8项推荐均待确认；本阶段只文档，未完成接口盘点或实现Error/Result<void>。
+核心上限262144节点/1048576构造工作/64深度及A11显式配置保持；普通默认不变。测试适配器仅消费报告，C++仍负责指令/验证/编码；其大报告读取采用65536周期/16MiB边界并复用执行选项/参数，不改生产C++/GC/Task/格式/API。pub仍保留analysis.graph.symbols，后续按module/origin编码。
 
-2026-10-09最新：用户确认ER-DEC-01–08并明确授权执行ER0/ER1基础。原125标准接口、38内建、13Python源码审阅完成；Result<void,E>无载荷ok()及std.error.Value只读名义值16接口已实现，当前16模块/141函数。旧默认string/125签名/Diagnostic/取消/预算/defer/ABI1保留；普通HUAB6、新Error/void能力7，读1–7，旧Runtime拒绝7且普通6可用。最终完整26/26及35/179已通过；百科0.9/207条确认原值/E0 43/history38保持。未提交推送，不自动启动ER2–ER4/其他HUA-D项。权威入口error-foundation-review、er0-interface-audit、er1-confirmed-contract、er1-runtime、er-foundation-verification。
+仅六相关文档/README/四上下文与新检查点，历史/百科确认/E0/ER/RS和旧成果保留。C05停止，下一由用户选C06→C07→C08；G1/G2/G3、T1外能力与A07/A09/POSIX仍待，无提交推送。完整合同/证据分别在设计决策#c05-minimal-lowering、指南#c05-usage、进度#c05-verification与build/c05。
 
-2026-10-09远程交付授权：用户要求推送当前累积工作到NssSSLY/Hua main，包含S1a/E0/E1/ER0/ER1及相关文档；普通推送不覆盖远程。过往未提交记录仅描述当时状态，最终交付以Git HEAD与origin/main实际核对为准。
+## 最新C06-BC1（2026-10-11）
 
-本次实际交付结果：S1a/E0/E1/ER0/ER1及文档累积改动已由6934825提交，换行修正011aaa8，已普通推送并核对远程main同SHA。后续交付记录本身也随Git保存；今后以本地HEAD/origin/main实际状态核对是否同步。
+用户选择C06指令生成、跳转回填与栈验证，并核问A/B阶段是否等待。C06-BC1功能切片完成：Hua生成现有Op0–40（排除SB1外31/39）的标量/元数据/指令，回填控制流；Hua验证全元数据、可达V/L栈、scope/iterator、汇合和预算。输入不执行。emit输出hua.bytecode.image.v1，0/1/2/3与原子发布/失败保旧保持。
+
+selfhost/bytecode.hua、bytecode_verify.hua、bytecode_report.hua、bytecode_main.hua；tools/hua_frontend.py emit。测试hua_instruction_driver只解码/验证/VM执行，不调用输入Parser/ModuleLoader/lowering/sema/BytecodeCompiler；C05旧发射器只作逐字段参照，适配HUAB仍由C++编码。生产VM/GC/Task/ABI/标准接口/默认预算保持。
+
+本轮修正C04固定数组尺寸拼写丢失：验证后保留原拼写，与C++身份一致；BC1校验接受数字分隔。不同拼写数组互传、绑定后动态值与非规范拼写参数差异仍归A02，未改公共规则。空类型校验减少重复分配；10002指令微测输出相同，步骤8112237→7622139，非整条编译性能证明。
+
+## 实际验证
+
+- Windows Release ON/OFF C06各63例/2306检查（CTest 310.02/310.83秒）：组件AST/VM/无源码HUAB7/SB1四路径报告；旧C++逐字段指令与生产AST/VM/独立指令VM/适配HUAB的输出、错误、清理一致。
+- 20种Hua损坏指令、16种损坏响应、超时/宿主/16MiB报告容量与旧输出保护、求值/短路/多值/Result/defer/枚举/容器/模块/精确标量/数组拼写对照。当前组件SB1通过。
+- 最终受影响ON C04 59/812、C05 42/1705，CTest2/2 299.99秒；指南11命令通过。此前本轮五项生产定向测试通过；不称最终全39/38项测试或POSIX验收。
+- 修复前固定13文件209504字节自身链路两次600秒超时，报告0；阶段诊断分析431.742秒、降级累计544.186秒，生成未完成。第一次1590.4MiB/600.125秒，第二次1421.7MiB/600.109秒且短暂微测重叠。最终13文件209815字节哈希保存，未重复完整自身链路，无本轮自身指令执行/代际成功证明。
+- build/c06和build-python-off/c06中bytecode-results.json、最终日志、verification-summary.json、guide-verification.json、initial-self-scale-results.json、timed-scale-results.json、phases.log与current-source-hashes.json。此前C05自身成功是历史，不能替代本轮C10。
+
+## 阶段关系与下一选择
+
+A没有全部完成：A01-1/A05-1/A11-1已验收原切片；A02–A04/A06–A10/A12未完整验收，G1未通过。B不用等待C全部完成；已有库支持当前编译器，B01–B06/B09需明确验收，B07/B08应用闭环可独立建设，G2未通过。
+
+建议优先A07能力精度、A09/A10深clone/诊断，核定A02数组身份及A03/A11实际编译成本；核对C07所需B03二进制/B04安全发布/B05退出协议。技术后继C07完整HUAB→C08连续代际→C09/C10/G3；本轮整体规模仍未通过，不自动扩任务/后端或提高预算。

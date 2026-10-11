@@ -58,6 +58,7 @@ std::string value_type(const Value& v) {
     case 12:return "Bytes";case 13:return "Buffer";case 14:return "List<"+std::get<ListValue>(v.data).data->element_type+">";
     case 18:return "void";
     case 17:return "std.error.Value";
+    case 19:return "std.file.File";case 20:return "std.file.IOFailure";
     case 16:return "Task<"+std::get<TaskValue>(v.data).data->result_type+">";
     default: return "";
     }
@@ -243,26 +244,78 @@ Value read_only(Value v) {
     if(auto p=std::get_if<MultiValue>(&v.data)){auto copy=managed<MultiData>(*p->data);for(auto& x:copy->values)x=read_only(std::move(x));p->data=std::move(copy);}
     return v;
 }
-Value copy_value(const Value& v,bool deep,unsigned depth) {
+bool contains_file(const Value& v,unsigned depth){
+    if(depth>128)return true; // Cyclic graphs fail closed at resource boundaries.
+    if(std::holds_alternative<FileValue>(v.data))return true;
+    auto nested=[&](const Value& x){return contains_file(x,depth+1);};
+    if(auto p=std::get_if<Callable>(&v.data)){
+        if(p->receiver&&nested(Value(*p->receiver)))return true;
+        return p->resource_guard&&p->resource_guard(depth+1);
+    }
+    if(auto p=std::get_if<StructValue>(&v.data))for(const auto& [_,x]:p->data->fields)if(nested(x))return true;
+    if(auto p=std::get_if<MapValue>(&v.data))for(const auto& [_,x]:p->data->entries)if(nested(x))return true;
+    if(auto p=std::get_if<ListValue>(&v.data))for(const auto& x:p->data->values)if(nested(x))return true;
+    if(auto p=std::get_if<SliceValue>(&v.data);p&&!p->packed)for(std::size_t i=0;i<p->length;++i)if(nested(sequence_read(*p,i)))return true;
+    if(auto p=std::get_if<ResultValue>(&v.data);p&&p->payload&&nested(*p->payload))return true;
+    if(auto p=std::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)if(nested(x))return true;
+    return false;
+}
+Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
+    if(deep&&!resource_alias&&depth==0&&contains_file(v))runtime_error({},"File cannot be cloned, including inside containers or closures","E4007");
+    if(deep)if(auto p=std::get_if<IOFailureValue>(&v.data)){
+        auto d=*p->data;d.error=std::get<ErrorValue>(copy_value(Value(d.error),true,depth+1,resource_alias).data);
+        return Value(IOFailureValue{managed<const IOFailureData>(std::move(d))});
+    }
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     if(depth>128) runtime_error({},"value nesting limit exceeded","E4099");
-    if(deep)if(auto p=std::get_if<ErrorValue>(&v.data)){auto data=*p->data;if(data.cause)data.cause=std::get<ErrorValue>(copy_value(Value(ErrorValue{data.cause}),true,depth+1).data).data;return Value(ErrorValue{managed<const ErrorData>(std::move(data))});}
+    if(deep)if(auto p=std::get_if<ErrorValue>(&v.data)){auto data=*p->data;if(data.cause)data.cause=std::get<ErrorValue>(copy_value(Value(ErrorValue{data.cause}),true,depth+1,resource_alias).data).data;return Value(ErrorValue{managed<const ErrorData>(std::move(data))});}
     if(auto p=std::get_if<StructValue>(&v.data)) {
         auto data=managed<StructData>(); data->name=p->data->name;
-        for(const auto& [k,x]:p->data->fields) data->fields.emplace(k,copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1));
+        for(const auto& [k,x]:p->data->fields) data->fields.emplace_hint(data->fields.end(),k,copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1,resource_alias));
         return Value(StructValue{data,true});
     }
-    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1));if(deep)r.writable=true;return Value(r);}
-    if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1));return Value(MultiValue{m});}
+    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1,resource_alias));if(deep)r.writable=true;return Value(r);}
+    if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;m->values.reserve(p->data->values.size());for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1,resource_alias));return Value(MultiValue{m});}
     if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{managed<std::string>(*p->data),true});
-    if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=managed<ListData>();data->element_type=p->data->element_type;for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1));return Value(ListValue{data,true});}
-    if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=managed<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1));return Value(MapValue{data,true});}
+    if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=managed<ListData>();data->element_type=p->data->element_type;data->values.reserve(p->data->values.size());for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1,resource_alias));return Value(ListValue{data,true});}
+    if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=managed<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1,resource_alias));return Value(MapValue{data,true});}
     if(auto p=std::get_if<SliceValue>(&v.data);p&&(deep||p->fixed)) {
         auto storage=managed<std::vector<Value>>(); storage->reserve(p->length);
-        for(std::size_t i=0;i<p->length;++i) storage->push_back(copy_value(sequence_read(*p,i),deep,depth+1));
+        for(std::size_t i=0;i<p->length;++i) storage->push_back(copy_value(sequence_read(*p,i),deep,depth+1,resource_alias));
         SliceValue result{storage,0,p->length,deep||p->writable,p->element_type};if(p->fixed)result=fixed_array(result,p->element_type,{},false);return Value(result);
     }
     return v;
+}
+// A consumed, uniquely owned value needs no second backing allocation. Shared values
+// retain the ordinary snapshot copy; writable/read-only descendants follow the same rule.
+Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
+    if(deep)return copy_value(static_cast<const Value&>(v),deep,depth,resource_alias);
+    if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
+    if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
+    if(auto p=std::get_if<StructValue>(&v.data)) {
+        if(p->data.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
+        for(auto& [_,x]:p->data->fields) {
+            if(!p->writable)x=read_only(std::move(x));
+            x=copy_value(std::move(x),false,depth+1,resource_alias);
+        }
+        p->writable=true;return std::move(v);
+    }
+    if(auto p=std::get_if<ResultValue>(&v.data)) {
+        if(p->payload) {
+            if(p->payload.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
+            if(!p->writable)*p->payload=read_only(std::move(*p->payload));
+            *p->payload=copy_value(std::move(*p->payload),false,depth+1,resource_alias);
+        }
+        return std::move(v);
+    }
+    if(auto p=std::get_if<MultiValue>(&v.data)) {
+        if(p->data.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
+        for(auto& x:p->data->values)x=copy_value(std::move(x),false,depth+1,resource_alias);
+        return std::move(v);
+    }
+    if(auto p=std::get_if<SliceValue>(&v.data);p&&p->fixed)
+        return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
+    return std::move(v);
 }
 Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bool contextual) {
     if(std::holds_alternative<VoidValue>(v.data)&&expected!="void")runtime_error(span,"void has no usable value","E4003");
@@ -305,6 +358,8 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
 }
 std::string show(const Value& v) {
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no displayable value","E4003");
+    if(std::holds_alternative<FileValue>(v.data))return "<File>";
+    if(std::holds_alternative<IOFailureValue>(v.data))return "<IOFailure>";
     if(std::holds_alternative<TaskValue>(v.data))return "<"+value_type(v)+">";
     if(auto p=std::get_if<NumericValue>(&v.data))return std::visit([](auto x)->std::string{if constexpr(std::is_same_v<decltype(x),std::uint64_t>)return std::to_string(x);else return show(Value(x));},p->number);
     if(auto p=std::get_if<BytesValue>(&v.data))return "<Bytes:"+std::to_string(p->data->size())+">";
@@ -355,7 +410,7 @@ Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span)
 Value enforce_return(Value value,const Node& fn,const SourceSpan& s,bool contextual) {
     for(const auto& c:fn.children)if(c->kind==NodeKind::ReturnTypes){if(c->children.size()==1)value=enforce_type(std::move(value),type_name(*c->children[0]),s,contextual);else {auto values=unpack_multi(value,c->children.size(),s);auto data=std::get<MultiValue>(value.data).data;for(std::size_t i=0;i<values.size();++i)values[i]=enforce_type(std::move(values[i]),type_name(*c->children[i]),s,i<data->contextual.size()&&data->contextual[i]);value=make_multi(std::move(values));}}
     if(auto p=std::get_if<MultiValue>(&value.data))p->data->contextual.clear();if(auto p=std::get_if<ResultValue>(&value.data))p->contextual=false;
-    return copy_value(value);
+    return copy_value(std::move(value));
 }
 Value propagated_error(const Value& value) {auto r=std::get<ResultValue>(copy_value(value).data);r.success_type.clear();return Value(r);}
 Value result_payload(const Value& v,bool success,const SourceSpan& s) {auto p=std::get_if<ResultValue>(&v.data);if(!p)runtime_error(s,"expected Result","E4003");if(p->ok!=success)runtime_error(s,success?"cannot unwrap err Result":"cannot unwrap_err ok Result","E4009");if(success&&!p->payload&&p->success_type=="void")return Value(VoidValue{});if(!p->payload)runtime_error(s,"Result payload is missing","E4003");return copy_value(p->writable?*p->payload:read_only(*p->payload));}

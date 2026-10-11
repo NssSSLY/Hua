@@ -23,7 +23,7 @@ Value invoke_builtin(const std::string& name,const std::vector<Value>& args,cons
     }
     if((name=="int"||name=="float")&&std::holds_alternative<NumericValue>(args[0].data))return convert_numeric(args[0],name,span,true);
     if(name=="ok"&&args.empty()){auto types=type_arguments(result_type,"Result");if(types.size()!=2||types[0]!="void"||types[1].empty())runtime_error(span,"ok() requires Result<void,E> metadata","E4003");return Value(ResultValue{true,nullptr,"void",types[1],false,false});}
-    if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);return Value(ResultValue{ok,managed<Value>(v),ok?value_type(v):"",ok?"":value_type(v),true,!contextual.empty()&&contextual[0]});}
+    if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);auto type=value_type(v);return Value(ResultValue{ok,managed<Value>(std::move(v)),ok?type:"",ok?"":type,true,!contextual.empty()&&contextual[0]});}
     if(name=="is_ok"||name=="is_err"){auto r=std::get_if<ResultValue>(&args[0].data);if(!r)runtime_error(span,"expected Result","E4003");return Value(r->ok==(name=="is_ok"));}
     if(name=="is_some"||name=="is_none")return Value((args[0].data.index()!=0)==(name=="is_some"));
     if(name=="unwrap_err")return result_payload(args[0],false,span);

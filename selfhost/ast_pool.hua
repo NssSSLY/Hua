@@ -1,0 +1,362 @@
+# A05 内部 AST 试验：不是公共 ABI，也不是完整 Parser。
+import std.list as list
+import std.bytes as bytes
+import std.strings as strings
+import std.alg as alg
+
+pub struct NodeId {
+    pool int
+    index int
+}
+pub struct SourceId {
+    pool int
+    index int
+}
+pub struct SourceSpan {
+    source SourceId
+    start int
+    end int
+    line int
+    column int
+}
+# 保存不可变 Bytes，避免每次 span 查询复制整份源码 string。
+pub struct SourceInfo {
+    id SourceId
+    name string
+    data Bytes
+    size int
+    lines []int
+}
+pub enum Payload {
+    Integer(int), Float(float), Boolean(bool), Name(string), Parameter(string),
+    Unary(string), Binary(string), Assignment(string), Binding(string), Function(string),
+    Parameters, Call, Block, If, While, Return, ExpressionStatement, Program,
+    IntegerLiteral(string), FloatLiteral(string), Let(string), Var(string), Const(string),
+    TypeName(string), ReturnTypes, Break, Continue,
+    String(string), Nil, Struct(string), Field(string), Import(string), For, Update(string), Index, Slice, Member(string), Array, StructLiteral(string), FieldInit(string), Range(string), Omitted, SliceType, ArrayType(string), GenericType(string), OptionalType, MutableType, MapLiteral, MapEntry, Pack, BindingList, MultiBinding(string), MultiAssignment, Propagate, Defer, Enum(string), Variant(string), Match, MatchArm
+}
+pub struct Node {
+    id NodeId
+    payload Payload
+    span SourceSpan
+    children []NodeId
+}
+pub struct Pool {
+    identity int
+    sources List<SourceInfo>
+    nodes List<Node>
+}
+var next_identity = 1
+
+pub fn create() Pool {
+    let identity = next_identity
+    next_identity += 1
+    var sources []SourceInfo = []
+    var nodes []Node = []
+    return Pool{identity:identity,sources:list.from_slice(sources),nodes:list.from_slice(nodes)}
+}
+pub fn same(a NodeId, b NodeId) bool { return a.pool == b.pool && a.index == b.index }
+pub fn count(pool Pool) int { return list.len(pool.nodes) }
+pub fn kind(payload Payload) string {
+    match payload {
+        Name(x)=>{return "Name"}
+        Member(x)=>{return "Member"}
+        Call=>{return "Call"}
+        String(x)=>{return "String"}
+        Binary(x)=>{return "Binary"}
+        Block=>{return "Block"}
+        IntegerLiteral(x)=>{return "Integer"}
+        TypeName(x)=>{return "TypeName"}
+        If=>{return "If"}
+        ExpressionStatement=>{return "ExpressionStatement"}
+        Return=>{return "Return"}
+        FieldInit(x)=>{return "FieldInit"}
+        Propagate=>{return "Propagate"}
+        Parameter(x)=>{return "Parameter"}
+        Boolean(x)=>{return "Boolean"}
+        Assignment(x)=>{return "Assignment"}
+        Index=>{return "Index"}
+        Let(x)=>{return "Let"}
+        Array=>{return "Array"}
+        Var(x)=>{return "Var"}
+        Field(x)=>{return "Field"}
+        StructLiteral(x)=>{return "StructLiteral"}
+        Function(x)=>{return "Function"}
+        ReturnTypes=>{return "ReturnTypes"}
+        For=>{return "For"}
+        GenericType(x)=>{return "GenericType"}
+        BindingList=>{return "BindingList"}
+        MatchArm=>{return "MatchArm"}
+        Unary(x)=>{return "Unary"}
+        SliceType=>{return "SliceType"}
+        MutableType=>{return "MutableType"}
+        Import(x)=>{return "Import"}
+        Variant(x)=>{return "Variant"}
+        Struct(x)=>{return "Struct"}
+        Range(x)=>{return "Range"}
+        While=>{return "While"}
+        MapLiteral=>{return "MapLiteral"}
+        Continue=>{return "Continue"}
+        Program=>{return "Program"}
+        Break=>{return "Break"}
+        Match=>{return "Match"}
+        Nil=>{return "Nil"}
+        OptionalType=>{return "OptionalType"}
+        Enum(x)=>{return "Enum"}
+        Update(x)=>{return "Update"}
+        Slice=>{return "Slice"}
+        Omitted=>{return "Omitted"}
+        ArrayType(x)=>{return "ArrayType"}
+        MapEntry=>{return "MapEntry"}
+        Pack=>{return "Pack"}
+        MultiBinding(x)=>{return "MultiBinding"}
+        MultiAssignment=>{return "MultiAssignment"}
+        Defer=>{return "Defer"}
+        FloatLiteral(x)=>{return "Float"}
+        Const(x)=>{return "Const"}
+        Integer(x)=>{return "Integer"}
+        Float(x)=>{return "Float"}
+        Binding(x)=>{return "Binding"}
+        Parameters=>{return "Parameters"}
+    }
+}
+pub fn payload_text(payload Payload) string {
+    match payload {
+        Name(x)=>{return x}
+        Member(x)=>{return x}
+        String(x)=>{return x}
+        Binary(x)=>{return x}
+        IntegerLiteral(x)=>{return x}
+        TypeName(x)=>{return x}
+        FieldInit(x)=>{return x}
+        Parameter(x)=>{return x}
+        Boolean(x)=>{return str(x)}
+        Assignment(x)=>{return x}
+        Let(x)=>{return x}
+        Var(x)=>{return x}
+        Field(x)=>{return x}
+        StructLiteral(x)=>{return x}
+        Function(x)=>{return x}
+        GenericType(x)=>{return x}
+        Unary(x)=>{return x}
+        Import(x)=>{return x}
+        Variant(x)=>{return x}
+        Struct(x)=>{return x}
+        Range(x)=>{return x}
+        Enum(x)=>{return x}
+        Update(x)=>{return x}
+        ArrayType(x)=>{return x}
+        MultiBinding(x)=>{return x}
+        FloatLiteral(x)=>{return x}
+        Const(x)=>{return x}
+        Integer(x)=>{return str(x)}
+        Float(x)=>{return str(x)}
+        Binding(x)=>{return x}
+        _=>{return ""}
+    }
+}
+fn shape(payload Payload, arity int) bool {
+    match payload {
+        Name(x)=>{return x != "" && arity == 0}
+        Member(x)=>{return x != "" && arity == 1}
+        Call=>{return arity >= 1}
+        String(x)=>{return arity == 0}
+        Binary(op)=>{
+            let operators = ["+","-","*","/","//","%","**","==","!=","<","<=",">",">=","&&","||","&","|","^","<<",">>"]
+            return alg.contains(operators,op) && arity == 2
+        }
+        Block=>{return true}
+        IntegerLiteral(x)=>{return x != "" && arity == 0}
+        TypeName(x)=>{return x != "" && arity == 0}
+        If=>{return arity == 2 || arity == 3}
+        ExpressionStatement=>{return arity == 1}
+        Return=>{return true}
+        FieldInit(x)=>{return x != "" && arity == 1}
+        Propagate=>{return arity == 1}
+        Parameter(x)=>{return x != "" && (arity == 0 || arity == 1)}
+        Boolean(x)=>{return arity == 0}
+        Assignment(op)=>{return (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "//=" || op == "%=" || op == "**=") && arity == 2}
+        Index=>{return arity == 2}
+        Let(x)=>{return x != "" && (arity == 1 || arity == 2)}
+        Array=>{return true}
+        Var(x)=>{return x != "" && (arity == 1 || arity == 2)}
+        Field(x)=>{return x != "" && arity == 1}
+        StructLiteral(x)=>{return x != ""}
+        Function(name)=>{return name != "" && arity == 2}
+        ReturnTypes=>{return arity >= 1}
+        For=>{return arity == 3 || arity == 4}
+        GenericType(x)=>{return x != "" && arity >= 1}
+        BindingList=>{return true}
+        MatchArm=>{return arity == 3}
+        Unary(op)=>{return (op == "+" || op == "-" || op == "!" || op == "~") && arity == 1}
+        SliceType=>{return arity == 1}
+        MutableType=>{return arity == 1}
+        Import(x)=>{return x != "" && arity <= 1}
+        Variant(x)=>{return x != ""}
+        Struct(x)=>{return x != ""}
+        Range(x)=>{return (x == ".." || x == "..=") && (arity == 2 || arity == 3)}
+        While=>{return arity == 2}
+        MapLiteral=>{return arity >= 1}
+        Continue=>{return arity == 0}
+        Program=>{return true}
+        Break=>{return arity == 0}
+        Match=>{return arity >= 1}
+        Nil=>{return arity == 0}
+        OptionalType=>{return arity == 1}
+        Enum(x)=>{return x != ""}
+        Update(x)=>{return (x == "++" || x == "--") && arity == 1}
+        Slice=>{return arity == 3}
+        Omitted=>{return arity == 0}
+        ArrayType(x)=>{return x != "" && arity == 1}
+        MapEntry=>{return arity == 2}
+        Pack=>{return arity >= 2}
+        MultiBinding(x)=>{return (x == "let" || x == "var") && arity == 2}
+        MultiAssignment=>{return arity == 2}
+        Defer=>{return arity == 1}
+        FloatLiteral(x)=>{return x != "" && arity == 0}
+        Const(x)=>{return x != "" && (arity == 1 || arity == 2)}
+        Integer(x)=>{return arity == 0}
+        Float(x)=>{return arity == 0}
+        Binding(name)=>{return name != "" && arity == 1}
+        Parameters=>{return true}
+    }
+}
+pub fn register_source(pool mut Pool, name string, source string) Result<SourceId> {
+    if name == "" { return err("AST_SOURCE_NAME") }
+    var text = strings.replace(strings.replace(source,"\r\n","\n"),"\r","\n")
+    var data = unwrap(bytes.to_ints(bytes.from_text(text)))
+    if len(data) >= 3 && data[0] == 239 && data[1] == 187 && data[2] == 191 {
+        text = unwrap(strings.slice(text,3,len(data)))
+        data = unwrap(bytes.to_ints(bytes.from_text(text)))
+    }
+    var i = 0
+    while i < list.len(pool.sources) {
+        let old = list.get(pool.sources,i)?
+        if old.name == name {
+            if unwrap(bytes.to_text(old.data)) != text { return err("AST_SOURCE_CHANGED") }
+            return ok(old.id)
+        }
+        i += 1
+    }
+    var starts = list.from_slice([0])
+    for index in 0..len(data) { if data[index] == 10 { list.append(starts,index+1)? } }
+    let id = SourceId{pool:pool.identity,index:list.len(pool.sources)}
+    list.append(pool.sources,SourceInfo{id:id,name:name,data:bytes.from_text(text),size:len(data),lines:list.snapshot(starts)})?
+    return ok(id)
+}
+pub fn source_info(pool Pool, id SourceId) Result<SourceInfo> {
+    if id.pool != pool.identity || id.index < 0 || id.index >= list.len(pool.sources) { return err("AST_BAD_SOURCE_ID") }
+    let source = list.get(pool.sources,id.index)?
+    if source.id.pool != id.pool || source.id.index != id.index { return err("AST_BAD_SOURCE_ID") }
+    return ok(source)
+}
+pub fn span(pool Pool, source SourceId, start int, end int) Result<SourceSpan> {
+    let info = source_info(pool,source)?
+    if start < 0 || end < start || end > info.size { return err("AST_BAD_SPAN") }
+    let lo = alg.upper_bound(info.lines,start)
+    return ok(SourceSpan{source:source,start:start,end:end,line:lo,column:start-info.lines[lo-1]+1})
+}
+pub fn get(pool Pool, id NodeId) Result<Node> {
+    if id.pool != pool.identity || id.index < 0 || id.index >= count(pool) { return err("AST_BAD_NODE_ID") }
+    let node = list.get(pool.nodes,id.index)?
+    if !same(node.id,id) { return err("AST_BAD_NODE_ID") }
+    return ok(node)
+}
+fn validate(pool Pool, index int, payload Payload, position SourceSpan, children []NodeId) Result<void> {
+    # Validate the supplied line interval directly; public span still uses upper_bound.
+    let source = source_info(pool,position.source)?
+    if position.start < 0 || position.end < position.start || position.end > source.size || position.line < 1 || position.line > len(source.lines) { return err("AST_BAD_SPAN") }
+    let start = source.lines[position.line-1]
+    if start > position.start || position.column != position.start-start+1 { return err("AST_BAD_SPAN") }
+    if position.line < len(source.lines) && source.lines[position.line] <= position.start { return err("AST_BAD_SPAN") }
+    if !shape(payload,len(children)) { return err("AST_BAD_SHAPE") }
+    for child in children {
+        get(pool,child)?
+        if child.index >= index { return err("AST_FORWARD_EDGE") }
+    }
+    return ok()
+}
+pub fn add(pool mut Pool, payload Payload, position SourceSpan, children []NodeId) Result<NodeId> {
+    let index = count(pool)
+    validate(pool,index,payload,position,children)?
+    let id = NodeId{pool:pool.identity,index:index}
+    list.append(pool.nodes,Node{id:id,payload:payload,span:position,children:clone(children)})?
+    return ok(id)
+}
+pub fn replace(pool mut Pool, id NodeId, payload Payload, position SourceSpan, children []NodeId) Result<bool> {
+    get(pool,id)?
+    validate(pool,id.index,payload,position,children)?
+    return list.set(pool.nodes,id.index,Node{id:id,payload:payload,span:position,children:clone(children)})
+}
+# 验证节点记录和子先父后约束；不做语言类型检查。
+pub fn verify(pool Pool) Result<void> {
+    for index in 0..count(pool) {
+        let node = get(pool,NodeId{pool:pool.identity,index:index})?
+        validate(pool,index,node.payload,node.span,node.children)?
+    }
+    return ok()
+}
+# 按语法出现次数展开 DAG；每条父子边保持输入顺序。limit 是访问数预算。
+pub fn preorder(pool Pool, root NodeId, limit int) Result<[]NodeId> {
+    get(pool,root)?
+    if limit < 0 { return err("AST_WALK_LIMIT") }
+    var stack = list.from_slice([root])
+    var empty []NodeId = []
+    var result = list.from_slice(empty)
+    while list.len(stack) > 0 {
+        if list.len(result) >= limit { return err("AST_WALK_LIMIT") }
+        let id = list.pop(stack)?
+        let node = get(pool,id)?
+        list.append(result,id)?
+        var i = len(node.children)
+        while i > 0 { i -= 1
+            list.append(stack,node.children[i])?
+        }
+    }
+    return ok(list.snapshot(result))
+}
+# 每个节点访问一次，返回按 ID 升序排列的子先父后序列。
+pub fn reachable(pool Pool, root NodeId, limit int) Result<[]int> {
+    get(pool,root)?
+    if limit < 0 { return err("AST_WALK_LIMIT") }
+    var stack = list.from_slice([root])
+    var seen = map[int]bool{}
+    var result = list.from_slice([root.index])
+    list.clear(result)
+    while list.len(stack) > 0 {
+        let id = list.pop(stack)?
+        if has(seen,id.index) { continue }
+        if list.len(result) >= limit { return err("AST_WALK_LIMIT") }
+        let node = get(pool,id)?
+        seen[id.index] = true
+        list.append(result,id.index)?
+        for child in node.children { list.append(stack,child)? }
+    }
+    return alg.sorted(list.snapshot(result))
+}
+# 路径复制：只追加变化节点；旧 ID/旧根保持可读，共享子树仅重写一次。
+pub fn rewrite_integer(pool mut Pool, root NodeId, before int, after int, limit int) Result<NodeId> {
+    let order = reachable(pool,root,limit)?
+    var mapped = map[int]NodeId{}
+    for index in order {
+        let id = NodeId{pool:pool.identity,index:index}
+        let old = get(pool,id)?
+        var payload = old.payload
+        var changed = false
+        match old.payload {
+            Integer(n)=>{ if n == before && n != after { payload = Payload.Integer(after)
+                changed = true } }
+            _=>{}
+        }
+        var children = clone(old.children)
+        for i in 0..len(children) {
+            let next = unwrap(mapped[children[i].index])
+            if !same(next,children[i]) { changed = true }
+            children[i] = next
+        }
+        var next = id
+        if changed { next = add(pool,payload,old.span,children)? }
+        mapped[index] = next
+    }
+    return ok(unwrap(mapped[root.index]))
+}

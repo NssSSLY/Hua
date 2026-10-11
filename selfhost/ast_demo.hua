@@ -1,0 +1,24 @@
+# 手工构造 1 + 2 * 3 的 AST，演示稳定 ID 与路径复制；不解析输入。
+import ast_pool as ast
+import std.list as list
+fn main() {
+    var pool = ast.create()
+    let source = unwrap(ast.register_source(pool,"expression.hua","1 + 2 * 3\n"))
+    var empty []ast.NodeId = []
+    let one = unwrap(ast.add(pool,ast.Payload.Integer(1),unwrap(ast.span(pool,source,0,1)),empty))
+    let two = unwrap(ast.add(pool,ast.Payload.Integer(2),unwrap(ast.span(pool,source,4,5)),empty))
+    let three = unwrap(ast.add(pool,ast.Payload.Integer(3),unwrap(ast.span(pool,source,8,9)),empty))
+    let times = unwrap(ast.add(pool,ast.Payload.Binary("*"),unwrap(ast.span(pool,source,4,9)),[two,three]))
+    let plus = unwrap(ast.add(pool,ast.Payload.Binary("+"),unwrap(ast.span(pool,source,0,9)),[one,times]))
+    let statement = unwrap(ast.add(pool,ast.Payload.ExpressionStatement(),unwrap(ast.span(pool,source,0,9)),[plus]))
+    let root = unwrap(ast.add(pool,ast.Payload.Program(),unwrap(ast.span(pool,source,0,10)),[statement]))
+    for id in unwrap(ast.preorder(pool,root,7)) {
+        let n = unwrap(ast.get(pool,id))
+        print("node\t"+ast.kind(n.payload)+"\t"+ast.payload_text(n.payload)+"\t"+str(n.span.start)+"\t"+str(n.span.end)+"\t"+str(n.span.line)+"\t"+str(n.span.column))
+    }
+    let before = ast.count(pool)
+    let rewritten = unwrap(ast.rewrite_integer(pool,root,2,20,7))
+    print("rewrite",root.index,rewritten.index,ast.count(pool)-before)
+    print("old",ast.payload_text(unwrap(ast.get(pool,two)).payload))
+    print("new",ast.payload_text(unwrap(ast.get(pool,ast.NodeId{pool:pool.identity,index:before})).payload))
+}

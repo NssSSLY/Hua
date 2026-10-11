@@ -1,0 +1,58 @@
+import types as types
+import module_report as names
+import modules as modules
+import ast_pool as ast
+import std.json as json
+import std.list as list
+pub struct Fact { module string
+    node int
+    kind string
+    start int
+    end int
+    type_name string
+    writable bool }
+pub struct Symbol { target string
+    type_name string
+    writable bool
+    mutable_binding bool }
+struct Stats { work int
+    capability_passes int }
+struct Report { schema string
+    profile string
+    status string
+    source string
+    graph Json
+    symbols []Symbol
+    functions []types.Function
+    facts []Fact
+    stats Stats }
+struct Failure { schema string
+    profile string
+    status string
+    source string
+    stage string
+    error string }
+pub fn failure(source string, detail string) string { return unwrap(json.encode(Failure{schema:"hua.types.capabilities.v1",profile:"C04-T1",status:"error",source:source,stage:"types",error:detail})) }
+pub fn encode(m types.Model, source string) Result<string> {
+    var empty []Fact = []
+    var facts = list.from_slice(empty)
+    for u in list.snapshot(m.graph.units) {
+        for i in 0..ast.count(u.tree.pool) {
+            let key = u.id+":"+str(i)
+            if has(m.facts,key) {
+                let n = unwrap(ast.get(u.tree.pool,ast.NodeId{pool:u.tree.pool.identity,index:i}))
+                let t = unwrap(m.facts[key])
+                unwrap(list.append(facts,Fact{module:u.id,node:i,kind:ast.kind(n.payload),start:n.span.start,end:n.span.end,type_name:t.type_name,writable:t.writable}))
+            }
+        }
+    }
+    var syms []Symbol = []
+    var symbols = list.from_slice(syms)
+    for name, t in m.symbols { unwrap(list.append(symbols,Symbol{target:name,type_name:t.declared,writable:t.writable,mutable_binding:t.mutable_binding})) }
+    var funcs []types.Function = []
+    var functions = list.from_slice(funcs)
+    for name, f in m.functions { unwrap(list.append(functions,f)) }
+    return json.encode(Report{schema:"hua.types.capabilities.v1",profile:"C04-T1",status:"ok",source:source,graph:unwrap(json.decode(names.success(m.graph,source))),symbols:list.snapshot(symbols),functions:list.snapshot(functions),facts:list.snapshot(facts),stats:Stats{work:m.work,capability_passes:m.capability_passes}})
+}
+
+pub fn success(m types.Model, source string) string { return unwrap(encode(m,source)) }

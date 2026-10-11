@@ -1,0 +1,37 @@
+import lowering as lower
+import types as types
+import type_report as typed
+import std.list as list
+import std.json as json
+import ast_pool as ast
+import std.bytes as bytes
+struct Source { module string
+    text string }
+struct Stats { nodes int
+    work int }
+struct Report { schema string
+    profile string
+    status string
+    source string
+    analysis Json
+    entry string
+    sources []Source
+    nodes []lower.Node
+    initialization []lower.Initializer
+    stats Stats }
+struct Failure { schema string
+    profile string
+    status string
+    source string
+    stage string
+    error string }
+pub fn failure(source string, detail string) string { return unwrap(json.encode(Failure{schema:"hua.core.lowered.v1",profile:"C05-L1",status:"error",source:source,stage:"lowering",error:detail})) }
+pub fn success(c lower.Core, m types.Model, source string) Result<string> {
+    var empty []Source = []
+    var sources = list.from_slice(empty)
+    for u in list.snapshot(m.graph.units) {
+        let origin = unwrap(ast.source_info(u.tree.pool,unwrap(ast.get(u.tree.pool,u.tree.root)).span.source))
+        unwrap(list.append(sources,Source{module:u.id,text:unwrap(bytes.to_text(origin.data))}))
+    }
+    return json.encode(Report{schema:"hua.core.lowered.v1",profile:"C05-L1",status:"ok",source:source,analysis:json.decode(typed.encode(m,source)?)?,entry:c.entry,sources:list.snapshot(sources),nodes:list.snapshot(c.nodes),initialization:list.snapshot(c.initialization),stats:Stats{nodes:list.len(c.nodes),work:c.work}})
+}

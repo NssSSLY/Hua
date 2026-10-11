@@ -39,8 +39,14 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
     return out;
 }
 Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s){
-    std::vector<std::string> types;for(const auto& v:args)types.push_back(value_type(v));auto signature=standard_signature(f,types);
-    auto result=type_arguments(signature.result,"Result");auto success=result.empty()?"":result[0];
+    // invoke_standard has already checked the specialized signature and arguments.
+    // List success metadata comes from its checked backing type, without reparsing List<T>.
+    auto result=type_arguments(f.result,"Result");auto success=result.empty()?"":result[0];
+    if(f.module=="list"&&(f.name=="get"||f.name=="pop")){
+        auto list=std::get_if<ListValue>(&args[0].data);
+        if(!list||!list->data)runtime_error(s,"expected List<T>","E4003");
+        success=list->data->element_type;
+    }
     auto ok=[&](Value v){return standard_result(std::move(v),true,success);};
     auto err=[&](const std::string& e){return standard_result(Value(e),false,success);};
     auto integer=[&](std::size_t i){return as_int(args[i],s);};
@@ -49,7 +55,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
             auto source=std::get_if<SliceValue>(&args[0].data);if(!source||source->element_type.empty())runtime_error(s,"from_slice requires a typed slice/array","E4003");
             if(source->length>max_items)runtime_error(s,"list item limit exceeded","E4099");
             auto data=managed<ListData>();data->element_type=source->element_type;data->values.reserve(source->length);
-            for(std::size_t i=0;i<source->length;++i)data->values.push_back(copy_value(sequence_read(*source,i),true));
+            for(std::size_t i=0;i<source->length;++i)data->values.push_back(copy_value(sequence_read(*source,i),true,0,true));
             return Value(ListValue{data,true});
         }
         auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");auto& data=*handle->data;

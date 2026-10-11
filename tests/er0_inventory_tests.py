@@ -6,7 +6,7 @@ registry=(root/"src/stdlib.cpp").read_text(encoding="utf-8")
 functions=re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{',registry,re.M)
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
-expected=[m+"."+n for m,n in functions if m!="error"]
+expected=[m+"."+n for m,n in functions if m not in {"error","file"}]
 assert len(listed)==len(set(listed))==len(expected)==125,(len(listed),len(expected))
 assert set(listed)==set(expected),set(expected)-set(listed)
 runtime=(root/"src/runtime.cpp").read_text(encoding="utf-8")
@@ -19,4 +19,7 @@ wrappers=re.findall(r'^pub fn (\w+)\(', (root/"bridges/python/python.hua").read_
 recorded=re.findall(r'^\| ER0-P\d\d \| (\w+)\(',text,re.M)
 assert len(recorded)==len(set(recorded))==13 and set(recorded)==set(wrappers)
 assert len([x for x in functions if x[0]=="error"])==16
+new_file=[m+"."+n for m,n in functions if m=="file"]
+file_rows=re.findall(r"^\| ER0-R\d\d \| std\.([^ ]+) \|",text,re.M)
+assert len(file_rows)==len(set(file_rows))==len(new_file)==12 and set(file_rows)==set(new_file)
 print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs separately.")

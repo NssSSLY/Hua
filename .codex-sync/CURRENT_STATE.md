@@ -1,104 +1,46 @@
 # 当前状态
 
-本次远程交付已核实：功能提交6934825和日志格式提交011aaa8已普通推送到NssSSLY/Hua main；ls-remote确认远程SHA为011aaa84f4d28ff8466874e83bd2a44f0417d4ef，与当时本地HEAD一致，工作区干净。下方准备推送/未提交陈述均为此前历史；本条仅记录已发生的交付，不开始新功能。此交付记录随后随项目一起提交推送，最终HEAD以Git为准。
+更新：2026-10-11。实际项目C:\file\project\hua；HEAD与本地origin/main仍8d365fba75018361255f8f8ac7255219f57f69ec。本轮未提交/推送，全部此前未提交工作保留。
 
-2026-10-09远程交付：用户已明确要求“推送远程仓库”，本次提交范围包含尚未交付的S1a本地基础库、E0/执行规划、E1最小IR、ER0/ER1错误基础、对应文档/测试/示例和项目摘要。下面未提交/未推送的陈述为各阶段验收时历史状态。本次普通推送到origin/main，完成结果以实际Git记录为准；不强制覆盖远程。
+## 当前用户目标与完成范围
 
-记录日期：2026-10-09。Hua main HEAD仍81b8ce8，既有S1a/E0/E1及规划未提交工作保持；本阶段用户明确“8项按推荐确认，可以按照方案执行完成”，授权ER0→ER1a→ER1b。未提交/推送。
+用户授权保持A07正确性，以C04自身分析/降级为真实负载，优化符号、位置、Value/List/Result和环境复制，再决定VM架构。本批实现了局部成本优化与固定输入实测，没有开展寄存器VM/JIT或新后端。
 
-## 本阶段交付
+- C03私有环境按模块缓存身份、Pool和有序导入；C04以模块ID索引Unit，函数/构造器声明由已有表解析，分支环境保留普通数据及函数值/构造器值别名。
+- AST span构造/替换核对已知行区间，公共span仍upper_bound、UTF-8字节列/EOF/来源及形状验证保持。
+- C++有序Struct复制插入提示/容器预留；List已验证元数据复用，Result少一层复制，AST/VM绑定/字段/返回边界减少重复复制。新增已消费Value重载逐层检查独占；共享结构/Result仍snapshot，固定数组/deep clone/资源/只读子项/深度错误不变。
+- 实测发现原C04将for弃值位“_”记录为空名字符号，只在该存储入口修正；原失败报告保留，去除唯一错误行后所有名称/类型/能力/来源/Core字段与优化版相同。最终完整报告与第一批优化字节一致。
 
-- ER-DEC-01–08已确认，记录docs/设计决策与未决事项.md#error-foundation-review；HUA-D001完成本轮基础切片，ER0七类缺口及ER2–ER4仍保留。33个固定事项ID保持。
-- ER0逐行源码盘点原125标准函数、38公开内建、13可选Python包装；6内部intrinsic另列。实际清单docs/标准库与内建接口.md#er0-interface-audit；source分类不等于全平台逐故障注入。
-- ER1a实现Result<void,E>上下文ok()，成功无载荷，void不允许绑定/打包/参数/算术/显示，动态无类型路径也拒绝，不用nil冒充。
-- ER1b实现名义只读std.error.Value（导入别名e.Value），16个共享构造/查询/上下文/显式legacy适配API，domain/code身份、有界16层cause/16context及UTF-8截断标记。禁止e.Value{}直接构造，不抢用户struct Error名字。当前16模块/141标准函数。
-- 默认Result<T,string>、旧125接口签名/前缀、Diagnostic/取消/预算/defer和Native ABI1保留；旧文本只能显式legacy.failure适配，不恢复丢失errno、不自动?转换。
-- HUAB普通程序写6，新Error/void-result能力写7，读1–7；真正旧Runtime拒绝7、普通6仍运行，伪造旧格式拒绝；Task深快照与GC原因链跟踪已接入。活对象不序列化。E1仍不支持Result/Error。
-- 同步8份涉及的权威文档及README；九份结构不变，百科0.9保留36章/207条及原确认值，43条E0原文/38 history原字节不变。
-- 已实际构建并完成最终全回归26/26（172.71秒）；新增35场景179检查通过，证据build/er-foundation/execution-verification.json和CTest LastTest.log。旧Runtime与示例命令另存compatibility-verification.json。先前34/175是本轮早一次结果，不替代最终数字。
-- 本轮Bridge ON；没有重建Bridge OFF，不借历史结果证明新扩展全平台。构建证据不提交。
+## A07保护及兼容
 
-## 下一步与停止条件
+A07-1的C++sema和Hua来源/remember/join/narrow核心保持；原27例492检查两构建继续通过，旧HUAB E4007/no stdout保持。合法标量副本/新字段替换/clone规则保留；完整跨函数逐字段效果、未知别名、混合能力字面量与多返回精度仍待，不是整个A07/G1完成。
 
-授权基础切片完成后停止，不自动开始D002–D033/ER2–ER4/E2a/S1b。下一选择可为旧接口宿主码/逐故障补齐、ER2便利性、S1b JSON配置或E2a。ER0发现内部长操作预算/取消、部分写入清理与Python/跨平台验证缺口，详情同一清单。当前无审批阻塞，不请求重复确认。
+500M步骤/128调用/GC65536/600秒监督/16MiB报告和普通百万步/GC256不变；GC算法、Task/资源/Value布局、HUAB6/7/8、reader1–8及Native ABI1不变。17标准模块153函数38内建和108个SB1标准签名保持；通用JSON仍1000000节点/64深度/16MiB。没有硬RSS或联合Task预算。
 
-检查点Git快照包含此前未提交工作，不全归本轮。下面均为历史阶段记录。
+## 固定工作负载测量
 
----
+13文件214439字节输入与执行分析的编译器分别冻结；before-summary与after-summary source_hashes完全相同。同输出模式（均完整Core验证、只输出摘要）528.406→343.859秒，分析累计408.278→243.655秒，降级累计527.233→342.662秒，步骤234124909→196434038，分配66073729→40694222（减少38.4%）。峰值工作集1313505280→1313669120字节约相同，不能宣称RSS同步下降。
 
-# 待完成清单与错误基础审阅准备（历史）
+最终完整报告401.235秒/201310397步/51调用/峰值1754341376字节；报告14786227字节、44416 Core节点，通过正式校验。原完整报告的墙钟/峰值未保存，不补造；原for错误行单独说明。单次成对样本＋最终完整报告不替代稳定分布、跨语言或跨平台基准。
 
-记录日期：2026-10-09。当前Hua main HEAD为81b8ce8；已有S1a/E0/E1及规划等未提交改动保持。本阶段用户要求独立待完成清单、助手排序/评估影响、用户选择执行，并优先审阅ER0/ER1错误基础。只整理设计与维护规则，未修改语言实现，未提交/推送。
+## 当前自身链路与架构决定
 
-## 本阶段交付
+正式当前源码13文件215190字节，分析累计256.302秒、降级364.608秒、生成403.520秒、独立指令验证481.405秒；505.687秒正常退出但报告status:error、E8202 JSON nesting/node limit exceeded。259341841步/51调用/峰值2052702208字节；198字节stdout是错误报告，未执行自身指令/适配HUAB。类型报告固定浅层，结合src/json.cpp核对为1000000节点上限；精确最终报告节点/指令数未导出。
 
-- docs/设计决策与未决事项.md#design-backlog新增33个稳定ID（HUA-D001–D033），P0/P1/P2/P3为5/10/10/8项，记录影响、状态、依赖与选择规则；助手维护排序/影响，用户选择执行，新增需求提炼进入同一清单。
-- 同文档#error-foundation-review给出ER-DEC-01–08推荐与待确认记录、ER0逐接口模板、ER1a/ER1b分切片。D001已选择设计审阅；尚未确认8项，未开始Result<void>/标准Error代码，未完成125标准函数盘点。
-- 推荐渐进兼容：默认E仍string、显式标准Error；void成功无载荷、上下文ok()；名义只读Error、domain/code身份、有界cause/context、显式旧string适配、失败路径轻量来源。此为建议，不是新已冻结公共类型/语法/API。
-- AGENTS.md追加同一清单的后续维护分工；仅更新上述设计文档与必要上下文，不全量更新百科/其他专题。207确认值、E0原文、history保留。
-- 本阶段文档检查通过：945个本地链接、33固定事项ID、8待确认决策；895个代码/工具/测试/示例等保护文件、38 history原件、43 E0合同原文和整份百科字节不变（因此207确认值保持）。证据build/design-backlog/baseline.json、document-verification.json，不提交。本阶段不重跑语言测试，下面历史阶段数字不能当本轮新验收。
+上一轮A07历史链路600.109秒止于验证（13文件214439字节），不能与本次不同输入直接换算加速倍数。本次原监督和步骤预算没有触发，剩余阻塞转到报告传输/序列化。
 
-## 下一步与选择
+决定保留现有栈VM，暂不启动布局/寄存器/JIT/GC大改。下一先核C06有界编译产物表示/传输与生产者、验证器、加载器共同合同（分块或C07二进制等候选），不能仅拆json.encode绕过公共上限而让消费者继续失败。独立执行、C07完整Hua HUAB/C08连续代际/C09覆盖/C10扩大规模及G1/G2/G3仍待；用户选择后实施。
 
-请用户确认或修改8项语义建议，然后选择D001/ER0盘点或ER1a最小实现等具体交付。确认方向不代表批量改旧API。其他D002–D033尚未选，编译E2a仍属候选主线，不因本轮错误审阅自动开始。实现新语义时才同步负责专题/涉及百科条目并执行必要AST/VM/HUAB对照。
+## 本批回归与真实限制
 
-当前无审批阻塞。检查点的Git快照包括既有未提交工作，不全归本阶段。
+最终Windows x64 Release Bridge ON全量41/41、694.62秒；OFF全量39/40、690.12秒，filesystem_limits replacement visibility失败，随后该项独立连续5次通过。第一批ON也曾39/40同项失败、独立5次通过，第一批OFF39/39。失败原因未定位，不把独立通过抹掉全量失败，B04继续跟踪；该项代码与测试未改。
 
----
+两配置A07 27/492、C04 63/892、A05 27/305、C05 42/1705、C06 63/2306；新增Value独占/共享/嵌套/只读/Result/Multi/固定数组/clone/void/GC/depth21项通过。旧产物两配置E4007/no stdout。没有POSIX或其他架构实测。
 
-# 五份材料设计归并阶段（历史）
+## 证据、文档及接手
 
-记录日期：2026-10-09。Hua main HEAD为81b8ce8，已有S1a/E0/规划/E1本机未提交改动继续保留。当前用户要求综合五份对话方案优化设计与发展方向，本阶段仅文档归并，未开始实现、未提交推送。
+build/c04-performance保存基线与固定输入、完整/摘要结果及阶段、paired-summary-comparison.json、equivalence-results.json、regression-results.json及CTest原件、measurement-environment.json、final-own-results.json及失败原件。它们是忽略的本机测量证据，不随Git分发。tests/selfhost_pipeline_budget_tests.py为新手动测量工具，tests/selfhost_budget_tests.py复现完整当前自身链路。
 
-## 当前设计交付
+只改五相关活文档、四上下文与新检查点；39份history原字节、36章207条/207确认、E0 43行、ER8/RS14、32任务与D001–D034保护。完整保护/链接结果见build/c04-performance/document-verification.json。权威进度docs/项目概览与进度.md#c04-pipeline-verification、决策#c04-pipeline-performance、运行时#consumed-value-copy、指南#c04-performance-usage。
 
-- 5份受影响权威文档：设计决策/语言规则/运行时/标准库路线/百科0.8（30条定向补充）。没有增加第10份文档，没有改实际接口、CLI、源码或history。
-- 唯一综合入口docs/设计决策与未决事项.md#design-synthesis-20261009；integrated-implementation-plan归并执行、可靠应用、共享资源三条主线，ER/N/D为子切片，不另做Runtime。
-- 逐项校正材料：默认Result错误仍string，ok/err小写，Result<void>/catch/Result专用match/自动包装/入口Result报告未实现；await f()?已支持。E1当前本地已完成，不等于AOT/类型执行/恢复调度器/网络。
-- 标准Error增量适配、惰性恢复/显式ignore与must-use分阶段；旧defer、Diagnostic/父取消/预算、HUAB6/ABI1及Task深快照合同保持。
-- N0–N7复用E5/E6a生命周期：先后端内部probe、再真Task恢复、有界HTTP客户端/流SSE，后server/复杂协议与优化；libuv/libcurl尚属选型候选。D0–D4拆依赖/目标/镜像，当前Wasmtime仍必选。
-
-## 本阶段验证
-
-- 文档937个本地文件/锚点链接与围栏通过；36章/207条/207确认值、43 E0合同原文、38 history文件原字节保持；884个代码/工具/测试/示例等保护文件SHA256未改。
-- 生成证据build/design-synthesis/baseline.json、document-verification.json，不提交。
-- 不重跑语言全量测试；下方24/24、2/2、44项及779断言属于E1阶段历史证据。
-- git diff --check及最终上下文检查在检查点前后复核；不新增运行完成百分比。
-
-## 下一步
-
-应用近期S1b＋ER0；错误ER1a/ER1b分别审阅，编译E2a→E2b/E3a保持；D0/D1可独立切片；资源E6a/S3、E5与内部N1按依赖准备，完成后N2/N3真异步客户端。新语法、错误默认变化或CLI入口改变须精确合同与兼容，不因本轮综合自行实现。
-
-本轮正常审批，无当前阻塞。下面保留上一阶段交付细节以便继续实现，不能误读为本轮重建/重测。
-
----
-
-# E1阶段交接记录（历史）
-
-记录日期：2026-10-09。main HEAD为81b8ce8（docs(sync): record remote delivery）。用户要求继续完成E1最小IR：稳定ID、Typed HIR、MIR、验证器与直接旧字节码降级；本阶段已完成并验收，停止于E1a–d，没有开始E2，没有提交/推送。
-
-## 当前交付
-
-- 新增include/hua/ir.hpp，src/hir.cpp、mir.cpp、ir_verify.cpp、ir_bytecode.cpp；强类型确定ID、拥有类型/符号/来源的HIR，标量专用常量不含Node*/句柄；栈序SSA临时值/块参数、显式位置读写、CFG/失败/预算/取消记录。
-- 直接MIR生成旧Op；不重建AST、不调用旧BytecodeCompiler。只在受控桥核对借用旧函数声明，旧model/loader需保活至VM/写HUAB，读HUAB后Image自有声明。
-- BUILD_TESTING生成hua_ir_probe与hua_ir_tests；内部hir/mir/explain/check/bytecode/run/build，例子examples/e1_minimal.hua输出153 true -3 2。默认hua run/build、旧解释器/编译器/VM、HUAB6/reader1–6/ABI1不变。
-- 范围单模块int/float/bool/void、绑定/名称赋值、显式标量普通函数、if/短路/while/int范围for/退出、标量print/int/float。未知/未支持整体初始化前E8001，非法IR/元数据/内部大小保护E8002；尺寸类型/容器/泛型/defer/Task/导入等仍走旧CLI。
-- 稳定ID仅同一模块修订/实现版本可重复，不是跨编辑永久身份或持久格式。MIR须符合栈序与物理fallthrough；没有一般优化/类型槽/原生执行/Task恢复/GPU，没有性能提升证明。
-
-## E1阶段历史验证
-
-- Windows x64 Release，Python Bridge ON完整CTest 24/24，116.27秒（-j2）。
-- Bridge OFF核心/IR工具独立重建，E1 CTest 2/2，15.09秒；没有重跑该构建的全部23项，不误记为23/23。
-- 44项C++IR/适配/字节码检查；37独立AST/旧VM/IR→VM/IR生成无源码HUAB场景、10类整段拒绝、779断言。两个构建的文档演示命令、HUAB6/ABI1头与输出通过；3个无Python核心可执行文件均无CPython DLL导入。
-- 文档913个本地链接、36章/207编号、207确认字段、43 E0合同原文、38 history文件SHA256及代码围栏通过。git diff --check通过。
-- 生成证据build/e1-ir/execution-verification.json、document-verification.json和两个构建的Testing/Temporary/LastTest.log；生成目录不提交。旧失败日志可能保留上次运行记录，以上为E1阶段成功命令的结果。
-
-## 文档与后续
-
-只更新涉及E1的6份权威文档：语言规则、运行时、设计决策、百科0.7、开发指南、项目进度；README/目录/标准库规划及接口不因内部IR更新而全量重写。207确认栏与43合同原值不动，history不修改。
-
-下一步E2a：类型槽/typed操作、helper装箱/解箱、错误/取消与参考工作预算，测正确性和实际成本后决定是否换默认。之后E2b根/布局、E3单Windows x64 CPU后端与E4缓存/发布；标准库S1b、E5恢复与E6a资源按既定路线独立推进。
-
-上次审批服务额度不足曾中断执行；本轮正常审批已恢复，未绕过检查，当前没有阻塞。浮点复合赋值旧边界已记录：float+=2运行E4003，+=2.0成功；本阶段保持旧语义。
-
-历史证据：S1a22/22、196.50秒，E0现有31场景/194断言来自既有阶段；不拿它们代替新IR验证。原有S1a、E0及规划改动仍本机未提交，应与真实Git状态核对，不把本机结果当作远端已发布。
+A/B未整体验收，B不等待C。A07剩余、A09/A10深clone、A02尺寸身份及C07所需B03/B04/B05仍按用户选择推进；不自动开始未选后端/网络/数据库，未请求不提交推送；不复制原生Codex会话、数据库或CODEX_HOME。

@@ -1,0 +1,1033 @@
+# C04-T1：Hua 编写的类型和写能力检查；输入永不执行。
+import modules as modules
+import ast_pool as ast
+import type_rules as rules
+import signatures as signatures
+import std.list as list
+import std.strings as strings
+import std.alg as alg
+pub struct Info { type_name string
+    declared string
+    writable bool
+    mutable_binding bool
+    readonly_children bool
+    projected bool
+    owner string }
+pub struct Parameter { target string
+    type_name string
+    writable bool }
+pub struct Function { target string
+    module string
+    node int
+    parameters []Parameter
+    result string
+    writable bool }
+pub struct Model { graph modules.Graph
+    refs map[string]string
+    declarations map[string]string
+    symbols map[string]Info
+    fields map[string]string
+    functions map[string]Function
+    variants map[string]Function
+    facts map[string]Info
+    work int
+    capability_passes int }
+struct Environment { unit modules.Unit
+    values map[string]Info
+    result string
+    function bool
+    depth int }
+fn info(t string, w bool) Info { return Info{type_name:t,declared:t,writable:w,mutable_binding:false,readonly_children:false,projected:false,owner:""} }
+fn key(module string, node int) string { return module+":"+str(node) }
+fn fail(e Environment, n ast.Node, code string, message string) string {
+    return code+"@"+str(n.span.line)+":"+str(n.span.column)+" ["+e.unit.id+"] "+message
+}
+fn tick(m mut Model, e Environment, n ast.Node) Result<void> {
+    if m.work >= 1048576 { return err(fail(e,n,"E8202","type analysis work budget")) }
+    m.work += 1
+    return ok()
+}
+fn get(e Environment, id ast.NodeId) ast.Node { return unwrap(ast.get(e.unit.tree.pool,id)) }
+fn target(m Model, e Environment, n ast.Node) string { return unwrap_or(m.refs[key(e.unit.id,n.id.index)],"") }
+fn declaration(m Model, e Environment, n ast.Node) string { return unwrap_or(m.declarations[key(e.unit.id,n.id.index)],"") }
+fn environment(u modules.Unit, values mut map[string]Info) Environment { return Environment{unit:u,values:values,result:"void",function:false,depth:0} }
+fn typename(m mut Model, e Environment, id ast.NodeId) Result<string> {
+    let n = get(e,id)
+    tick(m,e,n)?
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    if k == "MutableType" { return typename(m,e,n.children[0]) }
+    if k == "TypeName" {
+        let resolved = target(m,e,n)
+        if resolved == "builtin:std.json#Value" { return ok("Json") }
+        if strings.starts_with(resolved,"builtin:type:") {
+            if text == "List" || text == "map" { return err(fail(e,n,"E3004","container requires type arguments")) }
+            return ok(text)
+        }
+        if resolved == "" { return err(fail(e,n,"E3004","unresolved type")) }
+        return ok(resolved)
+    }
+    var empty []string = []
+    var args = list.from_slice(empty)
+    for child in n.children { list.append(args,typename(m,e,child)?)? }
+    let ts = list.snapshot(args)
+    if k == "OptionalType" {
+        if strings.starts_with(ts[0],"Result<") { return err(fail(e,n,"E3004","Optional<Result> is unsupported")) }
+        return ok(ts[0]+"?")
+    }
+    if k == "SliceType" { return ok("[]"+ts[0]) }
+    if k == "ArrayType" {
+        let digits = strings.replace(text,"_","")
+        if len(digits) > 7 { return err(fail(e,n,"E8201","fixed array size outside C04-T1")) }
+        for i in 0..len(digits) { if !strings.contains("0123456789",rules.cut(digits,i,i+1)) { return err(fail(e,n,"E8201","C04-T1 array size requires decimal literal")) } }
+        let count = int(digits)
+        if count > 1000000 { return err(fail(e,n,"E8201","fixed array size outside C04-T1")) }
+        # 保留已验证的尺寸拼写，与现有类型身份和指令元数据一致。
+        return ok("["+text+"]"+ts[0])
+    }
+    if k == "GenericType" {
+        if text == "Result" {
+            var error = "string"
+            if len(ts) == 2 { error = ts[1] }
+            return ok("Result<"+ts[0]+","+error+">")
+        }
+        if text == "List" {
+            if ts[0] == "void" { return err(fail(e,n,"E3004","List<void> is invalid")) }
+            return ok("List<"+ts[0]+">")
+        }
+        if text == "map" {
+            if !alg.contains(["int","bool","string"],ts[0]) || ts[1] == "void" || strings.starts_with(ts[1],"Result<") { return err(fail(e,n,"E3004","invalid map key/value type")) }
+            return ok("map<"+ts[0]+","+ts[1]+">")
+        }
+    }
+    return err(fail(e,n,"E8201","type node outside C04-T1"))
+}
+fn literal(e Environment, n ast.Node) bool {
+    let k = ast.kind(n.payload)
+    if k == "Integer" || k == "Float" { return true }
+    if k == "Unary" && (ast.payload_text(n.payload) == "+" || ast.payload_text(n.payload) == "-") { return literal(e,get(e,n.children[0])) }
+    return false
+}
+fn require(m mut Model, e Environment, expected string, actual Info, n ast.Node) Result<void> {
+    if rules.category(expected) != "" && rules.category(actual.type_name) != "" && literal(e,n) && (rules.category(expected) == "f" || rules.category(actual.type_name) != "f") { return ok() }
+    if strings.starts_with(expected,"[") && ast.kind(n.payload) == "Array" {
+        for child in n.children { let x = get(e,child)
+            require(m,e,rules.element(expected),unwrap(m.facts[key(e.unit.id,x.id.index)]),x)? }
+        return ok()
+    }
+    let a = rules.arguments(expected,"Result")
+    let b = rules.arguments(actual.type_name,"Result")
+    if actual.type_name == "Result<void,>" && !(len(a) == 2 && a[0] == "void") { return err(fail(e,n,"E3004","ok() requires explicit Result<void> context")) }
+    if len(a) == 2 && len(b) == 2 && ast.kind(n.payload) == "Call" {
+        let callee = target(m,e,get(e,n.children[0]))
+        if callee == "builtin:core:ok" && len(n.children) == 1 {
+            if a[0] != "void" || a[1] == "" { return err(fail(e,n,"E3004","ok() requires Result<void> context")) }
+            m.facts[key(e.unit.id,n.id.index)] = info(expected,false)
+            return ok()
+        }
+        if len(n.children) == 2 && (callee == "builtin:core:ok" || callee == "builtin:core:err") {
+            let child = get(e,n.children[1])
+            if literal(e,child) || ast.kind(child.payload) == "Array" {
+                var side = 0
+                if callee == "builtin:core:err" { side = 1 }
+                if rules.compatible(a[1-side],b[1-side]) { return require(m,e,a[side],info(b[side],actual.writable),child) }
+            }
+        }
+    }
+    if actual.type_name == "void" && expected != "void" { return err(fail(e,n,"E3004","void has no usable value")) }
+    if !rules.compatible(expected,actual.type_name) { return err(fail(e,n,"E3004","expected "+expected+", got "+actual.type_name)) }
+    return ok()
+}
+fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Function> {
+    let params = get(e,n.children[0])
+    var empty []Parameter = []
+    var parameters = list.from_slice(empty)
+    var result = "void"
+    for child in params.children {
+        let p = get(e,child)
+        if ast.kind(p.payload) == "Parameter" {
+            if len(p.children) == 0 { return err(fail(e,p,"E8201","C04-T1 requires parameter annotations")) }
+            let typ = typename(m,e,p.children[0])?
+            let write = strings.ends_with(ast.payload_text(p.payload)," mut") || ast.kind(get(e,p.children[0]).payload) == "MutableType"
+            list.append(parameters,Parameter{target:declaration(m,e,p),type_name:typ,writable:write})?
+        } else {
+            var values []string = []
+            var results = list.from_slice(values)
+            for typ in p.children { list.append(results,typename(m,e,typ)?)? }
+            if list.len(results) == 1 { result = list.get(results,0)? }
+            else { result = "multi<"+strings.join(list.snapshot(results),",")+">" }
+        }
+    }
+    return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,writable:true})
+}
+# 有限单调迭代；能力推断引用 C03 的词法身份。
+fn capability(m mut Model, e Environment, id ast.NodeId, values map[string]bool) Result<bool> {
+    let n = get(e,id)
+    tick(m,e,n)?
+    let k = ast.kind(n.payload)
+    if k == "Array" || k == "MapLiteral" || k == "StructLiteral" { return ok(true) }
+    if k == "Name" { return ok(unwrap_or(values[target(m,e,n)],false)) }
+    if k == "Member" || k == "Index" || k == "Slice" || k == "Propagate" { return capability(m,e,n.children[0],values) }
+    if k == "Pack" {
+        var write = true
+        for child in n.children { write = capability(m,e,child,values)? && write }
+        return ok(write)
+    }
+    if k == "Call" {
+        let name = target(m,e,get(e,n.children[0]))
+        if name == "builtin:core:clone" { return ok(true) }
+        if alg.contains(["builtin:core:ok","builtin:core:err","builtin:core:unwrap","builtin:core:unwrap_err"],name) && len(n.children) == 2 { return capability(m,e,n.children[1],values) }
+        if name == "builtin:core:unwrap_or" { return ok(capability(m,e,n.children[1],values)? && capability(m,e,n.children[2],values)?) }
+        let std = signatures.signature(name)
+        if is_some(std) { return ok(unwrap(std).writable) }
+        if has(m.functions,name) { return ok(unwrap(m.functions[name]).writable) }
+    }
+    return ok(false)
+}
+fn capscan(m mut Model, e Environment, id ast.NodeId, values mut map[string]bool, returns mut List<bool>) Result<void> {
+    let n = get(e,id)
+    tick(m,e,n)?
+    let k = ast.kind(n.payload)
+    if k == "Return" {
+        for child in n.children { list.append(returns,capability(m,e,child,values)?)? }
+        return ok()
+    }
+    if k == "Let" || k == "Var" || k == "Const" {
+        values[declaration(m,e,n)] = k == "Var" && capability(m,e,n.children[len(n.children)-1],values)?
+        return ok()
+    }
+    if k == "Assignment" && ast.kind(get(e,n.children[0]).payload) == "Name" {
+        let name = target(m,e,get(e,n.children[0]))
+        values[name] = unwrap_or(values[name],false) && capability(m,e,n.children[1],values)?
+        return ok()
+    }
+    if k == "If" || k == "While" || k == "For" || k == "Match" {
+        let before = clone(values)
+        for child in n.children {
+            var branch = clone(before)
+            capscan(m,e,child,branch,returns)?
+            for name, old in before { values[name] = unwrap_or(values[name],false) && unwrap_or(branch[name],old) }
+        }
+        return ok()
+    }
+    for child in n.children { capscan(m,e,child,values,returns)? }
+    return ok()
+}
+fn infer(m mut Model, units map[string]modules.Unit) Result<void> {
+    var changed = true
+    while changed {
+        if m.capability_passes > len(m.functions)+1 { return err("E8203@1:1 capability fixed point failed") }
+        m.capability_passes += 1
+        changed = false
+        for name, f in m.functions {
+            if !f.writable { continue }
+            let u = unwrap(units[f.module])
+            let e = environment(u,map[string]Info{})
+            var values = map[string]bool{}
+            for p in f.parameters { values[p.target] = p.writable }
+            var empty []bool = []
+            var results = list.from_slice(empty)
+            let n = unwrap(ast.get(u.tree.pool,ast.NodeId{pool:u.tree.pool.identity,index:f.node}))
+            capscan(m,e,n.children[1],values,results)?
+            var writable = list.len(results) > 0
+            for flag in list.snapshot(results) { writable = writable && flag }
+            if !writable { var updated = f
+                updated.writable = false
+                m.functions[name] = updated
+                changed = true }
+        }
+    }
+    return ok()
+}
+fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Info) Result<Info> {
+    var s = unwrap(signatures.signature(name))
+    if len(s.parameters) != len(arguments) { return err(fail(e,n,"E3005","standard argument count mismatch")) }
+    let parts = strings.split(name,"#")
+    let module = parts[0]
+    let method = parts[1]
+    if module == "builtin:std.alg" {
+        let element = rules.element(arguments[0].type_name)
+        if !alg.contains(["int","float","string"],element) || (method == "sum" && element == "string") { return err(fail(e,n,"E3004","algorithm requires supported scalar array")) }
+        var ps = clone(s.parameters)
+        ps[0] = "[]"+element
+        if len(ps) == 2 { ps[1] = element
+            if arguments[1].type_name != element { return err(fail(e,get(e,n.children[2]),"E3004","algorithm target requires identical element type")) } }
+        s.parameters = ps
+        if method == "sorted" || method == "reverse" { s.result = "Result<[]"+element+",string>" }
+        else if method == "contains" { s.result = "bool" }
+        else if method == "binary_search" { s.result = "int?" }
+        else if method == "sum" || method == "min" || method == "max" { s.result = "Result<"+element+",string>" }
+        else { s.result = "int" }
+    }
+    if module == "builtin:std.list" {
+        var element = ""
+        if method == "from_slice" { element = rules.element(arguments[0].type_name) }
+        else { let ts = rules.arguments(arguments[0].type_name,"List")
+            if len(ts) == 1 { element = ts[0] } }
+        if element == "" { return err(fail(e,n,"E3004","list requires known element type")) }
+        var ps = clone(s.parameters)
+        if method == "from_slice" { s.result = "List<"+element+">" }
+        else { ps[0] = "List<"+element+">" }
+        if method == "append" { ps[1] = element }
+        if method == "set" { ps[2] = element }
+        if method == "extend" { ps[1] = "[]"+element }
+        if method == "get" || method == "pop" { s.result = "Result<"+element+",string>" }
+        if method == "snapshot" { s.result = "[]"+element }
+        s.parameters = ps
+        if method == "append" || method == "set" {
+            var index = 1
+            if method == "set" { index = 2 }
+            if !rules.compatible(element,arguments[index].type_name) { return err(fail(e,get(e,n.children[index+1]),"E3004","list element type mismatch")) }
+        }
+    }
+    for i in 0..len(arguments) {
+        if module == "builtin:std.math" && arguments[i].type_name != "float" { return err(fail(e,get(e,n.children[i+1]),"E3004","math requires explicit float arguments")) }
+        require(m,e,s.parameters[i],arguments[i],get(e,n.children[i+1]))?
+    }
+    if s.mutates && !arguments[0].writable { return err(fail(e,n,"E3003","standard mutation requires writable argument")) }
+    return ok(info(s.result,s.writable))
+}
+fn core(m mut Model, e Environment, n ast.Node, name string, args []Info) Result<Info> {
+    let method = rules.cut(name,13,len(name))
+    var arity = 1
+    if alg.contains(["min","max","has","delete","unwrap_or"],method) { arity = 2 }
+    if method == "clamp" { arity = 3 }
+    if method != "print" && !(method == "ok" && len(args) == 0) && len(args) != arity { return err(fail(e,n,"E3005","builtin argument count mismatch")) }
+    if method == "print" { return ok(info("void",false)) }
+    if method == "ok" && len(args) == 0 { return ok(info("Result<void,>",false)) }
+    let t = args[0].type_name
+    if method == "str" || method == "type" { return ok(info("string",false)) }
+    if rules.category(method) != "" {
+        if rules.category(t) == "" && t != "string" { return err(fail(e,n,"E3004","conversion requires number or string")) }
+        return ok(info(method,false))
+    }
+    if method == "clone" { return ok(info(t,true)) }
+    if method == "ok" || method == "err" {
+        if t == "void" { return err(fail(e,n,"E3004","Result payload cannot be void")) }
+        var result = "Result<"+t+",>"
+        if method == "err" { result = "Result<,"+t+">" }
+        var writable = args[0].writable
+        if t != "nil" && !rules.shared(t) && !strings.contains(t,"#") { writable = true }
+        var out = info(result,writable)
+        out.readonly_children = args[0].readonly_children
+        return ok(out)
+    }
+    if method == "is_some" || method == "is_none" { return ok(info("bool",false)) }
+    if alg.contains(["is_ok","is_err","unwrap_err"],method) {
+        let ts = rules.arguments(t,"Result")
+        if len(ts) != 2 { return err(fail(e,n,"E3004","expected Result")) }
+        if method == "unwrap_err" { var out = info(ts[1],args[0].writable)
+            out.readonly_children = args[0].readonly_children
+            return ok(out) }
+        return ok(info("bool",args[0].writable))
+    }
+    if method == "unwrap" || method == "unwrap_or" {
+        let ts = rules.arguments(t,"Result")
+        var result = rules.optional(t)
+        if len(ts) == 2 { result = ts[0] }
+        if result == "nil" { result = "" }
+        if method == "unwrap_or" {
+            if result == "void" { return err(fail(e,n,"E3004","void has no fallback")) }
+            require(m,e,result,args[1],get(e,n.children[2]))?
+            if result == "" { result = args[1].type_name }
+        }
+        if result == "" { return err(fail(e,n,"E8201","C04-T1 requires known unwrap type")) }
+        var out = info(result,args[0].writable && (method == "unwrap" || args[1].writable))
+        out.readonly_children = args[0].readonly_children || (method == "unwrap_or" && args[1].readonly_children)
+        return ok(out)
+    }
+    if method == "has" || method == "delete" {
+        let ts = rules.arguments(t,"map")
+        if len(ts) != 2 { return err(fail(e,n,"E3004","expected map")) }
+        require(m,e,ts[0],args[1],get(e,n.children[2]))?
+        if method == "delete" && !args[0].writable { return err(fail(e,n,"E3003","read-only map")) }
+        return ok(info("bool",false))
+    }
+    if method == "len" {
+        if t != "string" && !strings.starts_with(t,"[") && len(rules.arguments(t,"map")) != 2 { return err(fail(e,n,"E3004","len requires slice, string or map")) }
+        return ok(info("int",false))
+    }
+    if method == "sizeof" || method == "alignof" {
+        if rules.category(t) == "" && t != "bool" && (!strings.starts_with(t,"[") || strings.starts_with(t,"[]")) { return err(fail(e,n,"E3004","layout query requires scalar/fixed array")) }
+        return ok(info("int",false))
+    }
+    if method == "sqrt" || method == "abs" {
+        if rules.category(t) == "" { return err(fail(e,n,"E3004","numeric builtin requires number")) }
+        if method == "sqrt" { return ok(info("float",false)) }
+        return ok(info(t,false))
+    }
+    if method == "min" || method == "max" || method == "clamp" {
+        if rules.category(t) == "" && t != "string" { return err(fail(e,n,"E3004","comparison builtin requires scalar")) }
+        for i in 1..len(args) { require(m,e,t,args[i],get(e,n.children[i+1]))? }
+        return ok(info(t,false))
+    }
+    return err(fail(e,n,"E8201","builtin outside C04-T1"))
+}
+
+# Copying a record opens only its outer fields, never its inherited shared children.
+fn copied(value Info) Info {
+    var out = value
+    if strings.contains(rules.optional(value.type_name),"#") && !rules.shared(value.type_name) {
+        out.readonly_children = value.readonly_children || !value.writable
+        out.writable = true
+    }
+    return out
+}
+fn projection(m Model, e Environment, n ast.Node) string {
+    let k = ast.kind(n.payload)
+    if k == "Name" || (k == "Member" && target(m,e,n) != "") { return target(m,e,n) }
+    if k == "Member" {
+        let parent = projection(m,e,get(e,n.children[0]))
+        if parent != "" { return parent+"#@"+ast.payload_text(n.payload) }
+    }
+    return ""
+}
+fn remember(m Model, e mut Environment, destination string, source ast.Node, actual Info) {
+    if destination == "" { return }
+    let root = strings.split(destination,"#@")[0]
+    if root != destination && !rules.shared(actual.type_name) && !strings.contains(actual.type_name,"#") { return }
+    let prefix = "$field$"+destination+"#@"
+    let origin = projection(m,e,source)
+    var inherited = map[string]Info{}
+    if actual.projected && origin != "" {
+        let from = "$field$"+origin+"#@"
+        for name, value in e.values {
+            if strings.starts_with(name,from) {
+                var view = value
+                view.owner = root
+                if !actual.writable { view.writable = false
+                    view.readonly_children = true }
+                inherited[prefix+rules.cut(name,len(from),len(name))] = view
+            }
+        }
+    }
+    let current = unwrap_or(e.values[root],info("",false))
+    if current.projected {
+        for name, unused in clone(e.values) {
+            if name == "$field$"+destination || strings.starts_with(name,prefix) { delete(e.values,name) }
+        }
+    }
+    var value = copied(actual)
+    value.owner = ""
+    value.projected = len(inherited) > 0
+    if root == destination { var old = unwrap(e.values[root])
+        old.readonly_children = value.readonly_children
+        old.projected = value.projected
+        e.values[root] = old
+    } else {
+        value.owner = root
+        e.values["$field$"+destination] = value
+        var old = unwrap(e.values[root])
+        old.projected = true
+        e.values[root] = old
+    }
+    for name, view in inherited { e.values[name] = view }
+}
+
+fn location(m mut Model, e mut Environment, n ast.Node) Result<Info> {
+    if ast.kind(n.payload) == "Name" {
+        let symbol = unwrap_or(e.values[target(m,e,n)],info("",false))
+        if !symbol.mutable_binding { return err(fail(e,n,"E3003","immutable binding assignment")) }
+        return ok(info(symbol.declared,true))
+    }
+    var value = expression(m,e,n.id)?
+    if ast.kind(n.payload) == "Member" { value.writable = unwrap(m.facts[key(e.unit.id,n.children[0].index)]).writable }
+    if !value.writable { return err(fail(e,n,"E3003","read-only location")) }
+    if ast.kind(n.payload) == "Index" {
+        let base = unwrap(m.facts[key(e.unit.id,n.children[0].index)])
+        let ts = rules.arguments(base.type_name,"map")
+        if len(ts) == 2 { value.type_name = ts[1] }
+    }
+    return ok(value)
+}
+fn expression(m mut Model, e mut Environment, id ast.NodeId) Result<Info> {
+    let n = get(e,id)
+    tick(m,e,n)?
+    if e.depth >= 64 { return err(fail(e,n,"E8202","type expression depth budget")) }
+    e.depth += 1
+    let value = expression_body(m,e,n)?
+    e.depth -= 1
+    m.facts[key(e.unit.id,n.id.index)] = value
+    return ok(value)
+}
+fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    if alg.contains(["Integer","Float","Boolean","String","Nil"],k) {
+        var type = "nil"
+        if k == "Integer" { type = "int" }
+        if k == "Float" { type = "float" }
+        if k == "Boolean" { type = "bool" }
+        if k == "String" { type = "string" }
+        return ok(info(type,false))
+    }
+    if k == "Name" || (k == "Member" && target(m,e,n) != "") {
+        let name = target(m,e,n)
+        if has(m.functions,name) { return ok(info("fn:"+name,false)) }
+        if has(m.variants,name) { return ok(info("variant:"+name,false)) }
+        if strings.starts_with(name,"builtin:core:") || is_some(signatures.signature(name)) { return ok(info(name,false)) }
+        if !has(e.values,name) { return err(fail(e,n,"E8201","value type not established")) }
+        return ok(unwrap(e.values[name]))
+    }
+    if k == "Call" {
+        let callee = expression(m,e,n.children[0])?
+        var empty []Info = []
+        var arguments = list.from_slice(empty)
+        for i in 1..len(n.children) {
+            let value = expression(m,e,n.children[i])?
+            if value.type_name == "void" { return err(fail(e,get(e,n.children[i]),"E3004","void argument")) }
+            if len(rules.arguments(value.type_name,"multi")) > 0 { return err(fail(e,n,"E3006","multiple values require positional binding")) }
+            list.append(arguments,value)?
+        }
+        let args = list.snapshot(arguments)
+        if strings.starts_with(callee.type_name,"builtin:std.") { return standard(m,e,n,callee.type_name,args) }
+        if strings.starts_with(callee.type_name,"builtin:core:") { return core(m,e,n,callee.type_name,args) }
+        var f = Function{target:"",module:"",node:0,parameters:[],result:"",writable:false}
+        if strings.starts_with(callee.type_name,"fn:") { f = unwrap(m.functions[rules.cut(callee.type_name,3,len(callee.type_name))]) }
+        else if strings.starts_with(callee.type_name,"variant:") { f = unwrap(m.variants[rules.cut(callee.type_name,8,len(callee.type_name))]) }
+        else { return err(fail(e,n,"E3004","value is not callable")) }
+        if len(args) != len(f.parameters) { return err(fail(e,n,"E3005","function argument count mismatch")) }
+        for i in 0..len(args) {
+            require(m,e,f.parameters[i].type_name,args[i],get(e,n.children[i+1]))?
+            if f.parameters[i].writable && !args[i].writable { return err(fail(e,get(e,n.children[i+1]),"E3003","mut borrow requires writable argument")) }
+            if f.parameters[i].writable && strings.starts_with(f.parameters[i].type_name,"[") {
+                let expected = f.parameters[i].type_name
+                if rules.element(expected) != rules.element(args[i].type_name) || (!strings.starts_with(expected,"[]") && strings.starts_with(args[i].type_name,"[]")) { return err(fail(e,get(e,n.children[i+1]),"E3004","mut array borrow requires identical layout")) }
+            }
+        }
+        return ok(info(f.result,f.writable))
+    }
+    if k == "Array" || k == "Pack" {
+        var type = ""
+        var write = true
+        var empty []string = []
+        var types = list.from_slice(empty)
+        for child in n.children {
+            let value = expression(m,e,child)?
+            if value.type_name == "void" { return err(fail(e,get(e,child),"E3004","void container/pack item")) }
+            if k == "Array" {
+                if type == "" { type = value.type_name }
+                else { require(m,e,type,value,get(e,child))? }
+            } else {
+                if len(rules.arguments(value.type_name,"multi")) > 0 { return err(fail(e,n,"E3006","nested pack")) }
+                list.append(types,value.type_name)?
+                if rules.shared(value.type_name) { write = write && value.writable }
+            }
+        }
+        if k == "Array" { return ok(info("[]"+type,true)) }
+        return ok(info("multi<"+strings.join(list.snapshot(types),",")+">",write))
+    }
+    if k == "MapLiteral" {
+        let typ = typename(m,e,n.children[0])?
+        let ts = rules.arguments(typ,"map")
+        for i in 1..len(n.children) { let entry = get(e,n.children[i])
+            require(m,e,ts[0],expression(m,e,entry.children[0])?,get(e,entry.children[0]))?
+            require(m,e,ts[1],expression(m,e,entry.children[1])?,get(e,entry.children[1]))? }
+        return ok(info(typ,true))
+    }
+    if k == "StructLiteral" {
+        let typ = target(m,e,n)
+        var seen = map[string]bool{}
+        for child in n.children { let field = get(e,child)
+            let name = ast.payload_text(field.payload)
+            if has(seen,name) { return err(fail(e,field,"E3002","duplicate field initializer")) }
+            seen[name] = true
+            if !has(m.fields,typ+"#"+name) { return err(fail(e,field,"E3004","unknown field")) }
+            require(m,e,unwrap(m.fields[typ+"#"+name]),expression(m,e,field.children[0])?,get(e,field.children[0]))? }
+        var count = 0
+        for name, value in m.fields { if strings.starts_with(name,typ+"#") { count += 1 } }
+        if count != len(seen) { return err(fail(e,n,"E3004","all fields require initialization")) }
+        return ok(info(typ,true))
+    }
+    if k == "Member" {
+        let base = expression(m,e,n.children[0])?
+        if text == "len" && (base.type_name == "string" || strings.starts_with(base.type_name,"[") || strings.starts_with(base.type_name,"map<")) { return ok(info("int",false)) }
+        let name = base.type_name+"#"+text
+        if !has(m.fields,name) { return err(fail(e,n,"E3004","unknown struct member")) }
+        var out = info(unwrap(m.fields[name]),base.writable && !base.readonly_children)
+        out.readonly_children = base.readonly_children || !base.writable
+        let path = "$field$"+projection(m,e,n)
+        if base.writable && has(e.values,path) { out = unwrap(e.values[path]) }
+        return ok(out)
+    }
+    if k == "Index" || k == "Slice" {
+        let base = expression(m,e,n.children[0])?
+        let ts = rules.arguments(base.type_name,"map")
+        if k == "Index" && len(ts) == 2 {
+            require(m,e,ts[0],expression(m,e,n.children[1])?,get(e,n.children[1]))?
+            var type = ts[1]
+            if !strings.ends_with(type,"?") { type += "?" }
+            var out = info(type,base.writable && !base.readonly_children)
+            out.readonly_children = base.readonly_children
+            return ok(out)
+        }
+        if !strings.starts_with(base.type_name,"[") { return err(fail(e,n,"E3004","index/slice requires array")) }
+        for i in 1..len(n.children) { let index = get(e,n.children[i])
+            if ast.kind(index.payload) != "Omitted" { require(m,e,"int",expression(m,e,index.id)?,index)? } }
+        var type = rules.element(base.type_name)
+        if k == "Slice" { type = "[]"+type }
+        var out = info(type,base.writable && !base.readonly_children)
+            out.readonly_children = base.readonly_children
+            return ok(out)
+    }
+    if k == "Propagate" {
+        let value = expression(m,e,n.children[0])?
+        let ts = rules.arguments(value.type_name,"Result")
+        let rs = rules.arguments(e.result,"Result")
+        if len(ts) != 2 || len(rs) != 2 { return err(fail(e,n,"E3006","? requires Result and Result function")) }
+        if ts[0] == "" { return err(fail(e,n,"E3004","Result success type unknown")) }
+        if !rules.compatible(rs[1],ts[1]) { return err(fail(e,n,"E3004","incompatible Result error")) }
+        var out = info(ts[0],value.writable)
+        out.readonly_children = value.readonly_children
+        return ok(out)
+    }
+    if k == "Assignment" || k == "Update" {
+        let left = get(e,n.children[0])
+        let loc = location(m,e,left)?
+        if k == "Update" {
+            if rules.category(loc.type_name) == "" || rules.category(loc.type_name) == "f" { require(m,e,"int",loc,n)? }
+        } else {
+            let right = expression(m,e,n.children[1])?
+            require(m,e,loc.type_name,right,get(e,n.children[1]))?
+            if text != "=" && rules.category(loc.type_name) == "" && !(text == "+=" && loc.type_name == "string") { return err(fail(e,n,"E3004","compound requires scalar")) }
+            if (text == "%=" || text == "//=" || text == "/=") && (rules.category(loc.type_name) == "f" && text != "/=" || rules.category(loc.type_name) != "f" && text == "/=") { return err(fail(e,n,"E3004","integer/float compound mismatch")) }
+            if ast.kind(left.payload) == "Name" {
+                let name = target(m,e,left)
+                var old = unwrap(e.values[name])
+                if rules.shared(loc.type_name) { old.writable = right.writable }
+                old.type_name = old.declared
+                if strings.ends_with(old.declared,"?") {
+                    if right.type_name == "nil" { old.type_name = "nil" }
+                    else if !strings.ends_with(right.type_name,"?") { old.type_name = rules.optional(old.declared) }
+                }
+                e.values[name] = old
+            }
+            if text == "=" { remember(m,e,projection(m,e,left),get(e,n.children[1]),right) }
+        }
+        return ok(info(loc.type_name,false))
+    }
+    if k == "Unary" {
+        let x = expression(m,e,n.children[0])?
+        if text == "!" { require(m,e,"bool",x,n)?
+            return ok(info("bool",false)) }
+        let category = rules.category(x.type_name)
+        if category == "" || (text == "~" && category == "f") || (text == "-" && category == "u") { return err(fail(e,n,"E3004","unary numeric category mismatch")) }
+        return ok(info(x.type_name,false))
+    }
+    if k == "Binary" {
+        let a = expression(m,e,n.children[0])?
+        var before = map[string]Info{}
+        if text == "&&" || text == "||" { before = clone(e.values)
+            narrow(m,e,get(e,n.children[0]),text == "&&")? }
+        let b = expression(m,e,n.children[1])?
+        if text == "&&" || text == "||" { join(e,before) }
+        if a.type_name == "void" || b.type_name == "void" { return err(fail(e,n,"E3004","void operand")) }
+        if text == "&&" || text == "||" { require(m,e,"bool",a,n)?
+            require(m,e,"bool",b,n)?
+            return ok(info("bool",false)) }
+        if text == "==" || text == "!=" {
+            if a.type_name != "nil" && b.type_name != "nil" { require(m,e,a.type_name,b,n)? }
+            return ok(info("bool",false))
+        }
+        var common = a.type_name
+        let category = rules.category(common)
+        let rhs = rules.category(b.type_name)
+        if category != "" && rhs != "" && ((common != "int" && common != "float") || (b.type_name != "int" && b.type_name != "float")) {
+            if !literal(e,get(e,n.children[1])) && !rules.widening(common,b.type_name) {
+                if rules.widening(b.type_name,common) { common = b.type_name }
+                else if text != "<<" && text != ">>" && !(text == "**" && category == "f" && rhs != "f") { return err(fail(e,n,"E3004","mixed numeric categories require explicit conversion")) }
+            }
+        } else if !(text == "**" && common == "float" && b.type_name == "int") { require(m,e,common,b,n)? }
+        if alg.contains(["<","<=",">",">="],text) {
+            if rules.category(common) == "" && common != "string" { return err(fail(e,n,"E3004","comparison requires scalar")) }
+            return ok(info("bool",false))
+        }
+        if alg.contains(["&","|","^","<<",">>","//","%"],text) {
+            if rules.category(common) == "" || rules.category(common) == "f" || rhs == "f" { return err(fail(e,n,"E3004","integer operator requires integers")) }
+        } else if rules.category(common) == "" && !(text == "+" && common == "string") { return err(fail(e,n,"E3004","arithmetic requires numbers")) }
+        if text == "/" && rules.category(common) != "f" { common = "float" }
+        return ok(info(common,false))
+    }
+    return err(fail(e,n,"E8201","expression outside C04-T1"))
+}
+fn join(e mut Environment, other map[string]Info) {
+    for name, value in other {
+        if value.owner != "" && !has(e.values,name) && has(e.values,value.owner) {
+            let root = unwrap(e.values[value.owner])
+            var merged = value
+            merged.writable = value.writable && root.writable && !root.readonly_children
+            merged.readonly_children = value.readonly_children || root.readonly_children
+            e.values[name] = merged
+        }
+    }
+    for name, value in e.values {
+        var old = unwrap_or(other[name],value)
+        if !has(other,name) && value.owner != "" && has(other,value.owner) {
+            let root = unwrap(other[value.owner])
+            old.writable = root.writable && !root.readonly_children
+            old.readonly_children = root.readonly_children
+        }
+        var merged = value
+        if merged.type_name != old.type_name { merged.type_name = merged.declared }
+        merged.writable = merged.writable && old.writable
+        merged.readonly_children = merged.readonly_children || old.readonly_children
+        merged.projected = merged.projected || old.projected
+        e.values[name] = merged
+    }
+}
+fn narrow(m mut Model, e mut Environment, n ast.Node, truth bool) Result<void> {
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    if k == "Unary" && text == "!" { return narrow(m,e,get(e,n.children[0]),!truth) }
+    if k == "Binary" && ((text == "&&" && truth) || (text == "||" && !truth)) { narrow(m,e,get(e,n.children[0]),truth)?
+        return narrow(m,e,get(e,n.children[1]),truth) }
+    var name = ""
+    var nonnil = truth
+    if k == "Binary" && (text == "==" || text == "!=") {
+        let a = get(e,n.children[0])
+        let b = get(e,n.children[1])
+        if ast.kind(a.payload) == "Name" && ast.kind(b.payload) == "Nil" { name = target(m,e,a) }
+        if ast.kind(b.payload) == "Name" && ast.kind(a.payload) == "Nil" { name = target(m,e,b) }
+        nonnil = truth == (text == "!=")
+    }
+    if k == "Call" && len(n.children) == 2 {
+        let method = target(m,e,get(e,n.children[0]))
+        let arg = get(e,n.children[1])
+        if (method == "builtin:core:is_some" || method == "builtin:core:is_none") && ast.kind(arg.payload) == "Name" { name = target(m,e,arg)
+            nonnil = truth == (method == "builtin:core:is_some") }
+    }
+    if strings.index(name,"#s") >= 0 && has(e.values,name) {
+        var value = unwrap(e.values[name])
+        if strings.ends_with(value.declared,"?") {
+            value.type_name = "nil"
+            if nonnil { value.type_name = rules.optional(value.declared) }
+            e.values[name] = value
+        }
+    }
+    return ok()
+}
+fn stops(e Environment, n ast.Node) bool {
+    let k = ast.kind(n.payload)
+    if k == "Return" || k == "Break" || k == "Continue" { return true }
+    if k == "If" { return len(n.children) == 3 && stops(e,get(e,n.children[1])) && stops(e,get(e,n.children[2])) }
+    if k == "Match" {
+        if len(n.children) < 2 { return false }
+        for i in 1..len(n.children) { let arm = get(e,n.children[i])
+            if !stops(e,get(e,arm.children[2])) { return false } }
+        return true
+    }
+    if k == "Block" { for child in n.children { if stops(e,get(e,child)) { return true } } }
+    return false
+}
+fn returns(e Environment, n ast.Node) bool {
+    let k = ast.kind(n.payload)
+    if k == "Return" { return true }
+    if k == "If" { return len(n.children) == 3 && returns(e,get(e,n.children[1])) && returns(e,get(e,n.children[2])) }
+    if k == "Match" {
+        if len(n.children) < 2 { return false }
+        for i in 1..len(n.children) { let arm = get(e,n.children[i])
+            if !returns(e,get(e,arm.children[2])) { return false } }
+        return true
+    }
+    if k == "Block" { for child in n.children { if returns(e,get(e,child)) { return true } } }
+    return false
+}
+fn binding(m mut Model, e mut Environment, n ast.Node, actual Info, value ast.Node, mutable bool) Result<void> {
+    var declared = actual.type_name
+    if len(n.children) == 2 || (ast.kind(n.payload) == "Parameter" && len(n.children) == 1) { declared = typename(m,e,n.children[0])?
+        require(m,e,declared,actual,value)? }
+    if declared == "void" { return err(fail(e,n,"E3004","void binding")) }
+    if declared == "[]" || declared == "nil" || strings.ends_with(declared,",>") || strings.starts_with(declared,"Result<,") { return err(fail(e,n,"E8201","C04-T1 requires explicit incomplete type annotation")) }
+    if len(rules.arguments(declared,"multi")) > 0 { return err(fail(e,n,"E3006","multiple values require positional binding")) }
+    var result = info(declared,mutable)
+    result.mutable_binding = mutable
+    if rules.shared(declared) { result.writable = mutable && actual.writable }
+    let name = declaration(m,e,n)
+    if name != "" { e.values[name] = result
+        remember(m,e,name,value,actual)
+        result = unwrap(e.values[name])
+        m.symbols[name] = result }
+    m.facts[key(e.unit.id,n.id.index)] = result
+    return ok()
+}
+fn statement(m mut Model, e mut Environment, id ast.NodeId) Result<void> {
+    let n = get(e,id)
+    tick(m,e,n)?
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    if k == "Import" || k == "Struct" || k == "Enum" || k == "Function" || k == "Break" || k == "Continue" { return ok() }
+    if k == "Block" || k == "Program" { for child in n.children { statement(m,e,child)? }
+        return ok() }
+    if k == "Let" || k == "Var" || k == "Const" {
+        let value = get(e,n.children[len(n.children)-1])
+        if k == "Const" { return err(fail(e,n,"E8201","C04-T1 const folding pending")) }
+        let actual = expression(m,e,value.id)?
+        return binding(m,e,n,actual,value,k == "Var")
+    }
+    if k == "MultiBinding" || k == "MultiAssignment" {
+        let names = get(e,n.children[0])
+        let value = get(e,n.children[1])
+        let actual = expression(m,e,value.id)?
+        let ts = rules.arguments(actual.type_name,"multi")
+        if len(ts) != len(names.children) { return err(fail(e,n,"E3006","multiple value count mismatch")) }
+        for i in 0..len(ts) { let p = get(e,names.children[i])
+            if ast.payload_text(p.payload) == "_" { continue }
+            var source = value
+            var item = info(ts[i],actual.writable)
+            if ast.kind(value.payload) == "Pack" { source = get(e,value.children[i])
+                item = unwrap(m.facts[key(e.unit.id,source.id.index)]) }
+            if k == "MultiBinding" { binding(m,e,p,item,source,text == "var")? }
+            else { let loc = location(m,e,p)?
+                require(m,e,loc.type_name,item,source)?
+                if ast.kind(p.payload) == "Name" { let name = target(m,e,p)
+                    var old = unwrap(e.values[name])
+                    if rules.shared(old.declared) { old.writable = item.writable }
+                    old.type_name = old.declared
+                    e.values[name] = old
+                    remember(m,e,name,source,item) } }
+        }
+        return ok()
+    }
+    if k == "ExpressionStatement" || k == "Defer" { expression(m,e,n.children[0])?
+        return ok() }
+    if k == "Return" {
+        var rs = rules.arguments(e.result,"multi")
+        if len(rs) == 0 && e.result != "void" { rs = [e.result] }
+        if len(n.children) == 1 && len(rs) > 1 {
+            let value = expression(m,e,n.children[0])?
+            let ts = rules.arguments(value.type_name,"multi")
+            if len(ts) != len(rs) { return err(fail(e,n,"E3006","return arity mismatch")) }
+            for i in 0..len(rs) { require(m,e,rs[i],info(ts[i],false),get(e,n.children[0]))? }
+            return ok()
+        }
+        if len(rs) != len(n.children) { return err(fail(e,n,"E3006","return arity mismatch")) }
+        for i in 0..len(rs) { require(m,e,rs[i],expression(m,e,n.children[i])?,get(e,n.children[i]))? }
+        return ok()
+    }
+    if k == "If" {
+        require(m,e,"bool",expression(m,e,n.children[0])?,get(e,n.children[0]))?
+        let before = clone(e.values)
+        narrow(m,e,get(e,n.children[0]),true)?
+        statement(m,e,n.children[1])?
+        let yes = clone(e.values)
+        e.values = clone(before)
+        narrow(m,e,get(e,n.children[0]),false)?
+        if len(n.children) == 3 { statement(m,e,n.children[2])? }
+        let yes_stop = stops(e,get(e,n.children[1]))
+        let no_stop = len(n.children) == 3 && stops(e,get(e,n.children[2]))
+        if no_stop && !yes_stop { e.values = clone(yes) }
+        else if !yes_stop && !no_stop { join(e,yes) }
+        return ok()
+    }
+    if k == "While" || k == "For" {
+        invalidate(m,e,get(e,n.children[len(n.children)-1]))?
+        let before = clone(e.values)
+        var count = 0
+        var item = "int"
+        var index = "int"
+        if k == "While" { require(m,e,"bool",expression(m,e,n.children[0])?,get(e,n.children[0]))? }
+        else {
+            count = len(n.children)-2
+            let iterable = get(e,n.children[count])
+            if ast.kind(iterable.payload) == "Range" {
+                for child in iterable.children { require(m,e,"int",expression(m,e,child)?,get(e,child))? }
+            } else { let value = expression(m,e,iterable.id)?
+                let ts = rules.arguments(value.type_name,"map")
+                if len(ts) == 2 { index = ts[0]
+                    item = ts[0]
+                    if count == 2 { item = ts[1] } }
+                else { item = rules.element(value.type_name)
+                    if item == "" { return err(fail(e,iterable,"E3004","for requires range/slice/map")) } }
+            }
+            for i in 0..count { let p = get(e,n.children[i])
+                var t = item
+                if count == 2 && i == 0 { t = index }
+                let name = declaration(m,e,p)
+                if name != "" { e.values[name] = info(t,false)
+                    m.symbols[name] = info(t,false) } }
+        }
+        var changed = true
+        var passes = 0
+        while changed {
+            passes += 1
+            if passes > len(before)+2 { return err(fail(e,n,"E8202","loop capability pass budget")) }
+            let entry = clone(e.values)
+            if k == "While" { narrow(m,e,get(e,n.children[0]),true)? }
+            statement(m,e,n.children[len(n.children)-1])?
+            join(e,before)
+            join(e,entry)
+            changed = false
+            for name, value in entry { if has(e.values,name) && (value.writable != unwrap(e.values[name]).writable || value.readonly_children != unwrap(e.values[name]).readonly_children) { changed = true } }
+        }
+        invalidate(m,e,get(e,n.children[len(n.children)-1]))?
+        if k == "While" && !has_break(e,get(e,n.children[1]),true) { narrow(m,e,get(e,n.children[0]),false)? }
+        return ok()
+    }
+    if k == "Match" { return matching(m,e,n) }
+    return err(fail(e,n,"E8201","statement outside C04-T1"))
+}
+fn invalidate(m mut Model, e mut Environment, n ast.Node) Result<void> {
+    tick(m,e,n)?
+    let k = ast.kind(n.payload)
+    if (k == "Assignment" || k == "Update") && ast.kind(get(e,n.children[0]).payload) == "Name" {
+        let name = target(m,e,get(e,n.children[0]))
+        if has(e.values,name) { var value = unwrap(e.values[name])
+            value.type_name = value.declared
+            e.values[name] = value }
+    }
+    if k == "MultiAssignment" { let names = get(e,n.children[0])
+        for child in names.children { let p = get(e,child)
+            let name = target(m,e,p)
+            if ast.kind(p.payload) == "Name" && has(e.values,name) { var value = unwrap(e.values[name])
+                value.type_name = value.declared
+                e.values[name] = value } } }
+    for child in n.children { invalidate(m,e,get(e,child))? }
+    return ok()
+}
+fn has_break(e Environment, n ast.Node, root bool) bool {
+    let k = ast.kind(n.payload)
+    if k == "Break" { return true }
+    if !root && (k == "While" || k == "For") { return false }
+    for child in n.children { if has_break(e,get(e,child),false) { return true } }
+    return false
+}
+fn pattern_key(e Environment, n ast.Node, type string) Result<string> {
+    var text = ast.payload_text(n.payload)
+    if ast.kind(n.payload) == "Integer" {
+        text = strings.replace(text,"_","")
+        for i in 0..len(text) { if !strings.contains("0123456789",rules.cut(text,i,i+1)) { return err(fail(e,n,"E8201","C04-T1 integer pattern requires decimal literal")) } }
+        while len(text) > 1 && strings.starts_with(text,"0") { text = rules.cut(text,1,len(text)) }
+        if len(text) > 19 || (len(text) == 19 && text > "9223372036854775807") { return err(fail(e,n,"E8201","integer pattern outside int range")) }
+    }
+    return ok(type+":"+text)
+}
+fn matching(m mut Model, e mut Environment, n ast.Node) Result<void> {
+    let actual = expression(m,e,n.children[0])?
+    let before = clone(e.values)
+    var merged = clone(before)
+    var seen = map[string]bool{}
+    var wildcard = false
+    var exits = 0
+    var variants = 0
+    for name, f in m.variants { if f.result == actual.type_name { variants += 1 } }
+    for i in 1..len(n.children) {
+        let arm = get(e,n.children[i])
+        let pattern = get(e,arm.children[0])
+        let bindings = get(e,arm.children[1])
+        let text = ast.payload_text(pattern.payload)
+        e.values = clone(before)
+        if wildcard { return err(fail(e,arm,"E3011","unreachable arm after wildcard")) }
+        if ast.kind(pattern.payload) == "Name" && text == "_" {
+            wildcard = true
+            if len(bindings.children) != 0 { return err(fail(e,arm,"E3011","wildcard payload bindings")) }
+        } else if variants > 0 {
+            var name = target(m,e,pattern)
+            if name == "" { name = actual.type_name+"."+text }
+            if !has(m.variants,name) { return err(fail(e,pattern,"E3011","unknown enum variant")) }
+            let f = unwrap(m.variants[name])
+            if f.result != actual.type_name { return err(fail(e,pattern,"E3011","variant belongs to another enum")) }
+            if has(seen,name) { return err(fail(e,arm,"E3011","duplicate variant")) }
+            seen[name] = true
+            if len(f.parameters) != len(bindings.children) { return err(fail(e,arm,"E3011","payload binding count mismatch")) }
+            for j in 0..len(bindings.children) { let p = get(e,bindings.children[j])
+                let name = declaration(m,e,p)
+                if name != "" { let value = info(f.parameters[j].type_name,false)
+                    e.values[name] = value
+                    m.symbols[name] = value } }
+        } else {
+            if ast.kind(pattern.payload) == "Name" || len(bindings.children) != 0 { return err(fail(e,pattern,"E3011","scalar match requires literal")) }
+            let value = expression(m,e,pattern.id)?
+            require(m,e,actual.type_name,value,pattern)?
+            let name = pattern_key(e,pattern,value.type_name)?
+            if has(seen,name) { return err(fail(e,arm,"E3011","duplicate literal")) }
+            seen[name] = true
+        }
+        if strings.ends_with(actual.type_name,"?") && ast.kind(get(e,n.children[0]).payload) == "Name" {
+            let name = target(m,e,get(e,n.children[0]))
+            if strings.index(name,"#s") >= 0 && (ast.kind(pattern.payload) == "Nil" || (wildcard && has(seen,"nil:"))) {
+                var value = unwrap(e.values[name])
+                value.type_name = "nil"
+                if wildcard { value.type_name = rules.optional(value.declared) }
+                e.values[name] = value
+            }
+        }
+        statement(m,e,arm.children[2])?
+        if !stops(e,get(e,arm.children[2])) {
+            if exits == 0 { merged = clone(e.values) }
+            else { let current = clone(e.values)
+                e.values = clone(merged)
+                join(e,current)
+                merged = clone(e.values) }
+            exits += 1
+        }
+    }
+    if !wildcard && !(variants > 0 && len(seen) == variants) && !(actual.type_name == "bool" && len(seen) == 2) { return err(fail(e,n,"E3011","non-exhaustive match")) }
+    if exits == 0 { e.values = clone(before) }
+    else { e.values = clone(merged) }
+    return ok()
+}
+pub fn analyze(entry string) Result<Model> {
+    let graph = modules.analyze_compiler(entry)?
+    var units = map[string]modules.Unit{}
+    for u in list.snapshot(graph.units) { units[u.id] = u }
+    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},work:0,capability_passes:0}
+    for ref in list.snapshot(graph.references) { m.refs[key(ref.module,ref.node)] = ref.target }
+    for symbol in list.snapshot(graph.symbols) { m.declarations[key(symbol.module,symbol.node)] = symbol.target }
+    for symbol in list.snapshot(graph.symbols) {
+        if symbol.scope != 0 { continue }
+        let e = environment(unwrap(units[symbol.module]),map[string]Info{})
+        let n = unwrap(ast.get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:symbol.node}))
+        if symbol.kind == "Function" {
+            let f = signature(m,e,n,symbol.target)?
+            if symbol.target == unwrap(list.get(graph.units,0)).id+"#main" && len(f.parameters)>0 { return err(fail(e,n,"E3005","main must take no parameters")) }
+            m.functions[symbol.target] = f
+        }
+        else if symbol.kind == "Struct" {
+            m.symbols[symbol.target] = info("struct:"+symbol.target,false)
+            for child in n.children { let field = get(e,child)
+                let name = symbol.target+"#"+ast.payload_text(field.payload)
+                if has(m.fields,name) { return err(fail(e,field,"E3002","duplicate struct field")) }
+                m.fields[name] = typename(m,e,field.children[0])? }
+        } else if symbol.kind == "Variant" {
+            var empty []Parameter = []
+            var ps = list.from_slice(empty)
+            for child in n.children { list.append(ps,Parameter{target:"",type_name:typename(m,e,child)?,writable:false})? }
+            let dot = strings.index(symbol.name,".")
+            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:symbol.module+"#"+rules.cut(symbol.name,0,dot),writable:true}
+        } else if symbol.kind == "Enum" { m.symbols[symbol.target] = info("enum:"+symbol.target,false) }
+    }
+    infer(m,units)?
+    for name, f in m.functions { m.symbols[name] = info("fn:"+name,false) }
+    for name, f in m.variants { m.symbols[name] = info("variant:"+name,false) }
+    for name in list.snapshot(graph.order) {
+        var e = environment(unwrap(units[name]),clone(m.symbols))
+        let root = get(e,e.unit.tree.root)
+        for child in root.children { statement(m,e,child)? }
+        for symbol in list.snapshot(graph.symbols) { if symbol.module == name && symbol.scope == 0 && has(e.values,symbol.target) { m.symbols[symbol.target] = unwrap(e.values[symbol.target]) } }
+    }
+    # Known functions/constructors resolve through their model tables in expression().
+    # Keep every data binding (including function-valued aliases) in the branch environment.
+    var globals = map[string]Info{}
+    for name, value in m.symbols {
+        if !has(m.functions,name) && !has(m.variants,name) { globals[name] = value }
+    }
+    for name in list.snapshot(graph.order) {
+        let u = unwrap(units[name])
+        let root = unwrap(ast.get(u.tree.pool,u.tree.root))
+        for child in root.children {
+            let n = unwrap(ast.get(u.tree.pool,child))
+            if ast.kind(n.payload) != "Function" { continue }
+            let name = unwrap(m.declarations[key(name,n.id.index)])
+            let f = unwrap(m.functions[name])
+            var e = environment(u,clone(globals))
+            e.function = true
+            e.result = f.result
+            for p in f.parameters { let value = info(p.type_name,p.writable)
+                e.values[p.target] = value
+                m.symbols[p.target] = value }
+            statement(m,e,n.children[1])?
+            if f.result != "void" && !strings.ends_with(f.result,"?") && !returns(e,get(e,n.children[1])) { return err(fail(e,n,"E3006","typed function may reach end")) }
+        }
+    }
+    return ok(m)
+}

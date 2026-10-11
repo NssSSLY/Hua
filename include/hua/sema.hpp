@@ -19,10 +19,17 @@ class SemanticAnalyzer {
 public:
     SemanticModel analyze(const Node& program, std::shared_ptr<ExternalRegistry> external = {});
 private:
+    struct Info { std::string type; bool writable{}, readonly_children{}; bool operator==(const Info&) const = default; };
     struct Symbol { std::string type; bool mutable_binding{}, writable{}; std::optional<Value> constant; std::string declared;
+        bool readonly_children{};
+        std::unordered_map<std::string,Info> views;
         Symbol(std::string t={},bool mut=false,bool write=false,std::optional<Value> folded={}):type(std::move(t)),mutable_binding(mut),writable(write),constant(std::move(folded)),declared(type){}
     };
-    struct Info { std::string type; bool writable{}; };
+    bool record(std::string type) const;
+    Info copied(Info value) const;
+    std::pair<Symbol*,std::string> projection(const Node& node);
+    void remember(const Node& destination,const Node& source,Info value);
+    std::unordered_map<const Node*,Info> infos_;
     SemanticModel model_;
     std::vector<std::unordered_map<std::string, Symbol>> scopes_;
     const Node* current_function_{};

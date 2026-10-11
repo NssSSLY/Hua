@@ -30,7 +30,10 @@ void valid_utf8(const std::string& s,const SourceSpan& site) {
     }
 }
 void small_name(const std::string& s,const SourceSpan& site,bool empty=false){if((!empty&&s.empty())||s.size()>4096||s.find('\0')!=std::string::npos)bad(site,"invalid name/type length");}
-void type_string(const std::string& s,const SourceSpan& site){small_name(s,site,true);if(std::count_if(s.begin(),s.end(),[](char c){return c=='?'||c=='['||c=='<';})>192)bad(site,"type nesting limit exceeded");}
+void type_string(const std::string& s,const SourceSpan& site){small_name(s,site,true);
+    for(auto prefix:{"ref<","ptr<"})for(auto at=s.find(prefix);at!=std::string::npos;at=s.find(prefix,at+1))
+        if(at==0||s[at-1]=='<'||s[at-1]==','||s[at-1]==']')bad(site,"reference/pointer execution is not implemented");
+if(std::count_if(s.begin(),s.end(),[](char c){return c=='?'||c=='['||c=='<';})>192)bad(site,"type nesting limit exceeded");}
 std::uint32_t crc32(std::string_view s) {
     std::uint32_t c=0xffffffff;for(unsigned char b:s){c^=b;for(unsigned k=0;k<8;++k)c=(c>>1)^(0xedb88320u&static_cast<std::uint32_t>(-static_cast<std::int32_t>(c&1)));}return ~c;
 }
@@ -91,7 +94,7 @@ Code code(Reader& r,const Sources& sources,std::size_t& total) {
 }
 unsigned required_format(const Bytecode& bytecode,const SemanticModel& model){
     unsigned format=6;
-    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=7;};
+    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=std::max(format,7u);if(value.find("std.file.File")!=std::string::npos||value.find("std.file.IOFailure")!=std::string::npos)format=std::max(format,8u);};
     std::function<void(const Node&)> declaration=[&](const Node& n){if(n.kind==NodeKind::TypeName||n.kind==NodeKind::GenericType)type(type_name(n));for(const auto& c:n.children)declaration(*c);};
     for(const auto& [_,n]:model.functions)declaration(*n);
     for(const auto& [_,n]:model.structures)declaration(*n);
@@ -107,6 +110,8 @@ void verify(const Code& c,const SemanticModel& model) {
     const std::unordered_set<std::string> unary={"+","-","!","~"},binary={"+","-","*","/","//","%","**","&","|","^","<<",">>","==","!=","<",">","<=",">=","&&","||"},store={"=","+=","-=","*=","/=","//=","%=","**="};
     for(const auto& op:c.instructions) {
         if(static_cast<unsigned>(op.op)>static_cast<unsigned>(Op::Defer))bad(op.span,"unknown opcode");
+        if(op.op==Op::Fail&&op.type.empty()&&op.text!="interface prototype requires a concrete receiver")
+            bad(op.span,"unsupported executable operation: "+op.text);
         if(op.argument>4096)bad(op.span,"instruction argument limit exceeded");type_string(op.type,op.span);
         if(auto precise=std::get_if<NumericValue>(&op.constant.data)){auto spec=numeric_spec(precise->type);if(!spec||precise->type=="@integer"||precise->type=="int"||precise->type=="float")bad(op.span,"invalid numeric constant type");try{convert_numeric(op.constant,precise->type,op.span,true);}catch(const Diagnostic&){bad(op.span,"numeric constant out of range");}}
         if(op.constant.data.index()>4&&op.constant.data.index()!=15)bad(op.span,"non-scalar constant");if(auto f=std::get_if<double>(&op.constant.data);f&&!std::isfinite(*f))bad(op.span,"non-finite constant");
@@ -179,6 +184,7 @@ void verify_bytecode(const Bytecode& b,const SemanticModel& model) {
     for(const auto& [fn,c]:b.functions){if(!fn||declared_name(*fn)!=c.name||!model.functions.contains(c.name)||model.functions.at(c.name)!=fn)bad(c.instructions.empty()?SourceSpan{}:c.instructions[0].span,"function metadata mismatch");verify(c,model);total+=c.instructions.size();}
     if(total>max_instructions)bad({},"instruction count limit exceeded");
     for(const auto& [name,fn]:model.functions) {
+        if(fn->text.find(" unsafe")!=std::string::npos)bad(fn->span,"unsafe function execution is not implemented");
         if(fn->text.find(" external")!=std::string::npos){if(!model.external||!model.external->contains(name))bad(fn->span,"unregistered external function");}
         else if(!b.functions.contains(fn))bad(fn->span,"missing function code");
     }
@@ -227,7 +233,7 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     std::ifstream in(path,std::ios::binary|std::ios::ate);SourceSpan site{utf8(path),0,0,1,1};if(!in)bad(site,"cannot read file");auto size=in.tellg();if(size<32||size>static_cast<std::streamoff>(max_file))bad(site,"file size is outside 32 bytes..128 MiB");
     std::string data(static_cast<std::size_t>(size),'\0');in.seekg(0);if(!in.read(data.data(),size))bad(site,"truncated file");
     if(data.substr(0,8)!="HUAB\r\n\x1a\n")bad(site,"magic header mismatch");Reader header{std::string_view(data).substr(8,24),0,site};
-    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6&&format!=7)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
+    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6&&format!=7&&format!=8)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
     if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site,format};BytecodeImage image;
     auto source_count=r.count(128);if(!source_count)bad(site,"missing source table");std::size_t text_bytes=0;
     for(std::size_t i=0;i<source_count;++i){auto file=r.str(),text=r.str();if(file.empty()||file.size()>16384||file.find('\0')!=std::string::npos)bad(site,"invalid source id");text_bytes+=text.size();if(text_bytes>64*1024*1024)bad(site,"source table exceeds 64 MiB");auto source=std::make_unique<Source>(file,std::move(text));if(image.source(file))bad(site,"duplicate source id");image.sources.push_back(std::move(source));}
@@ -259,6 +265,6 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     }
     std::size_t instructions=0;image.bytecode.initializer=code(r,src,instructions);if(image.bytecode.initializer.name!="<initialize>")bad(site,"invalid initializer code name");
     auto chunks=r.count(16384);for(std::size_t j=0;j<chunks;++j){auto c=code(r,src,instructions);auto fn=image.model.functions.find(c.name);if(fn==image.model.functions.end()||fn->second->text.find(" external")!=std::string::npos||!image.bytecode.functions.emplace(fn->second,std::move(c)).second)bad(site,"missing/duplicate function code metadata");}
-    if(r.offset!=r.bytes.size())bad(site,"trailing payload data");if(format<7&&required_format(image.bytecode,image.model)==7)bad(site,"error/void-result capability requires HUAB7");image.model.relations=interface_relations(image.model);verify_bytecode(image.bytecode,image.model);return image;
+    if(r.offset!=r.bytes.size())bad(site,"trailing payload data");if(auto need=required_format(image.bytecode,image.model);need>=7&&format<need)bad(site,need==8?"File capability requires HUAB8":"error/void-result capability requires HUAB7");image.model.relations=interface_relations(image.model);verify_bytecode(image.bytecode,image.model);return image;
 }
 }

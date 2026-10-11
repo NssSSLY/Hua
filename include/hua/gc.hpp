@@ -5,19 +5,22 @@
 #include <cstddef>
 namespace hua {
 using HeapVisitor=std::function<void(const void*)>;
-struct Value;struct StructData;struct MapData;struct ListData;struct MultiData;struct ErrorData;
+struct Value;struct StructData;struct MapData;struct ListData;struct MultiData;struct ErrorData;struct IOFailureData;
 void heap_edges(const Value&,const HeapVisitor&);
 void heap_edges(const StructData&,const HeapVisitor&);
 void heap_edges(const MapData&,const HeapVisitor&);
 void heap_edges(const ListData&,const HeapVisitor&);
 void heap_edges(const MultiData&,const HeapVisitor&);
 void heap_edges(const ErrorData&,const HeapVisitor&);
+void heap_edges(const IOFailureData&,const HeapVisitor&);
 void heap_edges(const std::vector<Value>&,const HeapVisitor&);
 class ManagedHeap {
     struct Record {std::weak_ptr<const void> pointer;std::function<void(const void*,const HeapVisitor&)> edges;std::function<void(const void*)> clear;};
     std::vector<Record> records_;
-    std::size_t allocated_{},collected_{};
+    std::size_t allocated_{},collected_{},collection_interval_{256};
 public:
+    explicit ManagedHeap(std::size_t interval=256):collection_interval_(interval==65536?65536:interval==8192?8192:256){}
+    std::size_t collection_interval() const{return collection_interval_;}
     template<class T> void track(const std::shared_ptr<T>& object){
         Record record;record.pointer=object;
         if constexpr(requires(const T& x,const HeapVisitor& v){heap_edges(x,v);})
@@ -39,7 +42,7 @@ ManagedHeap& managed_heap();
 struct HeapScope {ManagedHeap* previous;explicit HeapScope(ManagedHeap&);~HeapScope();};
 template<class T,class... Args> std::shared_ptr<T> managed(Args&&... args){
     auto& heap=managed_heap();
-    if(heap.allocated()%256==255)heap.collect();
+    if(heap.allocated()%heap.collection_interval()==heap.collection_interval()-1)heap.collect();
     auto object=std::make_shared<T>(std::forward<Args>(args)...);heap.track(object);return object;
 }
 }

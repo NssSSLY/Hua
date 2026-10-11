@@ -1,0 +1,27 @@
+import std.file as f
+import std.bytes as b
+import std.error as e
+import std.task as t
+
+# Task 内的文件读写交给阻塞适配域，等待期间让出计算 worker。
+# File 在创建它的 Task 内使用；只把普通结果返回给调用者。
+async fn write_and_read(path string) Result<int,e.Value> {
+    let h=f.open(path,"w+")?
+    defer f.close(h)
+    let wrote=f.write(h,b.from_text("Hua async"))
+    if is_err(wrote) {return err(f.error(unwrap_err(wrote)))}
+    f.flush(h)?
+    f.seek(h,0,"start")?
+    t.yield()
+    let got=f.read(h,32)
+    if is_err(got) {return err(f.error(unwrap_err(got)))}
+    let data=unwrap(got)
+    if data!=nil {print(unwrap(b.to_text(data)))}
+    f.close(h)?
+    return ok(unwrap(wrote))
+}
+fn main() {
+    let first=write_and_read("hua-async-one.bin")
+    let second=write_and_read("hua-async-two.bin")
+    print(await second,await first)
+}

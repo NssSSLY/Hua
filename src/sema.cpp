@@ -14,6 +14,16 @@ std::string result_type(const Node& fn) {
 std::vector<const Node*> parameters(const Node& fn) {
     std::vector<const Node*> out; for(const auto& c:fn.children) if(c->kind==N::Parameter)out.push_back(c.get());return out;
 }
+bool file_type(const std::string& type,const SemanticModel& model,std::set<std::string> seen={}){
+    if(type=="std.file.File")return true;
+    if(!seen.insert(type).second)return false;
+    if(type.ends_with('?'))return file_type(type.substr(0,type.size()-1),model,seen);
+    if(type.starts_with('['))return file_type(type.substr(type.find(']')+1),model,seen);
+    for(auto c:{"map","List","Result","multi","Task"})for(const auto& t:type_arguments(type,c))if(file_type(t,model,seen))return true;
+    if(auto found=model.structures.find(type);found!=model.structures.end())
+        for(const auto& field:found->second->children)if(field->kind==N::Field&&!field->children.empty()&&file_type(type_name(*field->children[0]),model,seen))return true;
+    return false;
+}
 bool mutable_parameter(const Node& p) { return p.text.find(" mut")!=std::string::npos || (!p.children.empty() && p.children[0]->kind==N::MutableType); }
 bool definitely_returns(const Node& n) {
     if(n.kind==N::Return)return true;
@@ -54,7 +64,7 @@ void SemanticAnalyzer::define(const std::string& name,Symbol symbol,const Source
     if(!scopes_.back().emplace(name,std::move(symbol)).second)throw Diagnostic("E3002",span,"duplicate declaration `"+name+"` in this scope");
 }
 void SemanticAnalyzer::validate_type(const Node& n) {
-    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","Json","Bytes","Buffer","Task"};
+    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","std.file.File","std.file.IOFailure","Json","Bytes","Buffer","Task"};
     if(n.kind==N::TypeName&&n.text.empty())return;
     if(n.kind==N::TypeName && !types.contains(n.text) && !model_.structures.contains(n.text)) {
         if(n.text.find('.')==std::string::npos)error(n,"unknown type `"+n.text+"`","E3004");
@@ -144,7 +154,16 @@ void SemanticAnalyzer::infer_return_capabilities(){
     }}
 }
 SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<ExternalRegistry> external) {
-    model_={};model_.external=std::move(external);scopes_.clear();scopes_.emplace_back();current_function_=nullptr;
+    // Parsing reserved reference/unsafe syntax is useful, but no executor can
+    // implement it yet. Scan even unreachable code before any execution/build.
+    std::function<void(const Node&)> executable=[&](const Node& n) {
+        if(n.kind==N::Unsafe || (n.kind==N::Function&&n.text.find(" unsafe")!=std::string::npos))
+            error(n,"unsafe execution/FFI is not implemented","E3008");
+        if((n.kind==N::GenericType&&(n.text=="ref"||n.text=="ptr")) || (n.kind==N::Unary&&n.text=="&"))
+            error(n,"safe reference/raw pointer execution is not implemented","E3008");
+        for(const auto& c:n.children)executable(*c);
+    };executable(program);
+    infos_.clear();model_={};model_.external=std::move(external);scopes_.clear();scopes_.emplace_back();current_function_=nullptr;
     for(const auto& name:builtin_names()){define(name,{"builtin:"+name,false,false,{}},program.span);define("$core$"+name,{"builtin:"+name,false,false,{}},program.span);}
     scopes_.emplace_back();
     for(const auto& n:program.children) {
@@ -206,6 +225,41 @@ Value SemanticAnalyzer::constant(const Node& n) {
     default:error(n,"const initializer is not a supported compile-time expression","E3007");
     }
 }
+
+bool SemanticAnalyzer::record(std::string type) const {
+    type=unref(type);if(type.ends_with('?'))type.pop_back();
+    return model_.structures.contains(type);
+}
+SemanticAnalyzer::Info SemanticAnalyzer::copied(Info value) const {
+    // Struct assignment copies the outer record; inherited shared children retain their capability.
+    if(record(value.type)) {
+        value.readonly_children=value.readonly_children||!value.writable;
+        value.writable=true;
+    }
+    return value;
+}
+std::pair<SemanticAnalyzer::Symbol*,std::string> SemanticAnalyzer::projection(const Node& n) {
+    if(n.kind==N::Name)return {&lookup(n.text,n.span),""};
+    if(n.kind==N::Member){auto [root,path]=projection(*n.children[0]);return {root,path+"."+n.text};}
+    return {nullptr,""};
+}
+void SemanticAnalyzer::remember(const Node& destination,const Node& source,Info value) {
+    auto [root,path]=projection(destination);if(!root)return;
+    if(!path.empty()&&!value.type.starts_with('[')&&!value.type.starts_with("map<")&&!value.type.starts_with("Result<")&&!value.type.starts_with("List<")&&value.type!="Buffer"&&!record(value.type))return;
+    auto [origin,prefix]=projection(source);
+    std::unordered_map<std::string,Info> inherited;
+    if(origin)for(const auto& [field,view]:origin->views)
+        if(field.starts_with(prefix+"."))
+            inherited.emplace(path+field.substr(prefix.size()),Info{view.type,view.writable&&origin->writable,view.readonly_children||!origin->writable});
+    value=copied(value);
+    if(path.empty()){root->readonly_children=value.readonly_children;root->views=std::move(inherited);}
+    else {
+        for(auto it=root->views.begin();it!=root->views.end();)if(it->first==path||it->first.starts_with(path+"."))it=root->views.erase(it);else ++it;
+        root->views[path]=value;
+        root->views.insert(inherited.begin(),inherited.end());
+    }
+}
+
 void SemanticAnalyzer::statement(const Node& n) {
     switch(n.kind) {
     case N::Block:statements(n);break;
@@ -216,7 +270,7 @@ void SemanticAnalyzer::statement(const Node& n) {
         if(n.kind==N::Const){folded=enforce_type(constant(*n.children.back()),declared,n.span,numeric_literal(*n.children.back()));model_.constants[&n]=*folded;}
         bool writable=n.kind==N::Var;
         if(declared.starts_with('[')||declared.starts_with("map<")||declared.starts_with("Result<")||declared.starts_with("List<")||declared=="Buffer")writable=writable && info.writable;
-        define(n.text,{declared,n.kind==N::Var,writable,folded},n.span);model_.types[&n]=declared;break;
+        define(n.text,{declared,n.kind==N::Var,writable,folded},n.span);Node destination(N::Name,n.span,n.text);remember(destination,*n.children.back(),info);model_.types[&n]=declared;break;
     }
     case N::MultiBinding:case N::MultiAssignment: {
         const auto& list=*n.children[0];std::vector<Info> targets;
@@ -227,15 +281,16 @@ void SemanticAnalyzer::statement(const Node& n) {
         for(std::size_t i=0;i<list.children.size();++i) {
             const auto& p=*list.children[i];if(p.kind==N::Name&&p.text=="_")continue;if(n.kind==N::MultiBinding&&p.text=="_")continue;
             const Node& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];
-            Info item={types[i],model_.writable.at(&source)};
+            Info item={types[i],model_.writable.at(&source),infos_.at(&source).readonly_children};
             if(n.kind==N::MultiBinding){if(!names.insert(p.text).second)error(p,"duplicate declaration `"+p.text+"`","E3002");auto declared=p.children.empty()?types[i]:type_name(*p.children[0]);if(!p.children.empty()){validate_type(*p.children[0]);require(declared,item,source);}model_.types[&p]=declared;}
             else {require(targets[i].type,item,source);if(p.kind==N::Name){auto& symbol=lookup(p.text,p.span);symbol.type=symbol.declared.ends_with('?')?(item.type=="nil"?"nil":item.type.ends_with('?')?symbol.declared:symbol.declared.substr(0,symbol.declared.size()-1)):symbol.declared;}}
         }
         if(n.kind==N::MultiBinding)for(std::size_t i=0;i<list.children.size();++i){const auto& p=*list.children[i];if(p.text=="_")continue;auto t=model_.types.at(&p);bool writable=n.text=="var";
             if(t.starts_with('[')||t.starts_with("map<")||t.starts_with("Result<")||t.starts_with("List<")||t=="Buffer"){const Node& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];writable=writable&&model_.writable.at(&source);}
-            define(p.text,{t,n.text=="var",writable,{}},p.span);}
+            define(p.text,{t,n.text=="var",writable,{}},p.span);const auto& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];Node destination(N::Name,p.span,p.text);remember(destination,source,Info{t,model_.writable.at(&source),infos_.at(&source).readonly_children});}
 
         if(n.kind==N::MultiAssignment)for(std::size_t i=0;i<list.children.size();++i){const auto& p=*list.children[i];const auto& t=targets[i].type;if(p.kind==N::Name&&p.text!="_"&&(t.starts_with('[')||t.starts_with("map<")||t.starts_with("Result<")||t.starts_with("List<")||t=="Buffer")){const Node& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];lookup(p.text,p.span).writable=model_.writable.at(&source);}}
+        if(n.kind==N::MultiAssignment)for(std::size_t i=0;i<list.children.size();++i){const auto& p=*list.children[i];if(p.text=="_")continue;const auto& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];remember(p,source,Info{targets[i].type,model_.writable.at(&source),infos_.at(&source).readonly_children});}
         break;
     }
     case N::Defer:case N::ExpressionStatement:expression(*n.children[0]);break;
@@ -254,7 +309,7 @@ void SemanticAnalyzer::statement(const Node& n) {
         if(!wildcard&&!(enumeration&&seen.size()==cases.size())&&!(info.type=="bool"&&seen.size()==2))error(n,"non-exhaustive match requires missing variants or _","E3011");if(match_exits.empty())scopes_=match_before;else{scopes_=match_exits.front();for(std::size_t i=1;i<match_exits.size();++i)join_flow(match_exits[i]);}model_.types[&n]=info.type;break;
     }
     case N::If:{require("bool",expression(*n.children[0]),*n.children[0]);auto before=scopes_;narrow(*n.children[0],true);statement(*n.children[1]);auto yes=scopes_;scopes_=before;narrow(*n.children[0],false);if(n.children.size()==3)statement(*n.children[2]);bool yes_stops=flow_stops(*n.children[1]),no_stops=n.children.size()==3&&flow_stops(*n.children[2]);if(no_stops&&!yes_stops)scopes_=std::move(yes);else if(!yes_stops&&!no_stops)join_flow(yes);break;}
-    case N::While:{invalidate_loop(*n.children[1]);require("bool",expression(*n.children[0]),*n.children[0]);auto before=scopes_;std::size_t flow_budget=1;for(const auto& scope:scopes_)flow_budget+=scope.size();for(std::size_t pass=0;pass<flow_budget;++pass){scopes_=before;narrow(*n.children[0],true);statement(*n.children[1]);auto after=scopes_;scopes_=before;join_flow(after);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=before[i].at(name).type||symbol.writable!=before[i].at(name).writable;before=scopes_;if(!changed)break;}invalidate_loop(*n.children[1]);bool has_break=false;std::function<void(const Node&)> find=[&](const Node& node){if(node.kind==N::Break)has_break=true;if(node.kind==N::Function||node.kind==N::While||node.kind==N::For)return;for(const auto& c:node.children)find(*c);};find(*n.children[1]);if(!has_break)narrow(*n.children[0],false);break;}
+    case N::While:{invalidate_loop(*n.children[1]);require("bool",expression(*n.children[0]),*n.children[0]);auto before=scopes_;std::size_t flow_budget=1;for(const auto& scope:scopes_)flow_budget+=scope.size();for(std::size_t pass=0;pass<flow_budget;++pass){scopes_=before;narrow(*n.children[0],true);statement(*n.children[1]);auto after=scopes_;scopes_=before;join_flow(after);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=before[i].at(name).type||symbol.writable!=before[i].at(name).writable||symbol.readonly_children!=before[i].at(name).readonly_children||symbol.views!=before[i].at(name).views;before=scopes_;if(!changed)break;}invalidate_loop(*n.children[1]);bool has_break=false;std::function<void(const Node&)> find=[&](const Node& node){if(node.kind==N::Break)has_break=true;if(node.kind==N::Function||node.kind==N::While||node.kind==N::For)return;for(const auto& c:node.children)find(*c);};find(*n.children[1]);if(!has_break)narrow(*n.children[0],false);break;}
     case N::For: {
         invalidate_loop(*n.children.back());auto loop_before=scopes_;
         auto count=n.children.size()-2;const auto& iterable=*n.children[count];std::string item,key="int";
@@ -262,7 +317,7 @@ void SemanticAnalyzer::statement(const Node& n) {
         else {auto info=expression(iterable);auto map=type_arguments(info.type,"map");if(map.size()==2){key=map[0];item=count==1?key:map[1];}else {item=element_type(info.type);if(!info.type.empty() && !info.type.starts_with('['))error(iterable,"for requires a range, slice or map","E3004");}}
         scopes_.emplace_back();
         for(std::size_t i=0;i<count;++i)define(n.children[i]->text,{count==2 && i==0 ? key:item,false,false,{}},n.children[i]->span);
-        statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_before);auto loop_entry=scopes_;std::size_t budget=1;for(const auto& scope:scopes_)budget+=scope.size();for(std::size_t pass=0;pass<budget;++pass){scopes_=loop_entry;scopes_.emplace_back();for(std::size_t i=0;i<count;++i)define(n.children[i]->text,{count==2&&i==0?key:item,false,false,{}},n.children[i]->span);statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_entry);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=loop_entry[i].at(name).type||symbol.writable!=loop_entry[i].at(name).writable;loop_entry=scopes_;if(!changed)break;}invalidate_loop(*n.children.back());break;
+        statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_before);auto loop_entry=scopes_;std::size_t budget=1;for(const auto& scope:scopes_)budget+=scope.size();for(std::size_t pass=0;pass<budget;++pass){scopes_=loop_entry;scopes_.emplace_back();for(std::size_t i=0;i<count;++i)define(n.children[i]->text,{count==2&&i==0?key:item,false,false,{}},n.children[i]->span);statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_entry);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=loop_entry[i].at(name).type||symbol.writable!=loop_entry[i].at(name).writable||symbol.readonly_children!=loop_entry[i].at(name).readonly_children||symbol.views!=loop_entry[i].at(name).views;loop_entry=scopes_;if(!changed)break;}invalidate_loop(*n.children.back());break;
     }
     case N::Return: {
         const Node* returns=nullptr;for(const auto& c:current_function_->children)if(c->kind==N::ReturnTypes)returns=c.get();
@@ -295,6 +350,7 @@ void SemanticAnalyzer::statement(const Node& n) {
 SemanticAnalyzer::Info SemanticAnalyzer::target(const Node& n) {
     if(n.kind==N::Name) {auto& s=lookup(n.text,n.span);if(!s.mutable_binding)error(n,"cannot assign to immutable binding `"+n.text+"`","E3003");return {s.declared,true};}
     auto info=expression(n);
+    if(n.kind==N::Member)info.writable=model_.writable.at(n.children[0].get());
     if(!info.writable)error(n,"cannot mutate a read-only value/view","E3003");
     if(n.kind==N::Index){auto t=type_arguments(model_.types.at(n.children[0].get()),"map");if(t.size()==2)info.type=t[1];}
     return info;
@@ -304,7 +360,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     switch(n.kind) {
     case N::Integer:out={"int",false};break;case N::Float:out={"float",false};break;
     case N::String:out={"string",false};break;case N::Boolean:out={"bool",false};break;case N::Nil:out={"nil",false};break;
-    case N::Name:{auto& s=lookup(n.text,n.span);out={s.type,s.writable};break;}
+    case N::Name:{auto& s=lookup(n.text,n.span);out={s.type,s.writable,s.readonly_children};break;}
     case N::Pack: {
         std::string type="multi<";bool writable=true;for(std::size_t i=0;i<n.children.size();++i){auto x=expression(*n.children[i]);if(x.type=="void")error(n,"void cannot be packed as a value","E3004");if(!type_arguments(x.type,"multi").empty())error(n,"nested multiple values are not supported","E3006");if(i)type+=',';type+=x.type;if(x.type.starts_with('[')||x.type.starts_with("map<")||x.type.starts_with("Result<")||x.type.starts_with("List<")||x.type=="Buffer")writable=writable&&x.writable;}out={type+">",writable};break;
     }
@@ -316,7 +372,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         auto value=expression(*n.children[0]);auto ts=type_arguments(value.type,"Result"),returns=current_function_?type_arguments(result_type(*current_function_),"Result"):std::vector<std::string>{};
         if(ts.size()!=2||returns.size()!=2)error(n,"Result propagation requires a Result value and Result-returning function","E3006");
         if(ts[0].empty())error(n,"Result success type is unknown; add a type annotation","E3004");
-        require(returns[1],{ts[1],false},n);out={ts[0],value.writable};break;
+        require(returns[1],{ts[1],false},n);out={ts[0],value.writable,value.readonly_children};break;
     }
     case N::Array: {
         std::string element;
@@ -364,19 +420,21 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
             if(n.text=="/=" && numeric_spec(lhs.type)&&numeric_spec(lhs.type)->category!='f')error(n,"/= produces float; use a float binding or explicit conversion","E3004");
             if(n.children[0]->kind==N::Name){auto& symbol=lookup(n.children[0]->text,n.span);symbol.type=symbol.declared.ends_with('?')?(rhs.type=="nil"?"nil":rhs.type.ends_with('?')?symbol.declared:symbol.declared.substr(0,symbol.declared.size()-1)):symbol.declared;}
             if(n.children[0]->kind==N::Name && (lhs.type.starts_with('[')||lhs.type.starts_with("map<")||lhs.type.starts_with("Result<")||lhs.type.starts_with("List<")||lhs.type=="Buffer"))lookup(n.children[0]->text,n.span).writable=rhs.writable;
+            if(n.text=="=")remember(*n.children[0],*n.children[1],rhs);
         } else if(!numeric_spec(lhs.type)||numeric_spec(lhs.type)->category=='f')require("int",lhs,n);
         out={lhs.type,false};break;
     }
     case N::Index:case N::Slice: {
         auto base=expression(*n.children[0]);auto element=element_type(base.type);auto map=type_arguments(base.type,"map");
-        if(n.kind==N::Index&&map.size()==2){require(map[0],expression(*n.children[1]),*n.children[1]);out={map[1].ends_with('?')?map[1]:map[1]+"?",base.writable};break;}
+        if(n.kind==N::Index&&map.size()==2){require(map[0],expression(*n.children[1]),*n.children[1]);out={map[1].ends_with('?')?map[1]:map[1]+"?",base.writable&&!base.readonly_children,base.readonly_children};break;}
         if(n.kind==N::Index&&base.type.empty()){expression(*n.children[1]);out={"",base.writable};break;}
         if(!base.type.empty() && !base.type.starts_with('['))error(n,"index/slice requires a slice or array","E3004");
         for(std::size_t i=1;i<n.children.size();++i)if(n.children[i]->kind!=N::Omitted)require("int",expression(*n.children[i]),*n.children[i]);
-        out={n.kind==N::Slice ? "[]"+element:element,base.writable};break;
+        out={n.kind==N::Slice ? "[]"+element:element,base.writable&&!base.readonly_children,base.readonly_children};break;
     }
     case N::StructLiteral: {
         if(n.text=="std.error.Value")error(n,"standard Error must be constructed through std.error","E3004");
+        if(n.text=="std.file.File"||n.text=="std.file.IOFailure")error(n,"opaque File/IOFailure must be constructed through std.file","E3004");
         auto found=model_.structures.find(n.text);if(found==model_.structures.end())error(n,"unknown struct `"+n.text+"`","E3004");
         if(found->second->text.find(" interface")!=std::string::npos)error(n,"interface cannot be constructed directly","E3004");
         std::unordered_set<std::string> seen;
@@ -395,7 +453,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         auto structure=model_.structures.find(type);
         if(structure==model_.structures.end())error(n,"member access requires a struct","E3004");
         bool found=false;
-        for(const auto& field:structure->second->children)if(field->text==n.text){out={type_name(*field->children[0]),base.writable};found=true;break;}
+        for(const auto& field:structure->second->children)if(field->text==n.text){out={type_name(*field->children[0]),base.writable&&!base.readonly_children,base.readonly_children||!base.writable};auto [root,path]=projection(n);if(root&&base.writable)if(auto it=root->views.find(path);it!=root->views.end())out=it->second;found=true;break;}
         if(!found){auto method=type+"."+n.text;if(!model_.functions.contains(method))error(n,"unknown field/method `"+n.text+"`","E3004");
             auto definition=model_.functions.at(method);
             if(definition->span.file_id!=n.span.file_id && definition->text.find(" pub")==std::string::npos)
@@ -422,7 +480,8 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                 auto fn=model_.functions.at(args[0].type.substr(3));auto ps=parameters(*fn);if(ps.size()+1!=args.size())error(n,"spawn argument count mismatch","E3005");
                 if(fn->text.find(" external")!=std::string::npos||fn->text.find(" unsafe")!=std::string::npos)error(n,"Native/WASM functions cannot be spawned","E3008");
                 for(std::size_t i=0;i<ps.size();++i){if(mutable_parameter(*ps[i]))error(n,"spawn cannot pass mutable borrows","E3003");if(!ps[i]->children.empty())require(type_name(*ps[i]->children[0]),args[i+1],*n.children[i+2]);}
-                auto r=result_type(*fn);if(r.empty()){bool value_return=false;std::function<void(const Node&)> scan=[&](const Node& c){if(c.kind==N::Function)return;if(c.kind==N::Return&&!c.children.empty())value_return=true;for(const auto& item:c.children)scan(*item);};scan(*fn->children.back());if(value_return)error(n,"spawned value functions require an explicit return type","E3004");}out={r.starts_with("Task<")&&!declared_name(*fn).starts_with("$async$")?r:"Task<"+(r.empty()?"void":r)+">",false};break;
+                for(std::size_t i=1;i<args.size();++i)if(file_type(args[i].type,model_))error(n,"spawn arguments cannot contain File","E3008");
+                auto r=result_type(*fn);if(file_type(r,model_))error(n,"spawn results cannot contain File","E3008");if(r.empty()){bool value_return=false;std::function<void(const Node&)> scan=[&](const Node& c){if(c.kind==N::Function)return;if(c.kind==N::Return&&!c.children.empty())value_return=true;for(const auto& item:c.children)scan(*item);};scan(*fn->children.back());if(value_return)error(n,"spawned value functions require an explicit return type","E3004");}out={r.starts_with("Task<")&&!declared_name(*fn).starts_with("$async$")?r:"Task<"+(r.empty()?"void":r)+">",false};break;
             }
             if(name=="task_await"){if(args.size()!=1)error(n,"await requires one task","E3005");auto types=type_arguments(args[0].type,"Task");if(types.size()!=1)error(n,"await requires Task<T>","E3004");out={types[0],true};break;}
             if(name=="task_group_begin"){if(!args.empty())error(n,"invalid taskgroup start","E3005");out={"int",false};break;}
@@ -465,10 +524,10 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
             if(name!="print" && !(name=="ok"&&args.empty()) && args.size()!=arity)error(n,"builtin argument count mismatch","E3005");
             if(numeric_spec(name)&&name!="int"&&name!="float"){if(!args[0].type.empty()&&!numeric_spec(args[0].type)&&args[0].type!="string")error(n,"numeric conversion requires a number or string","E3004");out={name,false};break;}
             if(name=="ok"&&args.empty()){out={"Result<void,>",false};break;}
-            if(name=="ok"||name=="err"){out={name=="ok"?"Result<"+args[0].type+",>":"Result<,"+args[0].type+">",args[0].writable};if(args[0].type!="void"&&args[0].type!="nil"&&!args[0].type.starts_with('[')&&!args[0].type.starts_with("map<")&&!args[0].type.starts_with("List<")&&args[0].type!="Buffer")out.writable=true;if(args[0].type=="void")error(n,"Result payload cannot be void","E3004");break;}
+            if(name=="ok"||name=="err"){out={name=="ok"?"Result<"+args[0].type+",>":"Result<,"+args[0].type+">",args[0].writable};if(args[0].type!="void"&&args[0].type!="nil"&&!args[0].type.starts_with('[')&&!args[0].type.starts_with("map<")&&!args[0].type.starts_with("List<")&&args[0].type!="Buffer"&&!args[0].type.starts_with("Result<")&&!record(args[0].type))out.writable=true;out.readonly_children=args[0].readonly_children;if(args[0].type=="void")error(n,"Result payload cannot be void","E3004");break;}
             if(name=="is_some"||name=="is_none"){out={"bool",false};break;}
-            if(name=="is_ok"||name=="is_err"||name=="unwrap_err"){auto ts=type_arguments(args[0].type,"Result");if(!args[0].type.empty()&&ts.size()!=2)error(n,"expected Result","E3004");out={name=="unwrap_err"?(ts.empty()?"":ts[1]):"bool",args[0].writable};break;}
-            if(name=="unwrap"||name=="unwrap_or"){auto ts=type_arguments(args[0].type,"Result");std::string type=ts.size()==2?ts[0]:args[0].type;if(ts.empty()&&type.ends_with('?'))type.pop_back();if(type=="nil")type="";if(name=="unwrap_or"){if(type=="void")error(n,"Result<void> has no fallback value","E3004");require(type,args[1],*n.children[2]);if(type.empty())type=args[1].type;}out={type,args[0].writable&&(name=="unwrap"||args[1].writable)};break;}
+            if(name=="is_ok"||name=="is_err"||name=="unwrap_err"){auto ts=type_arguments(args[0].type,"Result");if(!args[0].type.empty()&&ts.size()!=2)error(n,"expected Result","E3004");out={name=="unwrap_err"?(ts.empty()?"":ts[1]):"bool",args[0].writable,args[0].readonly_children};break;}
+            if(name=="unwrap"||name=="unwrap_or"){auto ts=type_arguments(args[0].type,"Result");std::string type=ts.size()==2?ts[0]:args[0].type;if(ts.empty()&&type.ends_with('?'))type.pop_back();if(type=="nil")type="";if(name=="unwrap_or"){if(type=="void")error(n,"Result<void> has no fallback value","E3004");require(type,args[1],*n.children[2]);if(type.empty())type=args[1].type;}out={type,args[0].writable&&(name=="unwrap"||args[1].writable),args[0].readonly_children||(name=="unwrap_or"&&args[1].readonly_children)};break;}
             if(name=="has"||name=="delete"){auto ts=type_arguments(args[0].type,"map");if(!args[0].type.empty()&&ts.size()!=2)error(n,"expected map","E3004");if(!ts.empty())require(ts[0],args[1],*n.children[2]);if(name=="delete"&&!args[0].writable)error(n,"cannot mutate a read-only map","E3003");out={"bool",false};break;}
             if(!args.empty() && !args[0].type.empty()) {
                 const auto& t=args[0].type;
@@ -480,16 +539,35 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
             if(name=="print")out={"void",false};else if(name=="str" || name=="type")out={"string",false};
             else if(name=="sizeof"||name=="alignof"){if(!numeric_spec(args[0].type)&&args[0].type!="bool"&&(!args[0].type.starts_with('[')||args[0].type.starts_with("[]")))error(n,"layout query requires scalar or fixed array","E3004");out={"int",false};}
             else if(name=="int" || name=="len")out={"int",false};else if(name=="float" || name=="sqrt")out={"float",false};
-            else if(name=="clone")out={args[0].type,true};else out={args[0].type,false};
+            else if(name=="clone"){if(file_type(args[0].type,model_))error(n,"File cannot be cloned, including inside containers","E3008");out={args[0].type,true};}else out={args[0].type,false};
             if(name=="min" || name=="max" || name=="clamp")for(std::size_t i=1;i<args.size();++i)require(args[0].type,args[i],*n.children[i+1]);
         } else if(!callee.type.empty())error(n,"value is not callable","E3004");
         break;
     }
     default:error(n,"expression is not supported by semantic analysis","E3008");
     }
-    model_.types[&n]=out.type;model_.writable[&n]=out.writable;return out;
+    infos_[&n]=out;model_.types[&n]=out.type;model_.writable[&n]=out.writable;return out;
 }
-void SemanticAnalyzer::join_flow(const std::vector<std::unordered_map<std::string,Symbol>>& other){for(std::size_t i=0;i<scopes_.size()&&i<other.size();++i)for(auto& [name,symbol]:scopes_[i])if(auto found=other[i].find(name);found!=other[i].end()){if(symbol.type!=found->second.type)symbol.type=symbol.declared;symbol.writable=symbol.writable&&found->second.writable;}}
+void SemanticAnalyzer::join_flow(const std::vector<std::unordered_map<std::string,Symbol>>& other) {
+    for(std::size_t i=0;i<scopes_.size()&&i<other.size();++i)for(auto& [name,symbol]:scopes_[i]) {
+        auto found=other[i].find(name);if(found==other[i].end())continue;
+        if(symbol.type!=found->second.type)symbol.type=symbol.declared;
+        symbol.writable=symbol.writable&&found->second.writable;
+        symbol.readonly_children=symbol.readonly_children||found->second.readonly_children;
+        auto previous=symbol.views;
+        for(const auto& [path,view]:found->second.views) {
+            auto& merged=symbol.views[path];
+            if(!previous.contains(path))merged={view.type,symbol.writable&&!symbol.readonly_children,symbol.readonly_children};
+            merged.writable=merged.writable&&view.writable;
+            merged.readonly_children=merged.readonly_children||view.readonly_children;
+        }
+        for(const auto& [path,view]:previous)if(!found->second.views.contains(path)) {
+            auto& merged=symbol.views[path];
+            merged.writable=merged.writable&&found->second.writable&&!found->second.readonly_children;
+            merged.readonly_children=merged.readonly_children||found->second.readonly_children;
+        }
+    }
+}
 void SemanticAnalyzer::invalidate_loop(const Node& body){std::set<std::string> writes;std::function<void(const Node&)> visit=[&](const Node& n){if(n.kind==N::Function)return;if((n.kind==N::Assignment||n.kind==N::Update)&&n.children[0]->kind==N::Name)writes.insert(n.children[0]->text);if(n.kind==N::MultiAssignment)for(const auto& c:n.children[0]->children)if(c->kind==N::Name)writes.insert(c->text);for(const auto& c:n.children)visit(*c);};visit(body);for(const auto& name:writes)for(auto i=scopes_.rbegin();i!=scopes_.rend();++i)if(auto found=i->find(name);found!=i->end()){found->second.type=found->second.declared;break;}}
 std::vector<std::pair<SemanticAnalyzer::Symbol*,std::string>> SemanticAnalyzer::narrow(const Node& n,bool truth) {
     std::vector<std::pair<Symbol*,std::string>> previous;

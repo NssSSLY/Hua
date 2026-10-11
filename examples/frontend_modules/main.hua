@@ -1,0 +1,6 @@
+import model as m
+fn main() {
+    let items = [m.Token{text:"alpha",position:0},m.Token{text:"beta",position:6}]
+    let settings = map[string]int{"expected":2}
+    print(len(m.labels(items)),settings["expected"])
+}

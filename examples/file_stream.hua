@@ -1,0 +1,20 @@
+import std.file as f
+import std.bytes as b
+import std.error as e
+
+# 在当前工作目录创建/覆盖 hua-file-demo.bin。
+fn demo() Result<int,e.Value> {
+    let h=f.open("hua-file-demo.bin","w+")?
+    defer f.close(h)
+    let wrote=f.write(h,b.from_text("Hua"))
+    if is_err(wrote) {return err(f.error(unwrap_err(wrote)))}
+    f.flush(h)?
+    f.seek(h,0,"start")?
+    let read=f.read(h,16)
+    if is_err(read) {return err(f.error(unwrap_err(read)))}
+    let data=unwrap(read)
+    if data!=nil {print(unwrap(b.to_ints(data)))}
+    f.close(h)?
+    return ok(unwrap(wrote))
+}
+fn main() {print(demo())}

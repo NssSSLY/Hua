@@ -1,4 +1,5 @@
 #include "hua/stdlib.hpp"
+#include "hua/file.hpp"
 #include "hua/tasks.hpp"
 #include "hua/simd.hpp"
 #include "hua/json.hpp"
@@ -17,6 +18,18 @@ void bounded(const std::string& text,const SourceSpan& s){if(text.size()>max_tex
 }
 const std::vector<StandardFunction>& standard_functions() {
     static const std::vector<StandardFunction> functions={
+        {"file","open",{"string","string"},"Result<std.file.File,std.error.Value>",false,false,8},
+        {"file","read",{"std.file.File","int"},"Result<Bytes?,std.file.IOFailure>",false,false,8},
+        {"file","write",{"std.file.File","Bytes"},"Result<int,std.file.IOFailure>",false,false,8},
+        {"file","seek",{"std.file.File","int","string"},"Result<int,std.error.Value>",false,false,8},
+        {"file","tell",{"std.file.File"},"Result<int,std.error.Value>",false,false,8},
+        {"file","flush",{"std.file.File"},"Result<void,std.error.Value>",false,false,8},
+        {"file","close",{"std.file.File"},"Result<void,std.error.Value>",false,false,8},
+        {"file","state",{"std.file.File"},"Result<string,std.error.Value>",false,false,8},
+        {"file","close_error",{"std.file.File"},"Result<std.error.Value?,std.error.Value>",false,false,8},
+        {"file","error",{"std.file.IOFailure"},"std.error.Value",false,false,8},
+        {"file","transferred",{"std.file.IOFailure"},"int?",false,false,8},
+        {"file","partial",{"std.file.IOFailure"},"Bytes?",false,false,8},
         {"error","make",{"string","string","string"},"Result<std.error.Value,string>",false,false,7},
         {"error","wrap",{"string","string","string","std.error.Value"},"Result<std.error.Value,string>",false,false,7},
         {"error","from_string",{"string","string"},"std.error.Value",false,false,7},
@@ -182,12 +195,13 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
         runtime_error(s,"algorithm target requires identical element type","E4003");
     std::vector<Value> args;for(std::size_t i=0;i<input.size();++i){if(signature.parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(signature.parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],signature.parameters[i],s));}
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data))writable=p->writable;if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
+    if(f.module=="file")return invoke_file_standard(f,args,s,context);
     if(f.module=="error")return invoke_error_standard(f,args,s);
     if(f.module=="path"||(f.module=="fs"&&(f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
     if(f.module=="alg")return invoke_algorithm_standard(f,args,s,context);
     if(f.module=="time"||(f.module=="os"&&f.name=="getenv"))return invoke_system_standard(f,args,s,context);
     if(f.module=="simd")return simd_standard(f.name,args,s,context);
-    if(f.module=="gc"){auto& heap=managed_heap();return Value(static_cast<I>(f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected()));}
+    if(f.module=="gc"){auto& heap=managed_heap();auto n=f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected();if(f.name=="collect"&&(!context||!context->resumable||!context->in_task))file_checkpoint(context);return Value(static_cast<I>(n));}
     if(f.module=="task")return task_standard(f.name,args,s,context);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
     if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);

@@ -1,0 +1,571 @@
+{
+  "version": "A01-1",
+  "source_subset": "SB1",
+  "scope": "发行能力的代表性正反例；不以抽样验证宣称所有组合已证明",
+  "features": [
+    {
+      "id": "F01",
+      "title": "词法、字符串与注释",
+      "phase": "execute",
+      "source": "# 行注释\n#* 外层 #* 内层 *# *#\nprint(\"中文\",true,nil,0x10)\n",
+      "output": "中文 true nil 16\n",
+      "sb1": true,
+      "limitation": "ASCII标识符；UTF-8文本；#与可嵌套#* *#；//始终整除"
+    },
+    {
+      "id": "F02",
+      "title": "数值运算与显式转换",
+      "phase": "execute",
+      "source": "print(5/2, -5//2, -5%2, 2**3, int(\"9\"), float(3))\n",
+      "output": "2.5 -3 1 8 9 3\n",
+      "sb1": true,
+      "limitation": "严格类型；运行时溢出/零除检查；真除法返回float"
+    },
+    {
+      "id": "F03",
+      "title": "精确尺寸类型",
+      "phase": "execute",
+      "source": "let x i8=127\nlet y u64=u64(\"18446744073709551615\")\nlet z f32=1.5\nprint(x,y,z,type(z))\n",
+      "output": "127 18446744073709551615 1.5 f32\n",
+      "sb1": true,
+      "limitation": "固定宽度转换和算术需边界检查；usize/isize按E0固定unsigned64/signed64，不随指针宽度变化"
+    },
+    {
+      "id": "F04",
+      "title": "函数、递归、分支、局部绑定",
+      "phase": "execute",
+      "source": "fn sum(n int) int {if n==0{return 0}\nreturn n+sum(n-1)}\nfn main(){const k=3\nvar v=sum(k)\n{let t=1\nv+=t}\nprint(v)}\n",
+      "output": "7\n",
+      "sb1": true,
+      "limitation": "调用深度128；可省略返回注解不等于完整静态证明"
+    },
+    {
+      "id": "F05",
+      "title": "循环、范围、break/continue",
+      "phase": "execute",
+      "fixture": "tests/runtime/048_vm_nested_loops.hua",
+      "sb1": true,
+      "limitation": "百万步预算；区间结束溢出有专门检查"
+    },
+    {
+      "id": "F06",
+      "title": "结构体、字段与复制",
+      "phase": "execute",
+      "fixture": "tests/runtime/019_struct_copy.hua",
+      "sb1": true,
+      "limitation": "值复制；资源/可变句柄另有别名规则"
+    },
+    {
+      "id": "F07",
+      "title": "方法与修改接收者",
+      "phase": "execute",
+      "fixture": "tests/runtime/021_mutating_method.hua",
+      "sb1": false,
+      "limitation": "发行可用；SB1用普通函数替代方法"
+    },
+    {
+      "id": "F08",
+      "title": "固定数组",
+      "phase": "execute",
+      "fixture": "tests/runtime/025_fixed_array.hua",
+      "sb1": true,
+      "limitation": "固定长度；复制区别于切片视图；非完整C ABI布局"
+    },
+    {
+      "id": "F09",
+      "title": "嵌套容器复制",
+      "phase": "execute",
+      "fixture": "tests/runtime/033_nested_clone.hua",
+      "sb1": true,
+      "limitation": "clone与构造的具体复制规则不同于所有值无条件深拷贝"
+    },
+    {
+      "id": "F10",
+      "title": "mut参数",
+      "phase": "execute",
+      "fixture": "tests/runtime/017_mut_param.hua",
+      "sb1": true,
+      "limitation": "已知只读静态拒绝；动态能力仍需运行时检查"
+    },
+    {
+      "id": "F11",
+      "title": "Map、缺失与遍历",
+      "phase": "execute",
+      "fixture": "tests/runtime/168_map_basics.hua",
+      "sb1": true,
+      "limitation": "键仅bool/int/string；查找返回Optional；遍历快照/固定次序见专题"
+    },
+    {
+      "id": "F12",
+      "title": "Map迭代快照",
+      "phase": "execute",
+      "fixture": "tests/runtime/169_map_loop_snapshot.hua",
+      "sb1": true,
+      "limitation": "循环键快照；不等于线程安全并发Map"
+    },
+    {
+      "id": "F13",
+      "title": "多返回、绑定与赋值",
+      "phase": "execute",
+      "fixture": "tests/runtime/183_multi_basics.hua",
+      "sb1": true,
+      "limitation": "返回包不可作普通单值；多const暂不支持"
+    },
+    {
+      "id": "F14",
+      "title": "Result与错误分支",
+      "phase": "execute",
+      "fixture": "tests/runtime/194_result_basics.hua",
+      "sb1": true,
+      "limitation": "默认E=string；没有catch/must-use/自动成功包装"
+    },
+    {
+      "id": "F15",
+      "title": "?传播与求值次序",
+      "phase": "execute",
+      "fixture": "tests/runtime/197_result_early_atomic.hua",
+      "sb1": true,
+      "limitation": "仅Result返回函数；传播不回滚先前副作用"
+    },
+    {
+      "id": "F16",
+      "title": "Optional与收窄",
+      "phase": "execute",
+      "fixture": "tests/runtime/206_optional_common.hua",
+      "sb1": true,
+      "limitation": "仅现有局部守卫；完整控制流/跨函数收窄待A07"
+    },
+    {
+      "id": "F17",
+      "title": "Result<void>",
+      "phase": "execute",
+      "source": "fn ready() Result<void>{return ok()}\nfn main(){let r=ready()\nunwrap(r)\nprint(r,is_ok(r))}\n",
+      "output": "ok() true\n",
+      "sb1": true,
+      "limitation": "只可语句解包；涉及HUAB7，产物合同另由C01核定"
+    },
+    {
+      "id": "F18",
+      "title": "标准Error",
+      "phase": "execute",
+      "source": "import std.error as e\nlet x=e.from_string(\"old\", \"origin\")\nlet y=unwrap(e.wrap(\"app\",\"load\",\"failed\",x))\nprint(e.code(y),e.code(unwrap(e.cause(y))))\n",
+      "output": "load failure\n",
+      "sb1": false,
+      "limitation": "不可变Value、显式string转换；SB1先使用string错误；HUAB7"
+    },
+    {
+      "id": "F19",
+      "title": "interface结构适配",
+      "phase": "execute",
+      "source": "interface Named{fn name() string}\nstruct Item{value string}\nfn Item.name() string{return self.value}\nfn show(x Named) string{return x.name()}\nprint(show(Item{value:\"Hua\"}))\n",
+      "output": "Hua\n",
+      "sb1": false,
+      "limitation": "结构式实现；SB1暂不含接口/方法"
+    },
+    {
+      "id": "F20",
+      "title": "enum与语句match",
+      "phase": "execute",
+      "source": "enum Event{Number(int),Empty}\nfn show(x Event) int{match x{Number(n)=>{return n}\nEmpty=>{return 0}}}\nprint(show(Event.Number(4)))\n",
+      "output": "4\n",
+      "sb1": true,
+      "limitation": "字面量/枚举/_模式；没有match表达式、模式守卫和任意结构解构"
+    },
+    {
+      "id": "F21",
+      "title": "用户泛型",
+      "phase": "execute",
+      "source": "fn id<T>(x T) T{return x}\nstruct Box<T>{value T}\nprint(id<int>(Box<int>{value:5}.value))\n",
+      "output": "5\n",
+      "sb1": false,
+      "limitation": "显式实例化与现有单态化；SB1只允许内建容器泛型"
+    },
+    {
+      "id": "F22",
+      "title": "嵌套函数与结构",
+      "phase": "execute",
+      "source": "fn main(){var x=1\nfn captured() int{return x}\nx=8\n{struct Local{v int}\nprint(captured(),Local{v:2}.v)}}\n",
+      "output": "1 2\n",
+      "sb1": false,
+      "limitation": "闭包捕获值快照；SB1只用顶层声明"
+    },
+    {
+      "id": "F23",
+      "title": "attribute与入口",
+      "phase": "execute",
+      "source": "@entry\nfn start(){print(\"entry\")}\n",
+      "output": "entry\n",
+      "sb1": false,
+      "limitation": "只支持inline/noinline/entry/doc/deprecated；性能属性不承诺优化效果"
+    },
+    {
+      "id": "F24",
+      "title": "defer清理",
+      "phase": "execute",
+      "source": "fn f() int{defer print(\"clean\")\nreturn 3}\nfn main(){print(f())}\n",
+      "output": "clean\n3\n",
+      "sb1": true,
+      "limitation": "函数内调用表达式；作用域LIFO；不是持久化恢复或事务"
+    },
+    {
+      "id": "F25",
+      "title": "async/await与Task",
+      "phase": "execute",
+      "source": "async fn work(x int) int{return x*2}\nfn main(){let t=work(3)\nprint(await t,await t)}\n",
+      "output": "6 6\n",
+      "sb1": false,
+      "limitation": "CPU续体；宿主文件调用有界阻塞；软超时；SB1暂排除"
+    },
+    {
+      "id": "F26",
+      "title": "taskgroup与spawn",
+      "phase": "execute",
+      "source": "async fn work() int{defer print(\"done\")\nreturn 1}\nfn main(){taskgroup{spawn work()}\nprint(\"after\")}\n",
+      "output": "done\nafter\n",
+      "sb1": false,
+      "limitation": "退出等待清理；首次自举无需并发"
+    },
+    {
+      "id": "F27",
+      "title": "parallel循环",
+      "phase": "execute",
+      "source": "fn main(){var out [3]int=[0,0,0]\nparallel for i in 0..3 {out[i]=i*i}\nprint(out)}\n",
+      "output": "[0, 1, 4]\n",
+      "sb1": false,
+      "limitation": "现有约束/降级；不承诺GPU或自动调度"
+    },
+    {
+      "id": "F28",
+      "title": "SIMD循环",
+      "phase": "execute",
+      "source": "fn main(){var out [3]float=[1.0,2.0,3.0]\nsimd for i in 0..3 {out[i]=out[i]*2.0}\nprint(out)}\n",
+      "output": "[2, 4, 6]\n",
+      "sb1": false,
+      "limitation": "明确数值/循环子集；不等于任意代码向量化"
+    },
+    {
+      "id": "F29",
+      "title": "本地模块、pub、别名",
+      "phase": "execute",
+      "source": "import lib as l\nprint(l.twice(3))\n",
+      "output": "6\n",
+      "sb1": true,
+      "limitation": "根目录内.hua/package.hua；无包管理解析；依赖静态链接",
+      "modules": {
+        "lib.hua": "pub fn twice(x int) int{return x*2}\n"
+      }
+    },
+    {
+      "id": "F30",
+      "title": "Bytes与二进制编码",
+      "phase": "execute",
+      "source": "import std.bytes as b\nlet x=unwrap(b.u32_le(16909060))\nprint(unwrap(b.to_ints(x)),unwrap(b.read_u32_le(x,0)),b.crc32(b.from_text(\"123456789\")))\n",
+      "output": "[4, 3, 2, 1] 16909060 3421780262\n",
+      "sb1": true,
+      "limitation": "只读字节值；当前LE原语，完整HUAB编码仍待C06"
+    },
+    {
+      "id": "F31",
+      "title": "Buffer",
+      "phase": "execute",
+      "source": "import std.buffer as b\nvar x=b.new()\nprint(unwrap(b.write_text(x,\"Hua\")),unwrap(b.text(x)))\n",
+      "output": "3 Hua\n",
+      "sb1": true,
+      "limitation": "托管可变缓冲；不是D002设备HostBuffer"
+    },
+    {
+      "id": "F32",
+      "title": "List与节点表",
+      "phase": "execute",
+      "source": "import std.list as l\nstruct Node{value int}\nvar x=l.from_slice([Node{value:1}])\nunwrap(l.append(x,Node{value:2}))\nprint(l.len(x),unwrap(l.get(x,1)).value)\n",
+      "output": "2 2\n",
+      "sb1": true,
+      "limitation": "标准容器泛型；没有NodeId AST池实现；A05另验收"
+    },
+    {
+      "id": "F33",
+      "title": "文本与JSON",
+      "phase": "execute",
+      "source": "import std.strings as s\nimport std.json as j\nlet x=unwrap(j.decode(\"[3]\"))\nprint(s.join(s.split(\"a,b\",\",\"),\"/\"),unwrap(j.as_int(unwrap(j.at(x,0)))))\n",
+      "output": "a/b 3\n",
+      "sb1": true,
+      "limitation": "UTF-8与ASCII函数明确区分；不是完整Unicode工具库"
+    },
+    {
+      "id": "F34",
+      "title": "基础文件与程序输入",
+      "phase": "execute",
+      "source": "import std.fs as f\nimport std.os as o\nimport std.io as io\nprint(o.args(),unwrap(io.read_line()))\nunwrap(f.write_text(\"data.txt\",\"Hua\"))\nprint(unwrap(f.read_text(\"data.txt\")))\n",
+      "output": "[x] hello\nHua\n",
+      "sb1": true,
+      "limitation": "路径相对运行目录；本例每次独立工作目录，基础FS同步",
+      "arguments": [
+        "x"
+      ],
+      "input": "hello\n"
+    },
+    {
+      "id": "F35",
+      "title": "File资源",
+      "phase": "execute",
+      "source": "import std.file as f\nlet h=unwrap(f.open(\"data.bin\",\"w+\"))\nprint(unwrap(f.state(h)))\nprint(is_ok(f.close(h)),unwrap(f.state(h)))\n",
+      "output": "open\ntrue closed\n",
+      "sb1": false,
+      "limitation": "逻辑owner/关闭/保活；HUAB8；SB1只使用基础fs包装"
+    },
+    {
+      "id": "F36",
+      "title": "数学与算法",
+      "phase": "execute",
+      "source": "import std.math as m\nimport std.alg as a\nprint(unwrap(m.hypot(3.0,4.0)),unwrap(a.sum([1,2,3])))\n",
+      "output": "5 6\n",
+      "sb1": true,
+      "limitation": "算法API的类型覆盖见现有algorithm_stdlib对照，不以单次调用覆盖全部"
+    },
+    {
+      "id": "F37",
+      "title": "路径与时钟",
+      "phase": "execute",
+      "source": "import std.path as p\nimport std.time as t\nprint(unwrap(p.ext(\"a.hua\")),t.unix_ms()>0)\n",
+      "output": ".hua true\n",
+      "sb1": true,
+      "limitation": "单调/墙钟分开；本例只检查返回合同，不比较具体时间"
+    },
+    {
+      "id": "F38",
+      "title": "GC观察",
+      "phase": "execute",
+      "source": "import std.gc as g\nprint(g.collect()>=0)\n",
+      "output": "true\n",
+      "sb1": false,
+      "limitation": "既有RC+循环追踪；不代表分代/移动GC已实现"
+    },
+    {
+      "id": "F39",
+      "title": "数组布局查询",
+      "phase": "execute",
+      "source": "let x [2]u16=[1,2]\nprint(sizeof(x),alignof(x),type(x))\n",
+      "output": "4 2 [2]u16\n",
+      "sb1": true,
+      "limitation": "现有托管表示及尺寸合同；不等于可直接暴露C裸布局"
+    },
+    {
+      "id": "F40",
+      "title": "unsafe/ptr未调用声明",
+      "phase": "static",
+      "source": "unsafe fn read(p ptr<byte>) byte{return p.load()}\n",
+      "output": "",
+      "sb1": false,
+      "limitation": "解析保留；整个程序在静态检查拒绝，即使函数不被调用；不产生新HUAB",
+      "error": "E3008"
+    },
+    {
+      "id": "N01",
+      "title": "只读绑定赋值",
+      "phase": "static",
+      "fixture": "tests/runtime/103_immutable.hua",
+      "sb1": true,
+      "limitation": "静态拒绝；其他动态能力分支仍有运行时检查",
+      "error": "E3003"
+    },
+    {
+      "id": "N02",
+      "title": "Map非法键类型",
+      "phase": "static",
+      "fixture": "tests/runtime/178_map_bad_key.hua",
+      "sb1": true,
+      "limitation": "不支持浮点键",
+      "error": "E3004"
+    },
+    {
+      "id": "N03",
+      "title": "多返回个数不匹配",
+      "phase": "static",
+      "fixture": "tests/runtime/187_multi_wrong_count.hua",
+      "sb1": true,
+      "limitation": "绑定/返回包检查",
+      "error": "E3006"
+    },
+    {
+      "id": "N04",
+      "title": "Optional未守卫使用",
+      "phase": "static",
+      "fixture": "tests/runtime/210_optional_unguarded.hua",
+      "sb1": true,
+      "limitation": "尚非完整跨函数收窄",
+      "error": "E3004"
+    },
+    {
+      "id": "N05",
+      "title": "Optional<Result>",
+      "phase": "static",
+      "fixture": "tests/runtime/212_optional_result_rejected.hua",
+      "sb1": true,
+      "limitation": "当前明确拒绝；Result<T?>可用",
+      "error": "E3004"
+    },
+    {
+      "id": "N06",
+      "title": "Map值为Result",
+      "phase": "static",
+      "fixture": "tests/runtime/217_map_result_rejected.hua",
+      "sb1": true,
+      "limitation": "当前缺失查找会构成Optional<Result>，静态拒绝",
+      "error": "E3004"
+    },
+    {
+      "id": "N07",
+      "title": "多const绑定",
+      "phase": "parse",
+      "fixture": "tests/runtime/224_multi_const_rejected.hua",
+      "sb1": true,
+      "limitation": "语法暂不支持",
+      "error": "E2002"
+    },
+    {
+      "id": "R01",
+      "title": "乘法溢出",
+      "phase": "runtime",
+      "fixture": "tests/runtime/129_multiply_overflow.hua",
+      "sb1": true,
+      "limitation": "运行时检查；前序副作用不保证回滚",
+      "error": "E4002"
+    },
+    {
+      "id": "R02",
+      "title": "只读结构共享成员",
+      "phase": "static",
+      "fixture": "tests/runtime/154_nested_readonly_handle.hua",
+      "sb1": true,
+      "limitation": "A07-1已知只读成员在副作用前E3003；旧HUAB保留E4007",
+      "error": "E3003"
+    },
+    {
+      "id": "R03",
+      "title": "Map缺失复合赋值",
+      "phase": "runtime",
+      "fixture": "tests/runtime/180_map_missing_compound.hua",
+      "sb1": true,
+      "limitation": "运行时E4006",
+      "error": "E4006"
+    },
+    {
+      "id": "R04",
+      "title": "Result错误分支解包",
+      "phase": "runtime",
+      "fixture": "tests/runtime/202_result_unwrap_wrong_branch.hua",
+      "sb1": true,
+      "limitation": "运行时E4009",
+      "error": "E4009"
+    },
+    {
+      "id": "R05",
+      "title": "Optional nil解包",
+      "phase": "runtime",
+      "fixture": "tests/runtime/209_optional_nil_unwrap.hua",
+      "sb1": true,
+      "limitation": "运行时E4009",
+      "error": "E4009"
+    },
+    {
+      "id": "N08",
+      "title": "裸指针分配原语缺失",
+      "source": "unsafe {let p ptr<byte>=memory.alloc(8)\np.load()}\n",
+      "error": "E3008",
+      "phase": "static",
+      "sb1": false,
+      "limitation": "声明可通过；memory.alloc不存在，不能执行完整裸指针流程"
+    },
+    {
+      "id": "N09",
+      "title": "catch语法",
+      "source": "fn main(){catch {print(1)}}\n",
+      "error": "E2003",
+      "phase": "parse",
+      "sb1": false,
+      "limitation": "未实现；不按已有错误提案推断支持"
+    },
+    {
+      "id": "N10",
+      "title": "match非穷尽",
+      "source": "enum E{A,B}\nfn main(){let x=E.A()\nmatch x{A=>print(1)}}\n",
+      "error": "E3011",
+      "phase": "static",
+      "sb1": false,
+      "limitation": "穷尽检查；不是任意模式匹配"
+    },
+    {
+      "id": "N11",
+      "title": "未知attribute",
+      "source": "@unknown\nfn main(){}\n",
+      "error": "E2002",
+      "phase": "parse",
+      "sb1": false,
+      "limitation": "未知属性明确拒绝"
+    },
+    {
+      "id": "N12",
+      "title": "未知标准模块",
+      "source": "import std.network\nprint(1)\n",
+      "error": "E5001",
+      "phase": "static",
+      "sb1": false,
+      "limitation": "Hua原生网络库尚未实现"
+    },
+    {
+      "id": "N13",
+      "title": "导入循环",
+      "source": "import lib\nprint(1)\n",
+      "error": "E5002",
+      "phase": "static",
+      "sb1": false,
+      "limitation": "依赖环拒绝",
+      "modules": {
+        "lib.hua": "import main\n"
+      }
+    },
+    {
+      "id": "N14",
+      "title": "safe ref取址",
+      "source": "let x=1\nlet r=&x\n",
+      "phase": "static",
+      "error": "E3008",
+      "sb1": false,
+      "limitation": "尚未开放；执行前拒绝"
+    },
+    {
+      "id": "N15",
+      "title": "safe ref类型注解",
+      "source": "fn f(x ref<int>) int{return 1}\n",
+      "phase": "static",
+      "error": "E3008",
+      "sb1": false,
+      "limitation": "尚未开放；执行前拒绝"
+    },
+    {
+      "id": "N16",
+      "title": "extern声明",
+      "source": "extern fn f() int\n",
+      "phase": "parse",
+      "error": "E2002",
+      "sb1": false,
+      "limitation": "尚未开放；执行前拒绝"
+    }
+  ],
+  "external_evidence": [
+    {
+      "title": "Native/WASM模块",
+      "tests": [
+        "archives_extensions"
+      ],
+      "limitation": "ABI1标量接口；WASM宿主加载；SB1排除，未实现Hua到WASM编译"
+    },
+    {
+      "title": "Python Bridge",
+      "tests": [
+        "python_bridge"
+      ],
+      "limitation": "仅Bridge ON且具备CPython；13包装器；SB1排除"
+    }
+  ]
+}

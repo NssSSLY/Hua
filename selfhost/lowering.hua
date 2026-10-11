@@ -1,0 +1,320 @@
+# C05-L1：带类型/身份/来源的 VM 核心树；不执行输入，不生成指令。
+import types as types
+import modules as modules
+import ast_pool as ast
+import type_rules as rules
+import std.list as list
+import std.strings as strings
+import std.alg as alg
+import std.bytes as bytes
+pub struct Node { id int
+    module string
+    origin int
+    start int
+    end int
+    line int
+    column int
+    kind string
+    text string
+    type_name string
+    writable bool
+    role string
+    children []int }
+pub struct Initializer { module string
+    roots []int }
+pub struct Core { nodes List<Node>
+    initialization List<Initializer>
+    entry string
+    work int }
+struct State { model types.Model
+    core Core
+    type_cache map[string]string
+    prefixes map[string]string
+    module_ids []string }
+struct Frame { id int
+    function bool
+    loops int
+    depth int }
+struct FieldInfo { name string
+    variant string
+    argument int
+    type_name string
+    node ast.Node }
+fn key(u modules.Unit, n ast.Node) string { return u.id+":"+str(n.id.index) }
+fn get(u modules.Unit, id ast.NodeId) ast.Node { return unwrap(ast.get(u.tree.pool,id)) }
+fn fail(u modules.Unit, n ast.Node, code string, text string) string {
+    return code+"@"+str(n.span.line)+":"+str(n.span.column)+" ["+u.id+"] "+text
+}
+# 逻辑模块 ID 按 UTF-8 十六进制编码进保留 $ 名；入口 main 为旧 VM 约定。
+fn runtime_name(s State, target string) string {
+    if target == s.core.entry+"#main" { return "main" }
+    if strings.starts_with(target,"builtin:core:") { return "$core$"+rules.cut(target,13,len(target)) }
+    if target == "builtin:std.json#Value" { return "Json" }
+    if strings.starts_with(target,"builtin:type:") { return rules.cut(target,13,len(target)) }
+    if strings.starts_with(target,"builtin:std.") { return "$core$$std$"+strings.replace(rules.cut(target,12,len(target)),"#","$") }
+    let parts = strings.split(target,"#")
+    if len(parts)<2 { return target }
+    let last = parts[len(parts)-1]
+    let module = rules.cut(target,0,len(target)-len(last)-1)
+    return unwrap(s.prefixes[module])+strings.replace(last,":","$c$")
+}
+fn runtime_type(s mut State, t string) string {
+    if has(s.type_cache,t) { return unwrap(s.type_cache[t]) }
+    var result = t
+    result = strings.replace(result,"builtin:core:","builtin:")
+    result = strings.replace(result,"builtin:std.","builtin:$std$")
+    result = strings.replace(strings.replace(result,"variant:","fn:"),"enum:","struct:")
+    for name in s.module_ids { result = strings.replace(result,name+"#",unwrap(s.prefixes[name])) }
+    result = strings.replace(result,"#","$")
+    let marker = "fn:"+unwrap(s.prefixes[s.core.entry])+"main"
+    for end in [",",">","?"] { result = strings.replace(result,marker+end,"fn:main"+end) }
+    if strings.ends_with(result,marker) { result = rules.cut(result,0,len(result)-len(marker))+"fn:main" }
+    s.type_cache[t] = result
+    return result
+}
+fn add(s mut State, u modules.Unit, n ast.Node, k string, text string, t string, w bool, children []int, role string) Result<int> {
+    if s.core.work >= 1048576 || list.len(s.core.nodes) >= 262144 { return err(fail(u,n,"E8202","C05 core node/work budget")) }
+    s.core.work += 1
+    let id = list.len(s.core.nodes)
+    list.append(s.core.nodes,Node{id:id,module:u.id,origin:n.id.index,start:n.span.start,end:n.span.end,line:n.span.line,column:n.span.column,kind:k,text:text,type_name:runtime_type(s,t),writable:w,role:role,children:children})?
+    return ok(id)
+}
+fn target(s State, u modules.Unit, n ast.Node) string { return unwrap_or(s.model.refs[key(u,n)],"") }
+fn declaration(s State, u modules.Unit, n ast.Node) string { return unwrap_or(s.model.declarations[key(u,n)],"") }
+fn annotation(s State, u modules.Unit, n ast.Node) types.Info {
+    let name = declaration(s,u,n)
+    if name != "" && has(s.model.symbols,name) { return unwrap(s.model.symbols[name]) }
+    if has(s.model.facts,key(u,n)) { return unwrap(s.model.facts[key(u,n)]) }
+    return types.Info{type_name:"",declared:"",writable:false,mutable_binding:false,readonly_children:false,projected:false,owner:""}
+}
+fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) Result<int> {
+    let n = get(u,id)
+    if depth > 64 { return err(fail(u,n,"E8202","C05 core depth budget")) }
+    var k = ast.kind(n.payload)
+    var text = ast.payload_text(n.payload)
+    let ref = target(s,u,n)
+    let decl = declaration(s,u,n)
+    let info = annotation(s,u,n)
+    var t = info.type_name
+    var w = info.writable
+    if k == "Let" || k == "Var" || k == "Parameter" { t = info.declared }
+    if k == "Const" || k == "Enum" || k == "Variant" || k == "Import" || k == "Program" || k == "Parameters" {
+        return err(fail(u,n,"E8201","node outside C05 core"))
+    }
+    if k == "Match" {
+        t = unwrap(s.model.facts[key(u,get(u,n.children[0]))]).type_name
+    }
+    if k == "Function" {
+        let f = unwrap(s.model.functions[decl])
+        t = "fn:"+runtime_name(s,decl)
+        w = f.writable
+    }
+    var empty []int = []
+    var children = list.from_slice(empty)
+    if k == "Function" {
+        let parameters = get(u,n.children[0])
+        for p in parameters.children { list.append(children,lowered(s,u,p,depth+1,role)?)? }
+        list.append(children,lowered(s,u,n.children[1],depth+1,role)?)?
+    } else if k == "Member" && ref != "" {
+        k = "Name"
+        text = runtime_name(s,ref)
+    } else {
+        for child in n.children { list.append(children,lowered(s,u,child,depth+1,role)?)? }
+    }
+    if (k == "Name" || k == "TypeName" || k == "StructLiteral") && ref != "" { text = runtime_name(s,ref) }
+    if decl != "" && (k == "Function" || k == "Struct" || k == "Let" || k == "Var" || k == "Parameter" || k == "Name") {
+        text = runtime_name(s,decl)
+        if k == "Parameter" && (strings.ends_with(ast.payload_text(n.payload)," mut") || (len(n.children)>0 && ast.kind(get(u,n.children[0]).payload)=="MutableType")) { text += " mut" }
+    }
+    return add(s,u,n,k,text,t,w,list.snapshot(children),role)
+}
+fn enum_fields(s mut State, u modules.Unit, n ast.Node, name string) Result<[]FieldInfo> {
+    var empty []FieldInfo = []
+    var fields = list.from_slice(empty)
+    list.append(fields,FieldInfo{name:"$case",variant:"",argument:-1,type_name:"string",node:n})?
+    for id in n.children {
+        let v = get(u,id)
+        let variant = ast.payload_text(v.payload)
+        let signature = unwrap(s.model.variants[name+"."+variant])
+        if len(v.children) == 0 { list.append(fields,FieldInfo{name:"$"+variant+"#0#void",variant:variant,argument:-1,type_name:"void",node:v})? }
+        for i in 0..len(v.children) {
+            let typ = runtime_type(s,signature.parameters[i].type_name)
+            list.append(fields,FieldInfo{name:"$"+variant+"#"+str(i)+"#"+typ,variant:variant,argument:i,type_name:typ,node:v})?
+        }
+    }
+    return ok(list.snapshot(fields))
+}
+fn enumeration(s mut State, u modules.Unit, n ast.Node) Result<[]int> {
+    let name = declaration(s,u,n)
+    let fields = enum_fields(s,u,n,name)?
+    var empty []int = []
+    var roots = list.from_slice(empty)
+    var layout = list.from_slice(empty)
+    for f in fields {
+        var children = list.from_slice(empty)
+        var t = ""
+        if f.name == "$case" { t = "string" }
+        list.append(children,add(s,u,f.node,"TypeName",t,"",false,empty,"enum-layout")?)?
+        if f.argument >= 0 {
+            let original = get(u,f.node.children[f.argument])
+            list.append(children,lowered(s,u,original.id,1,"enum-layout")?)?
+        }
+        list.append(layout,add(s,u,f.node,"Field",f.name,f.type_name,false,list.snapshot(children),"enum-layout")?)?
+    }
+    for id in n.children {
+        let v = get(u,id)
+        let variant = ast.payload_text(v.payload)
+        let signature = unwrap(s.model.variants[name+"."+variant])
+        var children = list.from_slice(empty)
+        for i in 0..len(v.children) {
+            let typ = lowered(s,u,v.children[i],1,"enum-constructor")?
+            let arg = runtime_name(s,signature.target)+"$arg"+str(i)
+            list.append(children,add(s,u,v,"Parameter",arg,signature.parameters[i].type_name,false,[typ],"enum-constructor")?)?
+        }
+        let result = add(s,u,v,"TypeName",runtime_name(s,name),"",false,empty,"enum-constructor")?
+        list.append(children,add(s,u,v,"ReturnTypes","","",false,[result],"enum-constructor")?)?
+        var values = list.from_slice(empty)
+        for f in fields {
+            var value = 0
+            if f.name == "$case" { value = add(s,u,v,"String",variant,"string",false,empty,"enum-constructor")? }
+            else if f.variant == variant && f.argument >= 0 {
+                value = add(s,u,v,"Name",runtime_name(s,signature.target)+"$arg"+str(f.argument),f.type_name,false,empty,"enum-constructor")?
+            } else { value = add(s,u,v,"Nil","","nil",false,empty,"enum-constructor")? }
+            list.append(values,add(s,u,v,"FieldInit",f.name,"",false,[value],"enum-constructor")?)?
+        }
+        let value = add(s,u,v,"StructLiteral",runtime_name(s,name),name,true,list.snapshot(values),"enum-constructor")?
+        let ret = add(s,u,v,"Return","","",false,[value],"enum-constructor")?
+        let body = add(s,u,v,"Block","","",false,[ret],"enum-constructor")?
+        list.append(children,body)?
+        list.append(roots,add(s,u,v,"Function",runtime_name(s,signature.target),"fn:"+signature.target,true,list.snapshot(children),"enum-constructor")?)?
+    }
+    list.append(roots,add(s,u,n,"Struct",runtime_name(s,name)+" enum","enum:"+name,false,list.snapshot(layout),"enum-layout")?)?
+    return ok(list.snapshot(roots))
+}
+pub fn shape(k string, count int) bool {
+    if alg.contains(["Integer","Float","String","Boolean","Nil","Name","TypeName","Break","Continue","Omitted"],k) { return count == 0 }
+    if alg.contains(["Unary","Update","Member","FieldInit","ExpressionStatement","Propagate","Defer","SliceType","ArrayType","OptionalType","MutableType"],k) { return count == 1 }
+    if alg.contains(["Binary","Assignment","Index","MapEntry","While","MultiBinding","MultiAssignment"],k) { return count == 2 }
+    if k == "If" || k == "Range" { return count == 2 || count == 3 }
+    if k == "Slice" || k == "MatchArm" { return count == 3 }
+    if k == "Parameter" { return count == 0 || count == 1 }
+    if k == "Let" || k == "Var" || k == "Field" { return count == 1 || count == 2 }
+    if k == "For" { return count == 3 || count == 4 }
+    if k == "Pack" { return count >= 2 }
+    if alg.contains(["Call","ReturnTypes","GenericType","MapLiteral","Match","Function"],k) { return count >= 1 }
+    return alg.contains(["Struct","Block","Array","StructLiteral","BindingList","Return"],k)
+}
+pub fn verify(c Core) Result<void> {
+    if list.len(c.nodes)>262144 || c.work>1048576 { return err("E8202@1:1 C05 core budget") }
+    var parents = map[int]int{}
+    var depths = map[int]int{}
+    for i in 0..list.len(c.nodes) {
+        let n = unwrap(list.get(c.nodes,i))
+        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || !alg.contains(["source","enum-layout","enum-constructor"],n.role) { return err("E8203@1:1 invalid C05 node") }
+        var depth = 1
+        for child in n.children {
+            if child<0 || child>=i { return err("E8203@1:1 invalid C05 child/order") }
+            depth = max(depth,unwrap(depths[child])+1)
+            parents[child] = unwrap_or(parents[child],0)+1
+        }
+        if depth>64 { return err("E8202@1:1 C05 generated depth budget") }
+        depths[i] = depth
+        if alg.contains(["Let","Var","Call","Match"],n.kind) && n.type_name=="" { return err("E8203@1:1 missing C05 execution type") }
+        if (n.kind=="Unary" && !alg.contains(["+","-","!","~"],n.text)) || (n.kind=="Binary" && !alg.contains(["+","-","*","/","//","%","**","==","!=","<","<=",">",">=","&&","||","&","|","^","<<",">>"],n.text)) || (n.kind=="Assignment" && !alg.contains(["=","+=","-=","*=","/=","//=","%=","**="],n.text)) || (n.kind=="Update" && !alg.contains(["++","--"],n.text)) || (n.kind=="Range" && !alg.contains(["..","..="],n.text)) { return err("E8203@1:1 invalid C05 operator") }
+        if n.kind=="For" || n.kind=="While" { if unwrap(list.get(c.nodes,n.children[len(n.children)-1])).kind!="Block" { return err("E8203@1:1 invalid C05 loop") } }
+        if n.kind=="Match" {
+            for j in 1..len(n.children) { if unwrap(list.get(c.nodes,n.children[j])).kind!="MatchArm" { return err("E8203@1:1 invalid C05 match") } }
+        }
+        if n.kind=="Struct" {
+            for child in n.children { if unwrap(list.get(c.nodes,child)).kind!="Field" { return err("E8203@1:1 invalid C05 field") } }
+        }
+        if n.kind=="Function" {
+            let body = unwrap(list.get(c.nodes,n.children[len(n.children)-1]))
+            if body.kind!="Block" { return err("E8203@1:1 invalid C05 function body") }
+            var returns = false
+            for j in 0..len(n.children)-1 {
+                let p = unwrap(list.get(c.nodes,n.children[j]))
+                if p.kind=="ReturnTypes" { if returns || j!=len(n.children)-2 { return err("E8203@1:1 invalid C05 returns") }
+                    returns = true }
+                else if p.kind!="Parameter" || returns { return err("E8203@1:1 invalid C05 parameter") }
+            }
+        }
+        if n.kind=="Defer" && unwrap(list.get(c.nodes,n.children[0])).kind!="Call" { return err("E8203@1:1 invalid C05 defer") }
+        if n.kind=="MatchArm" && (unwrap(list.get(c.nodes,n.children[1])).kind!="BindingList" || unwrap(list.get(c.nodes,n.children[2])).kind!="Block") { return err("E8203@1:1 invalid C05 arm") }
+    }
+    var units = map[string]bool{}
+    var empty []Frame = []
+    var stack = list.from_slice(empty)
+    for init in list.snapshot(c.initialization) {
+        if has(units,init.module) { return err("E8203@1:1 duplicate C05 module") }
+        units[init.module] = true
+        for root in init.roots {
+            if root<0 || root>=list.len(c.nodes) { return err("E8203@1:1 invalid C05 root") }
+            let n = unwrap(list.get(c.nodes,root))
+            if n.module!=init.module { return err("E8203@1:1 invalid C05 root module") }
+            parents[root] = unwrap_or(parents[root],0)+1
+            list.append(stack,Frame{id:root,function:false,loops:0,depth:0})?
+        }
+    }
+    if !has(units,c.entry) { return err("E8203@1:1 missing C05 entry") }
+    for i in 0..list.len(c.nodes) {
+        if unwrap_or(parents[i],0)!=1 { return err("E8203@1:1 C05 disconnected/shared node") }
+    }
+    while list.len(stack)>0 {
+        let frame = list.pop(stack)?
+        let n = unwrap(list.get(c.nodes,frame.id))
+        if alg.contains(["Function","Struct"],n.kind) && frame.depth!=0 { return err("E8203@1:1 nested C05 declaration") }
+        if alg.contains(["Break","Continue"],n.kind) && frame.loops==0 { return err("E8203@1:1 C05 loop exit outside loop") }
+        if alg.contains(["Return","Defer","Propagate"],n.kind) && !frame.function { return err("E8203@1:1 C05 return/cleanup outside function") }
+        for i in 0..len(n.children) {
+            var loops = frame.loops
+            if (n.kind=="For" || n.kind=="While") && i==len(n.children)-1 { loops += 1 }
+            list.append(stack,Frame{id:n.children[i],function:frame.function || n.kind=="Function",loops:loops,depth:frame.depth+1})?
+        }
+    }
+    return ok()
+}
+pub fn lower(model types.Model) Result<Core> {
+    var empty []Node = []
+    var inits []Initializer = []
+    let entry = unwrap(list.get(model.graph.units,0)).id
+    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[]}
+    var names []string = []
+    var ids = list.from_slice(names)
+    for u in list.snapshot(model.graph.units) {
+        var prefix = "$m"
+        for value in unwrap(bytes.to_ints(bytes.from_text(u.id))) {
+            prefix += rules.cut("0123456789abcdef",value//16,value//16+1)+rules.cut("0123456789abcdef",value%16,value%16+1)
+        }
+        s.prefixes[u.id] = prefix+"$"
+        list.append(ids,u.id)?
+    }
+    # 长模块名先替换，避免 model.hua 是 pkg/model.hua 的后缀。
+    for i in 0..list.len(ids) {
+        for j in i+1..list.len(ids) {
+            let left = list.get(ids,i)?
+            let right = list.get(ids,j)?
+            if len(right)>len(left) { list.set(ids,i,right)?
+                list.set(ids,j,left)? }
+        }
+    }
+    s.module_ids = list.snapshot(ids)
+    for name in list.snapshot(model.graph.order) {
+        for u in list.snapshot(model.graph.units) {
+            if u.id != name { continue }
+            var ids []int = []
+            var roots = list.from_slice(ids)
+            let root = get(u,u.tree.root)
+            for id in root.children {
+                let n = get(u,id)
+                let k = ast.kind(n.payload)
+                if k == "Import" { continue }
+                if k == "Enum" { for value in enumeration(s,u,n)? { list.append(roots,value)? } }
+                else { list.append(roots,lowered(s,u,id,1,"source")?)? }
+            }
+            list.append(s.core.initialization,Initializer{module:u.id,roots:list.snapshot(roots)})?
+        }
+    }
+    verify(s.core)?
+    return ok(s.core)
+}

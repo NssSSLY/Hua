@@ -1,0 +1,14 @@
+import modules as modules
+import module_report as report
+import std.os as os
+import std.path as path
+fn main() {
+    let args = os.args()
+    if len(args) != 1 { print(report.failure("input.hua","E8204@1:1 usage: entry.hua"))
+        return }
+    let name = unwrap(path.basename(args[0]))
+    let result = modules.analyze(args[0])
+    if is_err(result) { print(report.failure(name,unwrap_err(result)))
+        return }
+    print(report.success(unwrap(result),name))
+}

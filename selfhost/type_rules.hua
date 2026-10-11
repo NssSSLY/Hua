@@ -1,0 +1,77 @@
+# C04-T1 类型代数；只处理类型文本，不求值用户表达式。
+import std.strings as strings
+import std.list as list
+import std.alg as alg
+pub fn cut(t string, start int, end int) string { return unwrap(strings.slice(t,start,end)) }
+pub fn arguments(t string, name string) []string {
+    var empty []string = []
+    if !strings.starts_with(t,name+"<") || !strings.ends_with(t,">") { return empty }
+    var parts = list.from_slice(empty)
+    var start = len(name)+1
+    var depth = 0
+    for i in start..len(t)-1 {
+        let c = cut(t,i,i+1)
+        if c == "<" { depth += 1 }
+        if c == ">" { depth -= 1 }
+        if c == "," && depth == 0 { unwrap(list.append(parts,cut(t,start,i)))
+            start = i+1 }
+    }
+    unwrap(list.append(parts,cut(t,start,len(t)-1)))
+    return list.snapshot(parts)
+}
+pub fn element(t string) string {
+    if !strings.starts_with(t,"[") { return "" }
+    let end = strings.index(t,"]")
+    if end < 0 { return "" }
+    return cut(t,end+1,len(t))
+}
+pub fn optional(t string) string {
+    if strings.ends_with(t,"?") { return cut(t,0,len(t)-1) }
+    return t
+}
+pub fn category(t string) string {
+    if alg.contains(["float","f32","f64"],t) { return "f" }
+    if alg.contains(["byte","u8","u16","u32","u64","usize"],t) { return "u" }
+    if alg.contains(["int","i8","i16","i32","i64","isize"],t) { return "i" }
+    return ""
+}
+pub fn bits(t string) int {
+    if alg.contains(["byte","u8","i8"],t) { return 8 }
+    if t == "u16" || t == "i16" { return 16 }
+    if alg.contains(["u32","i32","f32"],t) { return 32 }
+    if category(t) != "" { return 64 }
+    return 0
+}
+pub fn widening(expected string, actual string) bool {
+    let a = category(expected)
+    let b = category(actual)
+    return a != "" && b != "" && ((a == b && bits(expected) >= bits(actual)) || (a == "i" && b == "u" && bits(expected) > bits(actual)))
+}
+pub fn compatible(expected string, actual string) bool {
+    if expected == "" || actual == "" || expected == actual || (expected == "void" && actual == "nil") { return true }
+    if widening(expected,actual) { return true }
+    if strings.ends_with(expected,"?") { return actual == "nil" || compatible(optional(expected),actual) }
+    for name in ["map","List","Result","multi"] {
+        let a = arguments(expected,name)
+        let b = arguments(actual,name)
+        if len(a) > 0 && len(b) > 0 {
+            if len(a) != len(b) { return false }
+            if name == "Result" && a[0] == "void" && b[0] == "nil" { return false }
+            for i in 0..len(a) {
+                if name == "map" || name == "List" { if a[i] != b[i] { return false } }
+                else if !compatible(a[i],b[i]) { return false }
+            }
+            return true
+        }
+    }
+    if strings.starts_with(expected,"[") && strings.starts_with(actual,"[") {
+        let a = strings.index(expected,"]")
+        let b = strings.index(actual,"]")
+        if a > 1 && b > 1 && cut(expected,1,a) != cut(actual,1,b) { return false }
+        return compatible(element(expected),element(actual))
+    }
+    return false
+}
+pub fn shared(t string) bool {
+    return strings.starts_with(t,"[") || strings.starts_with(t,"map<") || strings.starts_with(t,"Result<") || strings.starts_with(t,"List<") || t == "Buffer"
+}

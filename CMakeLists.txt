@@ -11,7 +11,7 @@ if(MSVC)
 else()
     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-add_library(hua_semantics src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
+add_library(hua_semantics src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(hua_semantics PUBLIC hua_frontend Threads::Threads)
 set(WASMTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.tools/wasmtime-v49.0.2-x86_64-windows-c-api" CACHE PATH "Wasmtime C API SDK")
@@ -19,7 +19,7 @@ find_path(WASMTIME_INCLUDE wasmtime.h PATHS "${WASMTIME_ROOT}/include" REQUIRED 
 if(WIN32)
     set(WASMTIME_LIBRARY "${WASMTIME_ROOT}/lib/wasmtime.dll.lib")
 else()
-    find_library(WASMTIME_LIBRARY NAMES wasmtime PATHS "${WASMTIME_ROOT}/lib" REQUIRED)
+    find_library(WASMTIME_LIBRARY NAMES wasmtime PATHS "${WASMTIME_ROOT}/lib" REQUIRED NO_DEFAULT_PATH)
 endif()
 target_include_directories(hua_semantics SYSTEM PRIVATE "${WASMTIME_INCLUDE}")
 target_link_libraries(hua_semantics PUBLIC "${WASMTIME_LIBRARY}" ${CMAKE_DL_LIBS})
@@ -261,4 +261,162 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/ir_pipeline_tests.py $<TARGET_FILE:hua>
             $<TARGET_FILE:hua_ir_probe> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
     endif()
+endif()
+
+# D002-a internal resource protocol, deliberately separate from public Hua resource APIs.
+if(BUILD_TESTING)
+    add_executable(hua_resource_tests tests/resource_runtime_tests.cpp)
+    target_link_libraries(hua_resource_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_resource_tests PRIVATE -static)
+    endif()
+    add_test(NAME resource_runtime COMMAND hua_resource_tests)
+endif()
+
+# D002-b synchronous public File and deterministic native fault seam.
+if(BUILD_TESTING)
+    add_executable(hua_file_resource_tests tests/file_resource_tests.cpp)
+    target_link_libraries(hua_file_resource_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_file_resource_tests PRIVATE -static)
+    endif()
+    add_test(NAME file_resource_runtime COMMAND hua_file_resource_tests)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME file_stdlib COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/file_stdlib_tests.py $<TARGET_FILE:hua>
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    endif()
+endif()
+
+# D002-c continuation and bounded blocking integration.
+if(BUILD_TESTING)
+    add_executable(hua_task_resume_tests tests/task_resume_tests.cpp)
+    target_link_libraries(hua_task_resume_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_task_resume_tests PRIVATE -static)
+    endif()
+    add_test(NAME task_resume_single COMMAND hua_task_resume_tests)
+    set_tests_properties(task_resume_single PROPERTIES ENVIRONMENT "HUA_TASK_WORKERS=1" TIMEOUT 30)
+    add_test(NAME task_resume_migration COMMAND hua_task_resume_tests)
+    set_tests_properties(task_resume_migration PROPERTIES ENVIRONMENT "HUA_TASK_WORKERS=2" TIMEOUT 30 SKIP_RETURN_CODE 77)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME task_resume_public COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/task_resume_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(task_resume_public PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
+# A01 capability audit and SB1 guard; no change to the public compiler pipeline.
+if(BUILD_TESTING)
+    add_executable(hua_subset_probe tests/a01_subset_driver.cpp)
+    target_link_libraries(hua_subset_probe PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_subset_probe PRIVATE -municode -static)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME language_baseline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/language_baseline_tests.py $<TARGET_FILE:hua>
+            $<TARGET_FILE:hua_subset_probe> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(language_baseline PROPERTIES TIMEOUT 180)
+    endif()
+endif()
+
+# A05 Hua AST representations and independent C++ source/AST reference.
+if(BUILD_TESTING)
+    add_executable(hua_ast_pool_oracle tests/a05_ast_oracle.cpp)
+    target_link_libraries(hua_ast_pool_oracle PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_ast_pool_oracle PRIVATE -municode -static)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME selfhost_ast_pool COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_ast_pool_tests.py $<TARGET_FILE:hua>
+            $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_ast_pool_oracle>
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(selfhost_ast_pool PROPERTIES TIMEOUT 180)
+    endif()
+endif()
+
+# C01 contract and C02 Hua Parser slice, with an independent C++ reference.
+if(BUILD_TESTING)
+    add_executable(hua_parser_oracle tests/c02_parser_oracle.cpp)
+    target_link_libraries(hua_parser_oracle PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_parser_oracle PRIVATE -municode -static)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME selfhost_parser COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_parser_tests.py $<TARGET_FILE:hua>
+            $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_parser_oracle>
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(selfhost_parser PROPERTIES TIMEOUT 180)
+    endif()
+endif()
+
+# C02-P2/C03 Hua front-end and independent host name/module reference.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME selfhost_frontend_extended COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_frontend_extended_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_parser_oracle>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(selfhost_frontend_extended PROPERTIES TIMEOUT 300)
+endif()
+
+# A11 bounded compiler execution / C04 Hua type and capability reference.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME selfhost_types COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_type_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_parser_oracle>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(selfhost_types PROPERTIES TIMEOUT 600)
+endif()
+
+# C05 typed VM core lowering; the C++ core driver is a test adapter, not a Hua emitter.
+if(BUILD_TESTING)
+    add_executable(hua_core_driver tests/c05_core_driver.cpp)
+    target_link_libraries(hua_core_driver PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_core_driver PRIVATE -municode -static)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME selfhost_lowering COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_lowering_tests.py $<TARGET_FILE:hua>
+            $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_parser_oracle>
+            $<TARGET_FILE:hua_core_driver> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(selfhost_lowering PROPERTIES TIMEOUT 600)
+    endif()
+endif()
+
+# C06 Hua instructions; test adapter decodes without invoking BytecodeCompiler.
+if(BUILD_TESTING)
+    add_executable(hua_instruction_driver tests/c06_instruction_driver.cpp)
+    target_link_libraries(hua_instruction_driver PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_instruction_driver PRIVATE -municode -static)
+    endif()
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME selfhost_bytecode COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_bytecode_tests.py $<TARGET_FILE:hua>
+            $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_parser_oracle>
+            $<TARGET_FILE:hua_core_driver> $<TARGET_FILE:hua_instruction_driver>
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(selfhost_bytecode PROPERTIES TIMEOUT 900)
+    endif()
+endif()
+
+# A07 readonly descendant provenance and legal record copies.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME capability_provenance COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_provenance_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_subset_probe> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(capability_provenance PROPERTIES TIMEOUT 600)
+endif()
+
+# C04 consumed temporary copies: ownership, readonly descendants, layout and GC.
+if(BUILD_TESTING)
+    add_executable(hua_value_copy_tests tests/value_copy_tests.cpp)
+    target_link_libraries(hua_value_copy_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_value_copy_tests PRIVATE -static)
+    endif()
+    add_test(NAME value_copy COMMAND hua_value_copy_tests)
 endif()

@@ -22,6 +22,9 @@ struct MapData;
 struct MultiData;
 struct JsonData;
 struct ErrorData;
+struct FileData;struct IOFailureData;
+struct FileValue {std::shared_ptr<FileData> data;};
+struct IOFailureValue {std::shared_ptr<const IOFailureData> data;};
 struct ErrorValue { std::shared_ptr<const ErrorData> data; };
 struct ListData;
 struct NumericValue { std::string type;std::variant<std::int64_t,std::uint64_t,double> number; };
@@ -52,11 +55,11 @@ struct SliceValue {
     SliceValue(std::shared_ptr<std::vector<Value>> values,std::size_t offset,std::size_t count,bool write,std::string element):storage(std::move(values)),start(offset),length(count),writable(write),element_type(std::move(element)){}
 };
 struct StructValue { std::shared_ptr<StructData> data; bool writable{true}; };
-struct Callable { const Node* function{}; std::string builtin; std::optional<StructValue> receiver; std::shared_ptr<void> closure;
+struct Callable { const Node* function{}; std::string builtin; std::optional<StructValue> receiver; std::shared_ptr<void> closure;std::function<bool(unsigned)> resource_guard;
     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
 };
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue>;
     Data data;
     Value() = default;
     template<class T> explicit Value(T value) : data(std::move(value)) {}
@@ -68,6 +71,7 @@ struct ErrorData {
     std::shared_ptr<const ErrorData> cause;
     bool truncated{};
 };
+struct IOFailureData {ErrorValue error;std::optional<std::int64_t> transferred;std::optional<BytesValue> partial;};
 struct ListData { std::string element_type; std::vector<Value> values; };
 struct StructData { std::string name; std::map<std::string, Value> fields; };
 struct MapData { std::string key_type, item_type; std::map<MapKey, Value> entries; };
@@ -111,7 +115,9 @@ bool contextual_literal(const Node& node);
 Value literal(const Node& node);
 Value unary_value(std::string_view op, const Value& value, const SourceSpan& span);
 Value binary_value(std::string_view op, const Value& left, const Value& right, const SourceSpan& span, bool contextual_right=false);
-Value copy_value(const Value& value, bool deep_slices = false, unsigned depth = 0);
+bool contains_file(const Value&,unsigned depth=0);
+Value copy_value(const Value& value, bool deep_slices = false, unsigned depth = 0, bool resource_alias = false);
+Value copy_value(Value&& value, bool deep_slices = false, unsigned depth = 0, bool resource_alias = false);
 Value read_only(Value value);
 Value enforce_type(Value value, const std::string& expected, const SourceSpan& span, bool contextual_number = false);
 std::int64_t as_int(const Value& value, const SourceSpan& span);

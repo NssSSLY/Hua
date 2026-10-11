@@ -1,0 +1,34 @@
+# A05 对照模型：直接递归值节点，仅用来验证表示边界。
+import ast_pool as ast
+import std.list as list
+pub struct DirectNode {
+    payload ast.Payload
+    span ast.SourceSpan
+    children []DirectNode
+}
+pub fn leaf(value int, position ast.SourceSpan) DirectNode {
+    var empty []DirectNode = []
+    return DirectNode{payload:ast.Payload.Integer(value),span:position,children:empty}
+}
+pub fn binary(op string, position ast.SourceSpan, left DirectNode, right DirectNode) DirectNode {
+    return DirectNode{payload:ast.Payload.Binary(op),span:position,children:[left,right]}
+}
+pub fn visits(node DirectNode) int {
+    var result = 1
+    for child in node.children { result += visits(child) }
+    return result
+}
+# 重建子树；避免在每个递归层重复 clone 整棵子树。递归深度限制仍在。
+pub fn replace_integer(node DirectNode, before int, after int) DirectNode {
+    var payload = node.payload
+    match node.payload {
+        ast.Payload.Integer(n)=>{ if n == before { payload = ast.Payload.Integer(after) } }
+        _=>{}
+    }
+    var empty []DirectNode = []
+    var children = list.from_slice(empty)
+    for child in node.children {
+        unwrap(list.append(children,replace_integer(child,before,after)))
+    }
+    return DirectNode{payload:payload,span:node.span,children:list.snapshot(children)}
+}

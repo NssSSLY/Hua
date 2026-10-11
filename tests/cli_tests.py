@@ -26,8 +26,12 @@ for args in ([], ["run"], ["ast"], ["check"], ["version", "extra"], ["unknown", 
     run(args, 2, stderr="Usage:")
 run(["check", root / "does-not-exist.hua"], 1, stderr="error[E0001]")
 for path in sorted((root / "examples").glob("*.hua")):
-    run(["check", path], 0, "OK\n")
     run(["ast", path], 0, "(Program")
+    if path.name == "unsafe_parse.hua":
+        result=run(["check", path], 1, stderr="error[E3008]")
+        assert not result.stdout
+    else:
+        run(["check", path], 0, "OK\n")
 result = run(["check", root / "tests/spec/101_invalid_binding.hua"], 1,
              stderr="101_invalid_binding.hua:1:5")
 assert not result.stdout and "let = 1" in result.stderr and "^" in result.stderr

@@ -1,0 +1,420 @@
+# C03-N1：本地模块与词法名称分析；不执行初始化、不进行类型/能力检查。
+import parser as parser
+import ast_pool as ast
+import catalog as catalog
+import std.list as list
+import std.fs as fs
+import std.path as path
+import std.os as os
+import std.strings as strings
+import std.json as json
+import std.alg as alg
+
+pub struct Unit { id string
+    path string
+    key string
+    tree parser.Tree }
+pub struct Edge { source string
+    target string
+    namespace string
+    node int }
+pub struct Symbol { module string
+    node int
+    name string
+    kind string
+    published bool
+    scope int
+    target string }
+pub struct Reference { module string
+    node int
+    name string
+    target string
+    type_name bool }
+pub struct Limits { depth int
+    modules int
+    levels int
+    source_bytes_total int
+    symbols int
+    references int
+    work int
+    compiler bool }
+pub fn defaults() Limits { return Limits{depth:24,modules:8,levels:4,source_bytes_total:32768,symbols:512,references:1024,work:8192,compiler:false} }
+pub fn compiler_limits() Limits { return Limits{depth:64,modules:32,levels:12,source_bytes_total:1048576,symbols:8192,references:32768,work:262144,compiler:true} }
+pub struct Graph { globals map[string]int
+    limits Limits
+ root string
+    units List<Unit>
+    edges List<Edge>
+    symbols List<Symbol>
+    references List<Reference>
+    order List<string>
+    active List<string>
+    total_bytes int
+    work int }
+struct Environment { unit string
+    pool ast.Pool
+    imports []Edge
+    scopes List<int>
+    locals map[string]Symbol
+    visible map[string]bool
+    next_scope int
+    depth int }
+fn error(id string, n ast.Node, code string, reason string) string {
+    return code+"@"+str(n.span.line)+":"+str(n.span.column)+" ["+id+"] "+reason
+}
+fn check_work(g mut Graph, unit string, n ast.Node) Result<void> {
+    if g.work >= g.limits.work { return err(error(unit,n,"E5005","analysis work budget")) }
+    g.work += 1
+    return ok()
+}
+fn declared(text string) string { return strings.split(text," ")[0] }
+fn namespace_root(text string) string { return strings.split(text,".")[0] }
+fn cache_key(p string) string {
+    if strings.index(p,":") >= 0 || strings.starts_with(p,"//") { return strings.lower_ascii(p) }
+    return p
+}
+fn unit_index(g Graph, id string) int {
+    for i in 0..list.len(g.units) { if unwrap(list.get(g.units,i)).id == id { return i } }
+    return -1
+}
+fn global(g Graph, module string, name string) Symbol? {
+    let key = module+"#"+name
+    if !has(g.globals,key) { return nil }
+    return unwrap(list.get(g.symbols,unwrap(g.globals[key])))
+}
+fn add_global(g mut Graph, u Unit, n ast.Node, name string, kind string, published bool) Result<void> {
+    if name == "_" { return ok() }
+    if is_some(global(g,u.id,name)) { return err(error(u.id,n,"E3002","duplicate declaration "+name)) }
+    if list.len(g.symbols) >= g.limits.symbols { return err(error(u.id,n,"E5005","symbol budget")) }
+    g.globals[u.id+"#"+name] = list.len(g.symbols)
+    list.append(g.symbols,Symbol{module:u.id,node:n.id.index,name:name,kind:kind,published:published,scope:0,target:u.id+"#"+name})?
+    return ok()
+}
+fn collect(g mut Graph, u Unit) Result<void> {
+    let root = ast.get(u.tree.pool,u.tree.root)?
+    for id in root.children {
+        let n = ast.get(u.tree.pool,id)?
+        check_work(g,u.id,n)?
+        let k = ast.kind(n.payload)
+        let name = declared(ast.payload_text(n.payload))
+        if alg.contains(["Function","Struct","Enum","Let","Var","Const"],k) {
+            if strings.starts_with(name,"__") { return err(error(u.id,n,"E8201","internal declaration name")) }
+            if k == "Struct" && alg.contains(["Json","Bytes","Buffer","List","Task"],name) { return err(error(u.id,n,"E3002","reserved standard type")) }
+            let published = strings.ends_with(ast.payload_text(n.payload)," pub")
+            add_global(g,u,n,name,k,published)?
+            if k == "Enum" { for variant in n.children {
+                let v = ast.get(u.tree.pool,variant)?
+                add_global(g,u,v,name+"."+ast.payload_text(v.payload),"Variant",published)? } }
+        } else if k == "MultiBinding" {
+            let names = ast.get(u.tree.pool,n.children[0])?
+            for id in names.children { let p = ast.get(u.tree.pool,id)?
+                add_global(g,u,p,ast.payload_text(p.payload),ast.payload_text(n.payload),false)? }
+        }
+    }
+    for edge in list.snapshot(g.edges) {
+        if edge.source == u.id && is_some(global(g,u.id,namespace_root(edge.namespace))) { return err(error(u.id,root,"E5004","import namespace conflicts with declaration")) }
+    }
+    return ok()
+}
+# No canonical API exists in SB1: inspect every dependency component and fail closed on symlinks.
+fn inspect(g Graph, relative string, site ast.Node, source string) Result<string> {
+    let parts = strings.split(relative,"/")
+    var current = g.root
+    for i in 0..len(parts) {
+        current = path.join([current,parts[i]])?
+        let info = fs.stat(current)
+        if is_err(info) { return ok("") }
+        let kind = json.as_string(json.get(unwrap(info),"kind")?)?
+        if kind == "symlink" { return err(error(source,site,"E8302","symlink dependency is outside this resolver contract")) }
+        if i+1 < len(parts) && kind != "directory" { return ok("") }
+        if i+1 == len(parts) && kind != "file" { return ok("") }
+    }
+    return ok(current)
+}
+fn resolve(g Graph, name string, site ast.Node, source string) Result<string> {
+    let relative = strings.replace(name,".","/")
+    for candidate in [relative+".hua",relative+"/package.hua"] {
+        let p = inspect(g,candidate,site,source)?
+        if p != "" { return ok(p) }
+    }
+    for candidate in [relative+".huam",relative+"/package.huam",relative+".wasm",relative+"/package.wasm"] {
+        if inspect(g,candidate,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
+    }
+    return err(error(source,site,"E5001","cannot resolve module "+name))
+}
+fn visit(g mut Graph, filename string, site ast.Node, parent string) Result<string> {
+    let normalized = path.normalize(filename)?
+    let key = cache_key(normalized)
+    for unit in list.snapshot(g.units) {
+        if unit.key == key {
+            if alg.contains(list.snapshot(g.active),unit.id) { return err(error(parent,site,"E5002","cyclic module import "+unit.id)) }
+            return ok(unit.id)
+        }
+    }
+    if list.len(g.units) >= g.limits.modules || list.len(g.active) >= g.limits.levels { return err(error(parent,site,"E5005","module count/dependency depth budget")) }
+    let info = fs.stat(normalized)
+    if is_err(info) { return err(error(parent,site,"E5001","cannot read source")) }
+    let kind = json.as_string(json.get(unwrap(info),"kind")?)?
+    if kind != "file" { return err(error(parent,site,"E8204","source must be a regular file")) }
+    let size = json.as_int(json.get(unwrap(info),"size_bytes")?)?
+    var per_file = parser.defaults().source_bytes
+    if g.limits.compiler { per_file = parser.compiler_limits().source_bytes }
+    if size > per_file || g.total_bytes+size > g.limits.source_bytes_total { return err(error(parent,site,"E5005","module byte budget")) }
+    let raw = fs.read_text(normalized)
+    if is_err(raw) { return err(error(parent,site,"E8204",unwrap_err(raw))) }
+    let id = path.relative(normalized,g.root)?
+    if id == ".." || strings.starts_with(id,"../") { return err(error(parent,site,"E8302","source outside project root")) }
+    var parsed Result<parser.Tree> = err("uninitialized")
+    if g.limits.compiler { parsed = parser.parse_compiler(unwrap(raw),id) }
+    else { parsed = parser.parse_extended(unwrap(raw),id) }
+    if is_err(parsed) { return err(unwrap_err(parsed)+" ["+id+"]") }
+    let unit = Unit{id:id,path:normalized,key:key,tree:unwrap(parsed)}
+    g.total_bytes += unit.tree.source_bytes
+    if g.total_bytes > g.limits.source_bytes_total { return err(error(parent,site,"E5005","module byte budget")) }
+    list.append(g.units,unit)?
+    list.append(g.active,id)?
+    let root = ast.get(unit.tree.pool,unit.tree.root)?
+    var declarations = false
+    for child in root.children {
+        let n = ast.get(unit.tree.pool,child)?
+        check_work(g,unit.id,n)?
+        if ast.kind(n.payload) != "Import" { declarations = true
+            continue }
+        if declarations { return err(error(id,n,"E5004","imports must precede declarations")) }
+        let name = ast.payload_text(n.payload)
+        var ns = name
+        if len(n.children) == 1 { ns = ast.payload_text(ast.get(unit.tree.pool,n.children[0])?.payload) }
+        for edge in list.snapshot(g.edges) {
+            if edge.source == id {
+                if edge.namespace == ns { return err(error(id,n,"E5004","duplicate import namespace")) }
+                if strings.starts_with(ns,edge.namespace+".") || strings.starts_with(edge.namespace,ns+".") { return err(error(id,n,"E8201","overlapping namespace prefixes need later resolution")) }
+            }
+        }
+        var target = ""
+        if strings.starts_with(name,"std.") || name == "std" {
+            if !catalog.module(name) { return err(error(id,n,"E8201","standard module is outside SB1")) }
+            target = "builtin:"+name
+        } else { target = visit(g,resolve(g,name,n,id)?,n,id)? }
+        list.append(g.edges,Edge{source:id,target:target,namespace:ns,node:n.id.index})?
+    }
+    list.pop(g.active)?
+    list.append(g.order,id)?
+    return ok(id)
+}
+fn enter_scope(e mut Environment) Result<void> {
+    list.append(e.scopes,e.next_scope)?
+    e.next_scope += 1
+    return ok()
+}
+fn local(e Environment, name string) Symbol? {
+    var i = list.len(e.scopes)
+    while i > 0 {
+        i -= 1
+        let scope = unwrap(list.get(e.scopes,i))
+        let found = e.locals[str(scope)+":"+name]
+        if is_some(found) { return found }
+    }
+    return nil
+}
+fn define(g mut Graph, e mut Environment, n ast.Node, name string, kind string) Result<void> {
+    if name == "_" { return ok() }
+    let u = e.unit
+    let scope = list.get(e.scopes,list.len(e.scopes)-1)?
+    let key = str(scope)+":"+name
+    if has(e.locals,key) { return err(error(u,n,"E3002","duplicate declaration "+name)) }
+    if list.len(g.symbols) >= g.limits.symbols { return err(error(u,n,"E5005","symbol budget")) }
+    let item = Symbol{module:u,node:n.id.index,name:name,kind:kind,published:false,scope:scope,target:u+"#s"+str(scope)+":"+name}
+    e.locals[key] = item
+    list.append(g.symbols,item)?
+    return ok()
+}
+fn reference(g mut Graph, e Environment, n ast.Node, name string, type_name bool) Result<void> {
+    let u = e.unit
+    var target = ""
+    let base = namespace_root(name)
+    let l = local(e,base)
+    if !type_name && is_some(l) { target = unwrap(l).target }
+    if target == "" {
+        for edge in e.imports {
+            if edge.source != u { continue }
+            if strings.starts_with(name,edge.namespace+".") {
+                let member = strings.slice(name,len(edge.namespace)+1,len(name))?
+                if strings.starts_with(edge.target,"builtin:") {
+                    let module = strings.slice(edge.target,8,len(edge.target))?
+                    if !alg.contains(catalog.exports(module),member) || (type_name && !catalog.type_export(module,member)) { return err(error(u,n,"E5003","module has no public export "+member)) }
+                    target = edge.target+"#"+member
+                } else {
+                    let symbol = global(g,edge.target,member)
+                    if is_none(symbol) || !unwrap(symbol).published { return err(error(u,n,"E5003","module has no public export "+member)) }
+                    let item = unwrap(symbol)
+                    if type_name && item.kind != "Struct" && item.kind != "Enum" { return err(error(u,n,"E5003","export is not a type")) }
+                    if !type_name && (item.kind == "Struct" || item.kind == "Enum") { return err(error(u,n,"E5003","export type requires named-field initializer")) }
+                    target = item.target
+                }
+                break
+            }
+            if name == namespace_root(edge.namespace) && !type_name { return err(error(u,n,"E5003","module namespace requires qualified export")) }
+        }
+    }
+    if target == "" {
+        let symbol = global(g,u,name)
+        if is_some(symbol) {
+            let item = unwrap(symbol)
+            if type_name {
+                if item.kind == "Struct" || item.kind == "Enum" { target = item.target }
+            } else if has(e.visible,name) { target = item.target }
+        }
+    }
+    if target == "" {
+        if type_name && catalog.primitive(name) { target = "builtin:type:"+name }
+        else if !type_name && catalog.core(name) { target = "builtin:core:"+name }
+    }
+    if target == "" {
+        var code = "E3001"
+        if type_name { code = "E3004" }
+        return err(error(u,n,code,"undefined name "+name))
+    }
+    if list.len(g.references) >= g.limits.references { return err(error(u,n,"E5005","reference budget")) }
+    list.append(g.references,Reference{module:u,node:n.id.index,name:name,target:target,type_name:type_name})?
+    return ok()
+}
+fn dotted(pool ast.Pool, id ast.NodeId, source string, limit int) Result<string> {
+    let origin = ast.get(pool,id)?
+    var current = id
+    var suffix = ""
+    var depth = 0
+    while true {
+        if depth >= limit { return err(error(source,origin,"E5005","qualified name depth budget")) }
+        depth += 1
+        let n = ast.get(pool,current)?
+        if ast.kind(n.payload) == "Name" { return ok(ast.payload_text(n.payload)+suffix) }
+        if ast.kind(n.payload) != "Member" { return ok("") }
+        suffix = "."+ast.payload_text(n.payload)+suffix
+        current = n.children[0]
+    }
+    return ok("")
+}
+fn walk(g mut Graph, e mut Environment, id ast.NodeId, top bool) Result<void> {
+    let u = e.unit
+    let n = ast.get(e.pool,id)?
+    check_work(g,u,n)?
+    if e.depth >= g.limits.depth { return err(error(u,n,"E5005","analysis node depth budget")) }
+    e.depth += 1
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    if k == "Import" { if !top { return err(error(u,n,"E8201","nested imports are outside this module analyzer")) } }
+    else if k == "Name" { reference(g,e,n,text,false)? }
+    else if k == "TypeName" || k == "GenericType" { reference(g,e,n,text,true)?
+        for child in n.children { walk(g,e,child,false)? } }
+    else if k == "StructLiteral" { reference(g,e,n,text,true)?
+        for child in n.children { walk(g,e,child,false)? } }
+    else if k == "Member" {
+        let name = dotted(e.pool,id,u,g.limits.depth)?
+        var imported = false
+        if name != "" && is_none(local(e,namespace_root(name))) {
+            for edge in e.imports { if edge.source == u && strings.starts_with(name,edge.namespace+".") { imported = true } }
+            if is_some(global(g,u,name)) { imported = true }
+        }
+        if imported { reference(g,e,n,name,false)? }
+        else { walk(g,e,n.children[0],false)? }
+    }
+    else if k == "Block" { enter_scope(e)?
+        for child in n.children { walk(g,e,child,false)? }
+        list.pop(e.scopes)? }
+    else if k == "Function" {
+        let signature = ast.get(e.pool,n.children[0])?
+        # Types are resolved before value parameters enter scope.
+        for child in signature.children {
+            let p = ast.get(e.pool,child)?
+            for typ in p.children { walk(g,e,typ,false)? }
+        }
+        enter_scope(e)?
+        for child in signature.children {
+            let p = ast.get(e.pool,child)?
+            if ast.kind(p.payload) == "Parameter" { define(g,e,p,declared(ast.payload_text(p.payload)),"Parameter")? }
+        }
+        walk(g,e,n.children[1],false)?
+        list.pop(e.scopes)?
+    }
+    else if k == "Let" || k == "Var" || k == "Const" {
+        for child in n.children { walk(g,e,child,false)? }
+        if top { e.visible[text] = true } else { define(g,e,n,text,k)? }
+    }
+    else if k == "MultiBinding" {
+        let names = ast.get(e.pool,n.children[0])?
+        for child in names.children { let p = ast.get(e.pool,child)?
+            for typ in p.children { walk(g,e,typ,false)? } }
+        walk(g,e,n.children[1],false)?
+        for child in names.children { let p = ast.get(e.pool,child)?
+            let name = ast.payload_text(p.payload)
+            if top { e.visible[name] = true } else { define(g,e,p,name,text)? } }
+    }
+    else if k == "MultiAssignment" {
+        let names = ast.get(e.pool,n.children[0])?
+        for child in names.children { let p = ast.get(e.pool,child)?
+            if ast.kind(p.payload) != "Name" || ast.payload_text(p.payload) != "_" { walk(g,e,child,false)? } }
+        walk(g,e,n.children[1],false)?
+    }
+    else if k == "For" {
+        let count = len(n.children)-2
+        walk(g,e,n.children[count],false)?
+        enter_scope(e)?
+        for i in 0..count { let p = ast.get(e.pool,n.children[i])?
+            define(g,e,p,ast.payload_text(p.payload),"For")? }
+        walk(g,e,n.children[count+1],false)?
+        list.pop(e.scopes)?
+    }
+    else if k == "MatchArm" {
+        let pattern = ast.get(e.pool,n.children[0])?
+        # Bare enum variant patterns need scrutinee type information in C04.
+        if ast.kind(pattern.payload) == "Name" && strings.index(ast.payload_text(pattern.payload),".") >= 0 { reference(g,e,pattern,ast.payload_text(pattern.payload),false)? }
+        enter_scope(e)?
+        let bindings = ast.get(e.pool,n.children[1])?
+        for child in bindings.children { let p = ast.get(e.pool,child)?
+            define(g,e,p,ast.payload_text(p.payload),"Pattern")? }
+        walk(g,e,n.children[2],false)?
+        list.pop(e.scopes)?
+    }
+    else { for child in n.children { walk(g,e,child,false)? } }
+    e.depth -= 1
+    return ok()
+}
+pub fn analyze(entry string) Result<Graph> { return analyze_impl(entry,defaults()) }
+pub fn analyze_compiler(entry string) Result<Graph> { return analyze_impl(entry,compiler_limits()) }
+fn analyze_impl(entry string, limits Limits) Result<Graph> {
+    let normalized = path.join([os.cwd()?,entry])?
+    let root = path.dirname(normalized)?
+    var units []Unit = []
+    var edges []Edge = []
+    var symbols []Symbol = []
+    var references []Reference = []
+    var names []string = []
+    var g = Graph{globals:map[string]int{},limits:limits,root:root,units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0}
+    # A validated empty source supplies the entry error location before the actual parse.
+    let seed = parser.parse_extended("",path.basename(normalized)?)?
+    let site = ast.get(seed.pool,seed.root)?
+    visit(g,normalized,site,path.basename(normalized)?)?
+    for u in list.snapshot(g.units) { collect(g,u)? }
+    for id in list.snapshot(g.order) {
+        let index = unit_index(g,id)
+        let u = list.get(g.units,index)?
+        var scope []int = []
+        var empty []Edge = []
+        var imports = list.from_slice(empty)
+        for edge in list.snapshot(g.edges) { if edge.source == u.id { list.append(imports,edge)? } }
+        var e = Environment{unit:u.id,pool:u.tree.pool,imports:list.snapshot(imports),scopes:list.from_slice(scope),locals:map[string]Symbol{},visible:map[string]bool{},next_scope:1,depth:0}
+        for symbol in list.snapshot(g.symbols) {
+            if symbol.module == id && symbol.scope == 0 && alg.contains(["Function","Struct","Enum","Variant"],symbol.kind) { e.visible[symbol.name] = true }
+        }
+        let program = ast.get(u.tree.pool,u.tree.root)?
+        for child in program.children {
+            let n = ast.get(u.tree.pool,child)?
+            if ast.kind(n.payload) != "Function" { walk(g,e,child,true)? }
+        }
+        for child in program.children {
+            let n = ast.get(u.tree.pool,child)?
+            if ast.kind(n.payload) == "Function" { walk(g,e,child,true)? }
+        }
+    }
+    return ok(g)
+}

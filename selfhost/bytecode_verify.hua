@@ -1,0 +1,283 @@
+# C06-BC1 验证器：全部元数据，及可达值/位置栈、作用域、迭代器汇合。
+import bytecode as bc
+import type_rules as rules
+import signatures as signatures
+import catalog as catalog
+import std.list as list
+import std.strings as strings
+import std.alg as alg
+import std.json as json
+pub struct Verification { instructions int
+    reachable int
+    slots int
+    work int
+    max_stack int
+    max_scopes int
+    max_iterators int }
+struct Flow { stack string
+    scopes int
+    iterators int }
+struct State { seen map[int]Flow
+    queue List<int>
+    flow Flow
+    result Verification }
+struct Catalog { globals map[string]bool
+    structures map[string]bool
+    functions map[string]bool }
+fn error(image bc.Image, op bc.Instruction, text string) string {
+    if op.site<0 || op.site>=list.len(image.sites) { return "E6002@1:1 C06 "+text }
+    let s = unwrap(list.get(image.sites,op.site))
+    return "E6002@"+str(s.line)+":"+str(s.column)+" ["+s.module+"] C06 "+text
+}
+fn small(text string, empty bool) bool { return (empty || len(text)>0) && len(text)<=4096 && !strings.contains(text,"\0") }
+fn intrinsic(text string) bool {
+    var n = text
+    if strings.starts_with(n,"$core$") { n = rules.cut(n,6,len(n)) }
+    if strings.starts_with(n,"$std$") {
+        let parts = strings.split(rules.cut(n,5,len(n)),"$")
+        return len(parts)==2 && is_some(signatures.signature("builtin:std."+parts[0]+"#"+parts[1]))
+    }
+    return catalog.core(n)
+}
+fn valid_type(c Catalog, t string, depth int) bool {
+    if depth>64 || !small(t,true) { return false }
+    # 空类型是多数指令的合法默认字段，避免逐条分配原始类型名单。
+    if t=="" { return true }
+    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json"],t) || has(c.structures,t) { return true }
+    if strings.starts_with(t,"fn:") { return has(c.functions,rules.cut(t,3,len(t))) }
+    if strings.starts_with(t,"builtin:") { return intrinsic(rules.cut(t,8,len(t))) }
+    if strings.starts_with(t,"struct:") { return has(c.structures,rules.cut(t,7,len(t))) }
+    if strings.ends_with(t,"?") { return valid_type(c,rules.cut(t,0,len(t)-1),depth+1) }
+    if strings.starts_with(t,"[") {
+        let end = strings.index(t,"]")
+        if end<1 { return false }
+        let raw = rules.cut(t,1,end)
+        let count = strings.replace(raw,"_","")
+        if len(raw)>0 && len(count)==0 { return false }
+        for i in 0..len(count) { if !strings.contains("0123456789",rules.cut(count,i,i+1)) { return false } }
+        return valid_type(c,rules.cut(t,end+1,len(t)),depth+1)
+    }
+    for name in ["Result","List","map","multi"] {
+        let parts = rules.arguments(t,name)
+        if len(parts)==0 { continue }
+        if (name=="List" && len(parts)!=1) || ((name=="Result" || name=="map") && len(parts)!=2) || (name=="multi" && len(parts)<2) { return false }
+        for p in parts { if !valid_type(c,p,depth+1) { return false } }
+        return true
+    }
+    return false
+}
+fn scalar(value bc.Scalar) bool {
+    if value.kind==0 { return value.text=="" }
+    if value.kind==1 { return value.text=="true" || value.text=="false" }
+    if value.kind==4 { return len(value.text)<=16777216 }
+    if value.kind!=2 && value.kind!=3 { return false }
+    let j = json.decode(value.text)
+    if is_err(j) { return false }
+    if value.kind==2 {
+        let n = json.as_int(unwrap(j))
+        return is_ok(n) && str(unwrap(n))==value.text
+    }
+    return is_ok(json.as_float(unwrap(j)))
+}
+fn metadata(image bc.Image, c Catalog, code bc.Code, returns []string) Result<void> {
+    let size = list.len(code.instructions)
+    if size==0 || size>250000 || !small(code.name,false) { return err("E6002@1:1 C06 empty/oversized code") }
+    var names = map[string]bool{}
+    for n,_ in c.globals { names[n] = true }
+    for f in list.snapshot(image.functions) { if f.name==code.name { for p in f.parameters { names[p.name] = true } } }
+    # 逻辑名称核验独立于可达栈；完整定值/可见性证明属于 C04，非数据流类型推断。
+    for op in list.snapshot(code.instructions) {
+        if op.op==2 { names[op.text] = true }
+        if op.op==35 || op.op==25 { for n in op.names { names[n] = true } }
+    }
+    for op in list.snapshot(code.instructions) {
+        let e = error(image,op,"invalid metadata")
+        if op.op<0 || op.op>40 || op.op==31 || op.op==39 { return err(error(image,op,"unsupported/unknown opcode")) }
+        if op.site<0 || op.site>=list.len(image.sites) || op.argument<0 || op.argument>4096 || op.target<0 || !small(op.text,true) || !(op.op==27 && op.type_name=="E4002") && !valid_type(c,op.type_name,0) || !scalar(op.constant) || len(op.names)>4096 || len(op.contextual)>4096 { return err(e) }
+        if op.op!=0 && (op.constant.kind!=0 || op.constant.text!="") { return err(error(image,op,"constant on non-constant instruction")) }
+        for n in op.names { if !small(n,false) { return err(e) } }
+        if alg.contains([6,7,8,25],op.op) && op.target>=size { return err(error(image,op,"jump target out of bounds")) }
+        if op.op==25 && (len(op.names)==0 || len(op.names)>2) { return err(e) }
+        if op.op==18 && len(op.contextual)!=2 { return err(e) }
+        if (op.op==21 || op.op==40) && len(op.contextual)!=op.argument { return err(e) }
+        if op.op==2 && (len(op.contextual)!=1 || op.text=="" || op.type_name=="") { return err(e) }
+        if op.op==34 && (op.argument<2 || len(op.contextual)!=op.argument) { return err(e) }
+        if op.op==35 {
+            let types = rules.arguments(op.type_name,"multi")
+            if op.argument<2 || len(op.names)!=op.argument || len(types)!=op.argument { return err(e) }
+            var seen = map[string]bool{}
+            for n in op.names { if n!="_" && has(seen,n) { return err(error(image,op,"duplicate multiple binding")) }
+                seen[n] = true }
+        }
+        if op.op==36 && op.argument<2 { return err(e) }
+        if op.op==32 {
+            let parts = rules.arguments(op.type_name,"map")
+            if len(parts)!=2 || !alg.contains(["bool","int","string"],parts[0]) || parts[1]=="" || parts[1]=="void" || strings.starts_with(parts[1],"Result<") { return err(e) }
+        }
+        if op.op==37 && (len(returns)!=1 || len(rules.arguments(returns[0],"Result"))!=2) { return err(error(image,op,"propagation requires Result-returning function")) }
+        if op.op==4 && !alg.contains(["+","-","!","~"],op.text) { return err(e) }
+        if op.op==5 && !alg.contains(["+","-","*","/","//","%","**","&","|","^","<<",">>","==","!=","<",">","<=",">=","&&","||"],op.text) { return err(e) }
+        if op.op==15 && !alg.contains(["=","+=","-=","*=","/=","//=","%=","**="],op.text) { return err(e) }
+        if op.op==19 && !has(c.structures,op.text) { return err(error(image,op,"unknown structure")) }
+        if (op.op==1 || op.op==12) && op.text!="_" && !has(names,op.text) && !(op.op==1 && intrinsic(op.text)) { return err(error(image,op,"unknown binding/function")) }
+        if op.op==27 && (op.type_name!="E4002" || op.text=="") { return err(error(image,op,"invalid literal failure")) }
+    }
+    return ok()
+}
+fn pop(s mut State, location bool) Result<void> {
+    let wanted = "v"
+    var expected = wanted
+    if location { expected = "l" }
+    if len(s.flow.stack)==0 || !strings.ends_with(s.flow.stack,expected) { return err("operand stack underflow/kind mismatch") }
+    s.flow.stack = rules.cut(s.flow.stack,0,len(s.flow.stack)-1)
+    return ok()
+}
+fn merge(s mut State, code bc.Code, pc int) Result<void> {
+    if pc<0 || pc>=list.len(code.instructions) { return err("code falls off its end") }
+    if len(s.flow.stack)>4096 || s.flow.scopes>384 || s.flow.iterators>192 { return err("VM state depth limit") }
+    if has(s.seen,pc) {
+        let prev = unwrap(s.seen[pc])
+        if prev.stack!=s.flow.stack || prev.scopes!=s.flow.scopes || prev.iterators!=s.flow.iterators { return err("incompatible stack/scope/iterator merge") }
+        return ok()
+    }
+    s.result.slots += len(s.flow.stack)+1
+    if s.result.slots>16000000 { return err("verification state slot budget") }
+    s.result.max_stack = max(s.result.max_stack,len(s.flow.stack))
+    s.result.max_scopes = max(s.result.max_scopes,s.flow.scopes)
+    s.result.max_iterators = max(s.result.max_iterators,s.flow.iterators)
+    s.seen[pc] = s.flow
+    list.append(s.queue,pc)?
+    return ok()
+}
+fn transition(s mut State, code bc.Code, op bc.Instruction) Result<bool> {
+    let k = op.op
+    if alg.contains([0,1,16,19,32],k) { s.flow.stack += "v" }
+    else if alg.contains([2,3,35],k) { pop(s,false)? }
+    else if alg.contains([4,20,37],k) { pop(s,false)?
+        s.flow.stack += "v" }
+    else if k==5 || k==17 { pop(s,false)?
+        pop(s,false)?
+        s.flow.stack += "v" }
+    else if k==6 { merge(s,code,op.target)?
+        return ok(false) }
+    else if k==7 || k==8 { pop(s,false)?
+        merge(s,code,op.target)? }
+    else if k==9 { s.flow.scopes += 1 }
+    else if k==10 { if s.flow.scopes==0 { return err("scope underflow") }
+        s.flow.scopes -= 1 }
+    else if k==11 { if op.argument>s.flow.scopes { return err("scope unwind underflow") }
+        s.flow.scopes -= op.argument }
+    else if k==12 { s.flow.stack += "l" }
+    else if k==13 { pop(s,false)?
+        s.flow.stack += "l" }
+    else if k==14 { pop(s,false)?
+        pop(s,false)?
+        s.flow.stack += "l" }
+    else if k==15 { pop(s,false)?
+        pop(s,true)?
+        s.flow.stack += "v" }
+    else if k==18 { pop(s,false)?
+        pop(s,false)?
+        pop(s,false)?
+        s.flow.stack += "v" }
+    else if k==28 || k==38 { if !strings.ends_with(s.flow.stack,"v") { return err("index/slice target stack mismatch") } }
+    else if k==29 || k==30 { pop(s,false)?
+        if !strings.ends_with(s.flow.stack,"v") { return err("builder stack mismatch") } }
+    else if k==33 { pop(s,false)?
+        pop(s,false)?
+        if !strings.ends_with(s.flow.stack,"v") { return err("map builder stack mismatch") } }
+    else if k==34 { for i in 0..op.argument { pop(s,false)? }
+        s.flow.stack += "v" }
+    else if k==36 { pop(s,false)?
+        for i in 0..op.argument { pop(s,true)? } }
+    else if k==21 || k==40 { for i in 0..op.argument { pop(s,false)? }
+        pop(s,false)?
+        if k==21 { s.flow.stack += "v" } }
+    else if k==22 { pop(s,false)?
+        if len(s.flow.stack)!=0 { return err("return operand stack mismatch") }
+        return ok(false) }
+    else if k==23 { pop(s,false)?
+        pop(s,false)?
+        pop(s,false)?
+        s.flow.iterators += 1 }
+    else if k==24 { pop(s,false)?
+        s.flow.iterators += 1 }
+    else if k==25 { if s.flow.iterators==0 { return err("iterator underflow") }
+        merge(s,code,op.target)?
+        s.flow.scopes += 1 }
+    else if k==26 { if s.flow.iterators==0 { return err("iterator end underflow") }
+        s.flow.iterators -= 1 }
+    else if k==27 { return ok(false) }
+    else { return err("unhandled opcode") }
+    return ok(true)
+}
+fn verify_code(image bc.Image, catalog Catalog, code bc.Code, returns []string, result Verification) Result<Verification> {
+    metadata(image,catalog,code,returns)?
+    var empty []int = []
+    var s = State{seen:map[int]Flow{},queue:list.from_slice(empty),flow:Flow{stack:"",scopes:0,iterators:0},result:result}
+    merge(s,code,0)?
+    var cursor = 0
+    while cursor<list.len(s.queue) {
+        let pc = list.get(s.queue,cursor)?
+        cursor += 1
+        s.result.reachable += 1
+        s.result.work += 1
+        if s.result.work>4194304 { return err("E8202@1:1 C06 verification work budget") }
+        s.flow = unwrap(s.seen[pc])
+        let op = list.get(code.instructions,pc)?
+        let next = transition(s,code,op)
+        if is_err(next) { return err(error(image,op,unwrap_err(next))) }
+        if unwrap(next) {
+            let joined = merge(s,code,pc+1)
+            if is_err(joined) { return err(error(image,op,unwrap_err(joined))) }
+        }
+    }
+    s.result.instructions += list.len(code.instructions)
+    return ok(s.result)
+}
+pub fn verify(image bc.Image) Result<Verification> {
+    if image.instructions<2 || image.instructions>1000000 || image.work<image.instructions || image.work>4194304 || list.len(image.sites)>262145 || image.initializer.name!="<initialize>" { return err("E6002@1:1 C06 invalid image budget/header") }
+    var nodes = map[int]bool{}
+    for site in list.snapshot(image.sites) {
+        if site.node < -1 || site.node >= 262144 || has(nodes,site.node) || site.start<0 || site.end<site.start || site.line<1 || site.column<1 || !small(site.module,false) { return err("E6002@1:1 C06 invalid source site") }
+        nodes[site.node] = true
+        if site.node==-1 {
+            if site.origin!=-1 || site.role!="initializer" || site.start!=0 || site.end!=0 || site.line!=1 || site.column!=1 || site.module!=image.entry { return err("E6002@1:1 C06 invalid initializer site") }
+        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor"],site.role) { return err("E6002@1:1 C06 invalid source origin") }
+    }
+    var c = Catalog{globals:map[string]bool{},structures:map[string]bool{},functions:map[string]bool{}}
+    for st in list.snapshot(image.structures) {
+        if !small(st.name,false) || has(c.structures,st.name) || st.site<0 || st.site>=list.len(image.sites) || len(st.fields)>4096 { return err("E6002@1:1 C06 invalid structure metadata") }
+        c.structures[st.name] = true
+    }
+    for f in list.snapshot(image.functions) {
+        if !small(f.name,false) || has(c.functions,f.name) || has(c.structures,f.name) || f.name!=f.code.name || f.site<0 || f.site>=list.len(image.sites) || len(f.parameters)>4096 || len(f.returns)>4096 { return err("E6002@1:1 C06 invalid function metadata") }
+        c.functions[f.name] = true
+        c.globals[f.name] = true
+    }
+    for st in list.snapshot(image.structures) {
+        var names = map[string]bool{}
+        for field in st.fields {
+            if !small(field.name,false) || has(names,field.name) || !valid_type(c,field.type_name,0) || field.site<0 || field.site>=list.len(image.sites) { return err("E6002@1:1 C06 invalid field metadata") }
+            names[field.name] = true
+        }
+    }
+    for f in list.snapshot(image.functions) {
+        var names = map[string]bool{}
+        for p in f.parameters {
+            if !small(p.name,false) || has(names,p.name) || !valid_type(c,p.type_name,0) || p.site<0 || p.site>=list.len(image.sites) { return err("E6002@1:1 C06 invalid parameter metadata") }
+            names[p.name] = true
+        }
+        for t in f.returns { if !valid_type(c,t,0) { return err("E6002@1:1 C06 invalid return metadata") } }
+        if f.name=="main" && len(f.parameters)!=0 { return err("E6002@1:1 C06 main requires zero parameters") }
+    }
+    for op in list.snapshot(image.initializer.instructions) {
+        if op.op==2 { c.globals[op.text] = true }
+        if op.op==35 { for n in op.names { c.globals[n] = true } }
+    }
+    let zero = Verification{instructions:0,reachable:0,slots:0,work:0,max_stack:0,max_scopes:0,max_iterators:0}
+    var result = verify_code(image,c,image.initializer,[],zero)?
+    for f in list.snapshot(image.functions) { result = verify_code(image,c,f.code,f.returns,result)? }
+    if result.instructions!=image.instructions { return err("E6002@1:1 C06 instruction count mismatch") }
+    return ok(result)
+}

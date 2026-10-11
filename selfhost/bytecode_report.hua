@@ -1,0 +1,50 @@
+import bytecode as bc
+import bytecode_verify as verify
+import types as types
+import ast_pool as ast
+import std.list as list
+import std.bytes as bytes
+import std.json as json
+struct Source { module string
+    text string }
+struct Code { name string
+    instructions []bc.Instruction }
+struct Function { name string
+    site int
+    published bool
+    writable bool
+    parameters []bc.Parameter
+    returns []string
+    code Code }
+struct Report { schema string
+    profile string
+    status string
+    source string
+    entry string
+    sources []Source
+    sites []bc.Site
+    structures []bc.Structure
+    functions []Function
+    initializer Code
+    instructions int
+    work int
+    verification verify.Verification }
+struct Failure { schema string
+    profile string
+    status string
+    source string
+    stage string
+    error string }
+pub fn failure(source string, detail string) string { return unwrap(json.encode(Failure{schema:"hua.bytecode.image.v1",profile:"C06-BC1",status:"error",source:source,stage:"bytecode",error:detail})) }
+pub fn success(image bc.Image, model types.Model, source string, checked verify.Verification) Result<string> {
+    var empty []Source = []
+    var sources = list.from_slice(empty)
+    for unit in list.snapshot(model.graph.units) {
+        let origin = unwrap(ast.source_info(unit.tree.pool,unwrap(ast.get(unit.tree.pool,unit.tree.root)).span.source))
+        list.append(sources,Source{module:unit.id,text:bytes.to_text(origin.data)?})?
+    }
+    var fs []Function = []
+    var functions = list.from_slice(fs)
+    for f in list.snapshot(image.functions) { list.append(functions,Function{name:f.name,site:f.site,published:f.published,writable:f.writable,parameters:f.parameters,returns:f.returns,code:Code{name:f.code.name,instructions:list.snapshot(f.code.instructions)}})? }
+    return json.encode(Report{schema:"hua.bytecode.image.v1",profile:"C06-BC1",status:"ok",source:source,entry:image.entry,sources:list.snapshot(sources),sites:list.snapshot(image.sites),structures:list.snapshot(image.structures),functions:list.snapshot(functions),initializer:Code{name:image.initializer.name,instructions:list.snapshot(image.initializer.instructions)},instructions:image.instructions,work:image.work,verification:checked})
+}

@@ -2,12 +2,14 @@
 #include "hua/sema.hpp"
 #include "hua/stdlib.hpp"
 #include <iosfwd>
+#include "hua/tasks.hpp"
 namespace hua {
 class Interpreter {
 public:
     Interpreter(const SemanticModel& model, std::ostream& output, RuntimeContext* context = nullptr);
     void run(const Node& program);
 private:
+    Routine<void> run_body(const Node& program,ExecutionScope&);
     struct Binding { Value value; std::string type; bool mutable_binding{}; };
     struct Deferred { Callable callable;std::vector<Value> arguments;const Node* site; };
     struct Environment {
@@ -29,17 +31,17 @@ private:
     std::size_t steps_{};
     unsigned calls_{};
     void tick(const Node& node);
-    void drain(Environment& environment);
+    Routine<void> drain(Environment& environment);
     Callable closure(const Node& function);
-    void execute(const Node& node);
-    void block(const Node& node, bool scope = true);
-    Value evaluate(const Node& node);
-    Location locate(const Node& node);
-    Value call(const Callable& callable, const std::vector<Value>& args, const Node& site);
+    Routine<void> execute(const Node& node);
+    Routine<void> block(const Node& node, bool scope = true);
+    Routine<Value> evaluate(const Node& node);
+    Routine<Location> locate(const Node& node);
+    Routine<Value> call(const Callable& callable, const std::vector<Value>& args, const Node& site);
     Value isolated(const Value& value,unsigned depth=0);
-    Value launch(const Callable&,const std::vector<Value>&,const Node&,std::vector<std::int64_t> batch={},std::string element={},bool contextual=false);
-    Value parallel(const std::vector<Value>&,const Node&);
-    Value builtin(const std::string& name, const std::vector<Value>& args, const Node& site);
+    Routine<Value> launch(const Callable&,const std::vector<Value>&,const Node&,std::vector<std::int64_t> batch={},std::string element={},bool contextual=false);
+    Routine<Value> parallel(const std::vector<Value>&,const Node&);
+    Routine<Value> builtin(const std::string& name, const std::vector<Value>& args, const Node& site);
     void bind(const std::string& name, Value value, std::string type, bool mutable_binding, const SourceSpan& span);
 };
 }

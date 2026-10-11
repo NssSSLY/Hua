@@ -8,6 +8,8 @@ pub struct Token {
     text string
     line int
     column int
+    start int
+    end int
 }
 fn alpha(c int) bool { return c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 95 }
 fn decimal(c int) bool { return c >= 48 && c <= 57 }
@@ -20,7 +22,16 @@ fn digit(c int) int {
 fn failure(code string, line int, column int) string {
     return code + "@" + str(line) + ":" + str(column)
 }
-pub fn scan(source string) Result<[]Token,string> {
+pub fn scan(source string) Result<[]Token,string> { return scan_impl(source,0) }
+pub fn scan_bounded(source string, limit int) Result<[]Token,string> {
+    if limit < 1 { return err("E8202@1:1 token budget") }
+    return scan_impl(source,limit)
+}
+fn emit(tokens mut List<Token>, token Token, limit int) Result<int> {
+    if limit > 0 && list.len(tokens) >= limit { return err(failure("E8202",token.line,token.column)+" token budget") }
+    return list.append(tokens,token)
+}
+fn scan_impl(source string, limit int) Result<[]Token,string> {
     var text = strings.replace(strings.replace(source, "\r\n", "\n"), "\r", "\n")
     var data = unwrap(bytes.to_ints(bytes.from_text(text)))
     if len(data) >= 3 && data[0] == 239 && data[1] == 187 && data[2] == 191 {
@@ -48,7 +59,7 @@ pub fn scan(source string) Result<[]Token,string> {
 column += 1
 continue }
         if c == 10 {
-            unwrap(list.append(tokens, Token{kind:"newline",text:"\n",line:line,column:column}))
+            emit(tokens, Token{kind:"newline",text:"\n",line:line,column:column,start:i,end:i+1},limit)?
             i += 1
 line += 1
 column = 1
@@ -83,7 +94,7 @@ column += width
                             i += width
 column += width
                         } else if data[i] == 10 {
-                            unwrap(list.append(tokens, Token{kind:"newline",text:"\n",line:line,column:column}))
+                            emit(tokens, Token{kind:"newline",text:"\n",line:line,column:column,start:i,end:i+1},limit)?
                             i += 1
 line += 1
 column = 1
@@ -104,7 +115,7 @@ column += 1 }
             let value = unwrap(strings.slice(text, start, i))
             var kind = "identifier"
             if has(keywords,value) { kind = value }
-            unwrap(list.append(tokens, Token{kind:kind,text:value,line:start_line,column:start_column}))
+            emit(tokens, Token{kind:kind,text:value,line:start_line,column:start_column,start:start,end:i},limit)?
             column += i-start
 continue
         }
@@ -152,7 +163,7 @@ segments = 2
                 } else { finished = true }
             }
             if i < n && (alpha(data[i]) || decimal(data[i])) { return err(failure("E1002", line, column+i-start)) }
-            unwrap(list.append(tokens, Token{kind:kind,text:unwrap(strings.slice(text,start,i)),line:start_line,column:start_column}))
+            emit(tokens, Token{kind:kind,text:unwrap(strings.slice(text,start,i)),line:start_line,column:start_column,start:start,end:i},limit)?
             column += i-start
 continue
         }
@@ -185,7 +196,7 @@ segment = i
             value += unwrap(strings.slice(text,segment,i))
             i += 1
 column += i-start
-            unwrap(list.append(tokens, Token{kind:"string",text:value,line:start_line,column:start_column}))
+            emit(tokens, Token{kind:"string",text:value,line:start_line,column:start_column,start:start,end:i},limit)?
             continue
         }
         if c >= 128 { return err(failure("E1001", line, column)) }
@@ -204,10 +215,10 @@ column += i-start
             if has(operators,value) { width = 1 }
         }
         if width == 0 { return err(failure("E1001", line, column)) }
-        unwrap(list.append(tokens, Token{kind:value,text:value,line:start_line,column:start_column}))
+        emit(tokens, Token{kind:value,text:value,line:start_line,column:start_column,start:start,end:i+width},limit)?
         i += width
         column += width
     }
-    unwrap(list.append(tokens, Token{kind:"end",text:"",line:line,column:column}))
+    emit(tokens, Token{kind:"end",text:"",line:line,column:column,start:i,end:i},limit)?
     return ok(list.snapshot(tokens))
 }

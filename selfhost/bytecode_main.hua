@@ -1,0 +1,27 @@
+import types as types
+import bytecode as bc
+import bytecode_verify as verify
+import bytecode_report as report
+import std.os as os
+import std.path as path
+fn main() {
+    let args = os.args()
+    if len(args)!=1 { print(report.failure("input.hua","E8204@1:1 usage: entry.hua"))
+        return }
+    let source = unwrap(path.basename(args[0]))
+    let checked = types.analyze(args[0])
+    if is_err(checked) { print(report.failure(source,unwrap_err(checked)))
+        return }
+    let model = unwrap(checked)
+    let emitted = bc.compile(model)
+    if is_err(emitted) { print(report.failure(source,unwrap_err(emitted)))
+        return }
+    let image = unwrap(emitted)
+    let validated = verify.verify(image)
+    if is_err(validated) { print(report.failure(source,unwrap_err(validated)))
+        return }
+    let encoded = report.success(image,model,source,unwrap(validated))
+    if is_err(encoded) { print(report.failure(source,"E8202@1:1 report encoding budget: "+unwrap_err(encoded)))
+        return }
+    print(unwrap(encoded))
+}

@@ -1,0 +1,40 @@
+# C02 的输出协议适配：只投影内部 AST，不解析或执行输入。
+import parser as parser
+import ast_pool as ast
+import std.list as list
+import std.json as json
+import std.buffer as buffer
+struct Frame { id ast.NodeId
+    depth int }
+pub fn failure(stage string, name string, detail string) string { return failure_for("C02-P1",stage,name,detail) }
+pub fn failure_for(profile string, stage string, name string, detail string) string {
+    return "{\"schema\":\"hua.ast.slice.v1\",\"profile\":"+unwrap(json.encode(profile))+",\"status\":\"error\",\"stage\":"+unwrap(json.encode(stage))+",\"source\":"+unwrap(json.encode(name))+",\"error\":"+unwrap(json.encode(detail))+"}"
+}
+fn children(tree parser.Tree, n ast.Node) []ast.NodeId {
+    if ast.kind(n.payload) != "Function" { return n.children }
+    let signature = unwrap(ast.get(tree.pool,n.children[0]))
+    var result = list.from_slice(signature.children)
+    unwrap(list.append(result,n.children[1]))
+    return list.snapshot(result)
+}
+pub fn success(tree parser.Tree) string {
+    let source = unwrap(ast.source_info(tree.pool,unwrap(ast.get(tree.pool,tree.root)).span.source))
+    var stack = list.from_slice([Frame{id:tree.root,depth:0}])
+    var nodes = buffer.new()
+    var first = true
+    while list.len(stack) > 0 {
+        let frame = unwrap(list.pop(stack))
+        let n = unwrap(ast.get(tree.pool,frame.id))
+        let child = children(tree,n)
+        var ids = list.from_slice([0])
+        list.clear(ids)
+        for id in child { unwrap(list.append(ids,id.index)) }
+        if !first { unwrap(buffer.write_text(nodes,",")) }
+        first = false
+        unwrap(buffer.write_text(nodes,"{\"id\":"+str(n.id.index)+",\"depth\":"+str(frame.depth)+",\"kind\":"+unwrap(json.encode(ast.kind(n.payload)))+",\"text\":"+unwrap(json.encode(ast.payload_text(n.payload)))+",\"start\":"+str(n.span.start)+",\"end\":"+str(n.span.end)+",\"line\":"+str(n.span.line)+",\"column\":"+str(n.span.column)+",\"children\":"+unwrap(json.encode(list.snapshot(ids)))+"}"))
+        var i = len(child)
+        while i > 0 { i -= 1
+            unwrap(list.append(stack,Frame{id:child[i],depth:frame.depth+1})) }
+    }
+    return "{\"schema\":\"hua.ast.slice.v1\",\"profile\":"+unwrap(json.encode(tree.profile))+",\"status\":\"ok\",\"source\":"+unwrap(json.encode(source.name))+",\"stats\":{\"input_bytes\":"+str(tree.source_bytes)+",\"tokens\":"+str(tree.token_count)+",\"pool_nodes\":"+str(ast.count(tree.pool))+",\"work\":"+str(tree.work_count)+"},\"budget_profile\":"+unwrap(json.encode(tree.budget_profile))+",\"nodes\":["+unwrap(buffer.text(nodes))+"]}"
+}

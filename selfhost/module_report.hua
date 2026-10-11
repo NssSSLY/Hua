@@ -1,0 +1,40 @@
+# C03 报告不保存物理路径、池身份或运行时对象。
+import modules as modules
+import std.list as list
+import std.json as json
+struct UnitInfo { id string
+    pool_nodes int
+    tokens int
+    input_bytes int }
+struct Stats { input_bytes int
+    work int }
+struct Output { budget_profile string
+    schema string
+    profile string
+    status string
+    source string
+    modules []UnitInfo
+    edges []modules.Edge
+    symbols []modules.Symbol
+    references []modules.Reference
+    initialization []string
+    stats Stats }
+struct Failure { schema string
+    profile string
+    status string
+    source string
+    stage string
+    error string }
+pub fn failure(source string, detail string) string {
+    return unwrap(json.encode(Failure{schema:"hua.names.modules.v1",profile:"C03-N1",status:"error",source:source,stage:"analysis",error:detail}))
+}
+pub fn success(g modules.Graph, source string) string {
+    var infos []UnitInfo = []
+    var units = list.from_slice(infos)
+    for u in list.snapshot(g.units) {
+        unwrap(list.append(units,UnitInfo{id:u.id,pool_nodes:list.len(u.tree.pool.nodes),tokens:u.tree.token_count,input_bytes:u.tree.source_bytes}))
+    }
+    var budget = "slice"
+    if g.limits.compiler { budget = "compiler" }
+    return unwrap(json.encode(Output{budget_profile:budget,schema:"hua.names.modules.v1",profile:"C03-N1",status:"ok",source:source,modules:list.snapshot(units),edges:list.snapshot(g.edges),symbols:list.snapshot(g.symbols),references:list.snapshot(g.references),initialization:list.snapshot(g.order),stats:Stats{input_bytes:g.total_bytes,work:g.work}}))
+}

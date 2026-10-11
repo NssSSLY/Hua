@@ -5,6 +5,8 @@
 
 轻量系统脚本语言。当前完成 **前端、基础语义、Map/多返回/Result/Optional 常用语义、栈式字节码 VM、`.huab` 文件读写、本地源码/Native/WASM 模块加载，以及程序输入/文本与二进制文件/字符串/JSON/动态列表/缓冲标准库，以及可选嵌入式 Python Bridge；本轮加入 interface/enum/match、泛型、闭包/defer、精确数值与固定数组布局**。
 
+D002-c/E5已接入可恢复Task、共享FIFO计算域、定时器及Task内文件阻塞适配，两执行器/无源码HUAB均验证。可运行 [异步文件示例](examples/async_file.hua)，运行命令与 [POSIX实测条件](docs/开发与运行指南.md#posix-verification)见运行指南；连接/设备/公开Event与POSIX验收后续推进。
+
 写好第一个程序后：保存为main.hua，在它所在目录的VS Code终端输入 `hua run .\main.hua`。详细步骤和找不到hua时的处理见 [第一个程序怎么运行](docs/开发与运行指南.md)。
 
 先读 [项目概览与进度](docs/项目概览与进度.md)：已完成什么、尚缺什么、现在能做什么，以及入门/构建/部署步骤。文档按改动涉及的内容维护，无需全量同步。
@@ -269,6 +271,31 @@ Hua编写的 [词法器](selfhost/lexer.hua) 已能扫描自身源码；135输�
 hua run .\selfhost\main.hua -- .\selfhost\lexer.hua
 ```
 
-完整自举仍缺Hua Parser/AST、语义与降级、字节码/HUAB生成、连续编译自身比较。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
+A05节点池、P1/P2 Hua Parser、N1名称/模块和C04-T1类型/能力已通过对照；A11显式compiler预算已验证20个完整源文件及自身前端闭包。普通run/interpret仍是百万步；仅显式--execution-profile compiler选择编译任务预算。新命令与限制见[前端类型检查与预算](docs/开发与运行指南.md#a11-c04-usage)。
+
+```powershell
+python .\tools\hua_frontend.py check .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.types.json
+```
+
+上述check由Hua分析、不执行输入，输出类型JSON；公共hua.exe check继续用C++前端。C05-L1已生成可校验VM核心树；C06-BC1已由Hua生成/验证指令，完整自举仍需C07 HUAB编码和C08连续代际；组件HUAB7仍由宿主构建。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
 
 错误基础新增Result<void,E>与只读std.error.Value，默认string错误保持。当前16标准模块/141函数。运行`.\build\hua.exe run .\examples\error_foundation.hua`；[Error接口与逐接口盘点](docs/标准库与内建接口.md#standard-error-contract)、[本轮验收与边界](docs/项目概览与进度.md#er-foundation-verification)。普通HUAB写6，新错误能力写7，读1–7；Native ABI1保持。
+
+同步文件句柄已完成D002-b：新增std.file的File/IOFailure与12接口，当前17模块/153函数。
+运行 `.\build\hua.exe run .\examples\file_stream.hua`（在当前目录创建/覆盖hua-file-demo.bin）；[File接口](docs/标准库与内建接口.md#standard-file-contract)、[所有权/GC/额度](docs/运行时与扩展设计.md#d002-file-runtime)、[验收](docs/项目概览与进度.md#d002-b-verification)。普通HUAB6、Error7、File8，读取1–8；已有安装应部署新版核心。异步/E5和其他公开资源后置。
+
+Hua最小降级命令（先分析输入，再输出核心JSON，不运行输入）：
+
+```powershell
+python .\tools\hua_frontend.py lower .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.core.json
+```
+
+查看 [C05使用与测试适配](docs/开发与运行指南.md#c05-usage) 和 [核心树合同](docs/设计决策与未决事项.md#c05-minimal-lowering)。测试适配的字节码/HUAB仍由C++生成，生产CLI保持现有路径。
+
+Hua指令生成命令（不执行输入；输出已回填/验证的指令JSON）：
+
+```powershell
+python .\tools\hua_frontend.py emit .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.bytecode.json
+```
+
+查看[C06命令与指令加载器](docs/开发与运行指南.md#c06-usage)。Hua已生成指令，完整文件容器编码待C07，代际待C08；[A/B阶段仍未整体验收](docs/设计决策与未决事项.md#abc-current-status)，基础库可独立推进。

@@ -1,0 +1,497 @@
+# C06-BC1：Hua 指令生成；准确目标为既有 Op 0..40，不执行输入。
+import lowering as lower
+import types as types
+import type_rules as rules
+import std.list as list
+import std.strings as strings
+import std.json as json
+pub struct Scalar { kind int
+    text string }
+pub struct Site { node int
+    module string
+    origin int
+    start int
+    end int
+    line int
+    column int
+    role string }
+pub struct Instruction { op int
+    site int
+    text string
+    type_name string
+    argument int
+    target int
+    flag bool
+    constant Scalar
+    names []string
+    contextual []bool }
+pub struct Code { name string
+    instructions List<Instruction> }
+pub struct Parameter { name string
+    type_name string
+    writable bool
+    site int }
+pub struct Field { name string
+    type_name string
+    site int }
+pub struct Structure { name string
+    site int
+    published bool
+    enumeration bool
+    fields []Field }
+pub struct Function { name string
+    site int
+    published bool
+    writable bool
+    parameters []Parameter
+    returns []string
+    code Code }
+pub struct Image { entry string
+    sites List<Site>
+    structures List<Structure>
+    functions List<Function>
+    initializer Code
+    instructions int
+    work int }
+struct Loop { depth int
+    next int
+    breaks List<int> }
+struct State { core lower.Core
+    image Image
+    code Code
+    depth int
+    loops List<Loop>
+    sites map[int]int
+    published map[string]bool }
+pub fn nil_scalar() Scalar { return Scalar{kind:0,text:""} }
+pub fn get(c lower.Core, id int) lower.Node { return unwrap(list.get(c.nodes,id)) }
+pub fn name(n lower.Node) string { return strings.split(n.text," ")[0] }
+pub fn type_text(c lower.Core, id int) string {
+    let n = get(c,id)
+    if n.kind=="MutableType" { return type_text(c,n.children[0]) }
+    if n.kind=="SliceType" { return "[]"+type_text(c,n.children[0]) }
+    if n.kind=="ArrayType" { return "["+n.text+"]"+type_text(c,n.children[0]) }
+    if n.kind=="OptionalType" { return type_text(c,n.children[0])+"?" }
+    if n.kind=="GenericType" {
+        var result = n.text+"<"
+        for i in 0..len(n.children) { if i>0 { result += "," }
+            result += type_text(c,n.children[i]) }
+        # C04 标准 Result 单参数的默认错误类型。
+        if n.text=="Result" && len(n.children)==1 { result += ",string" }
+        return result+">"
+    }
+    return n.text
+}
+pub fn numeric(c lower.Core, id int) bool {
+    let n = get(c,id)
+    return n.kind=="Integer" || n.kind=="Float" || (n.kind=="Unary" && (n.text=="+" || n.text=="-") && numeric(c,n.children[0]))
+}
+pub fn contextual(c lower.Core, id int) bool { return get(c,id).kind=="Array" || numeric(c,id) }
+fn integer(text string, negative bool) Result<string> {
+    var t = strings.replace(text,"_","")
+    var base = 10
+    if strings.starts_with(t,"0x") { base = 16
+        t = rules.cut(t,2,len(t)) }
+    else if strings.starts_with(t,"0b") { base = 2
+        t = rules.cut(t,2,len(t)) }
+    else if strings.starts_with(t,"0o") { base = 8
+        t = rules.cut(t,2,len(t)) }
+    if len(t)==0 { return err("integer literal is outside signed int64 range") }
+    let minimum = int("-9223372036854775808")
+    var limit = -9223372036854775807
+    if negative { limit = minimum }
+    # 在负区间累积，避免 INT64_MIN 的绝对值和检查本身溢出。
+    var value = 0
+    for i in 0..len(t) {
+        let digit = strings.index("0123456789abcdef",strings.lower_ascii(rules.cut(t,i,i+1)))
+        if digit<0 || digit>=base || value < (limit+digit+base-1)//base { return err("integer literal is outside signed int64 range") }
+        value = value*base-digit
+    }
+    if negative { return ok(str(value)) }
+    return ok(str(-value))
+}
+fn floating(text string) Result<string> {
+    var t = strings.replace(text,"_","")
+    # JSON 数值读取是宿主标量原语，不调用前端；规范化前导零以匹配 Hua literal。
+    var sign = ""
+    if strings.starts_with(t,"-") { sign = "-"
+        t = rules.cut(t,1,len(t)) }
+    while len(t)>1 && rules.cut(t,0,1)=="0" && strings.contains("0123456789",rules.cut(t,1,2)) { t = rules.cut(t,1,len(t)) }
+    if len(t)>0 && rules.cut(t,0,1)=="." { t = "0"+t }
+    if strings.ends_with(t,".") { t += "0" }
+    let value = json.decode(sign+t)
+    if is_err(value) { return err("floating literal is outside finite float64 range") }
+    if is_err(json.as_float(unwrap(value))) { return err("floating literal is outside finite float64 range") }
+    return ok(sign+t)
+}
+pub fn scalar(c lower.Core, id int) Result<Scalar> {
+    let n = get(c,id)
+    if n.kind=="Nil" || n.kind=="Omitted" { return ok(nil_scalar()) }
+    if n.kind=="String" { return ok(Scalar{kind:4,text:n.text}) }
+    if n.kind=="Boolean" { return ok(Scalar{kind:1,text:n.text}) }
+    if n.kind=="Integer" { return ok(Scalar{kind:2,text:integer(n.text,false)?}) }
+    if n.kind=="Float" { return ok(Scalar{kind:3,text:floating(n.text)?}) }
+    if n.kind=="Unary" && (n.text=="+" || n.text=="-") {
+        let child = get(c,n.children[0])
+        if n.text=="-" && child.kind=="Integer" { return ok(Scalar{kind:2,text:integer(child.text,true)?}) }
+        var value = scalar(c,n.children[0])?
+        if n.text=="-" {
+            if value.kind==2 {
+                let number = int(value.text)
+                if number==int("-9223372036854775808") { return err("integer overflow") }
+                value.text = str(-number)
+            } else {
+                if strings.starts_with(value.text,"-") { value.text = rules.cut(value.text,1,len(value.text)) }
+                else { value.text = "-"+value.text }
+            }
+        }
+        return ok(value)
+    }
+    return err("invalid scalar core node")
+}
+fn fail(n lower.Node, text string) string { return "E8203@"+str(n.line)+":"+str(n.column)+" ["+n.module+"] "+text }
+fn site(s mut State, n lower.Node) Result<int> {
+    if has(s.sites,n.id) { return ok(unwrap(s.sites[n.id])) }
+    let id = list.len(s.image.sites)
+    list.append(s.image.sites,Site{node:n.id,module:n.module,origin:n.origin,start:n.start,end:n.end,line:n.line,column:n.column,role:n.role})?
+    s.sites[n.id] = id
+    return ok(id)
+}
+fn emit(s mut State, n lower.Node, op int, text string, t string, argument int, flag bool, constant Scalar, names []string, flags []bool) Result<int> {
+    if list.len(s.code.instructions)>=250000 || s.image.instructions>=1000000 || s.image.work>=4194304 { return err("E8202@"+str(n.line)+":"+str(n.column)+" C06 instruction/work budget") }
+    let id = list.len(s.code.instructions)
+    list.append(s.code.instructions,Instruction{op:op,site:site(s,n)?,text:text,type_name:t,argument:argument,target:0,flag:flag,constant:constant,names:names,contextual:flags})?
+    s.image.instructions += 1
+    s.image.work += 1
+    return ok(id)
+}
+fn simple(s mut State, n lower.Node, op int, text string) Result<int> { return emit(s,n,op,text,"",0,false,nil_scalar(),[],[]) }
+fn constant(s mut State, n lower.Node, value Scalar) Result<void> { emit(s,n,0,"","",0,false,value,[],[])?
+    return ok() }
+fn patch(s mut State, pc int, target int) Result<void> {
+    if pc<0 || pc>=list.len(s.code.instructions) { return err("E8203@1:1 invalid C06 patch site") }
+    var op = list.get(s.code.instructions,pc)?
+    op.target = target
+    list.set(s.code.instructions,pc,op)?
+    return ok()
+}
+fn flags(c lower.Core, children []int, first int) []bool {
+    var empty []bool = []
+    var result = list.from_slice(empty)
+    for i in first..len(children) { unwrap(list.append(result,contextual(c,children[i]))) }
+    return list.snapshot(result)
+}
+fn location(s mut State, id int) Result<void> {
+    let n = get(s.core,id)
+    if n.kind=="Name" { simple(s,n,12,n.text)? }
+    else if n.kind=="Member" { expression(s,n.children[0])?
+        simple(s,n,13,n.text)? }
+    else if n.kind=="Index" { expression(s,n.children[0])?
+        simple(s,n,38,"")?
+        expression(s,n.children[1])?
+        simple(s,n,14,"")? }
+    else { return err(fail(n,"invalid C06 assignment target")) }
+    return ok()
+}
+fn expression(s mut State, id int) Result<void> {
+    let n = get(s.core,id)
+    let k = n.kind
+    if numeric(s.core,id) || k=="String" || k=="Boolean" || k=="Nil" {
+        let value = scalar(s.core,id)
+        if is_ok(value) { constant(s,n,unwrap(value))? }
+        else { emit(s,n,27,unwrap_err(value),"E4002",0,false,nil_scalar(),[],[])? }
+        return ok()
+    }
+    if k=="Name" { simple(s,n,1,n.text)? }
+    else if k=="Pack" {
+        for child in n.children { expression(s,child)? }
+        emit(s,n,34,"","",len(n.children),false,nil_scalar(),[],flags(s.core,n.children,0))?
+    } else if k=="MapLiteral" {
+        emit(s,n,32,"",type_text(s.core,n.children[0]),0,false,nil_scalar(),[],[])?
+        for i in 1..len(n.children) {
+            let item = get(s.core,n.children[i])
+            expression(s,item.children[0])?
+            expression(s,item.children[1])?
+            emit(s,item,33,"","",0,contextual(s.core,item.children[1]),nil_scalar(),[],[])?
+        }
+    } else if k=="Propagate" { expression(s,n.children[0])?
+        simple(s,n,37,"")? }
+    else if k=="Unary" { expression(s,n.children[0])?
+        simple(s,n,4,n.text)? }
+    else if k=="Binary" {
+        expression(s,n.children[0])?
+        if n.text=="&&" || n.text=="||" {
+            var op = 7
+            if n.text=="||" { op = 8 }
+            let branch = simple(s,n,op,"")?
+            expression(s,n.children[1])?
+            simple(s,n,4,"!")?
+            simple(s,n,4,"!")?
+            let done = simple(s,n,6,"")?
+            patch(s,branch,list.len(s.code.instructions))?
+            constant(s,n,Scalar{kind:1,text:str(n.text=="||")})?
+            patch(s,done,list.len(s.code.instructions))?
+        } else { expression(s,n.children[1])?
+            emit(s,n,5,n.text,"",0,numeric(s.core,n.children[1]),nil_scalar(),[],[])? }
+    } else if k=="Assignment" || k=="Update" {
+        location(s,n.children[0])?
+        var op = n.text
+        var literal = false
+        if k=="Update" { constant(s,n,Scalar{kind:2,text:"1"})?
+            op = "+="
+            if n.text=="--" { op = "-=" }
+            literal = true }
+        else { expression(s,n.children[1])?
+            literal = contextual(s.core,n.children[1]) }
+        emit(s,n,15,op,"",0,literal,nil_scalar(),[],[])?
+    } else if k=="Array" {
+        simple(s,n,16,"")?
+        for child in n.children { expression(s,child)?
+            emit(s,get(s.core,child),29,"","",0,contextual(s.core,child),nil_scalar(),[],[])? }
+    } else if k=="Index" {
+        expression(s,n.children[0])?
+        simple(s,n,38,"")?
+        expression(s,n.children[1])?
+        simple(s,n,17,"")?
+    } else if k=="Slice" {
+        expression(s,n.children[0])?
+        simple(s,n,28,"")?
+        for i in 1..3 {
+            if get(s.core,n.children[i]).kind=="Omitted" { constant(s,get(s.core,n.children[i]),nil_scalar())? }
+            else { expression(s,n.children[i])? }
+        }
+        emit(s,n,18,"","",0,false,nil_scalar(),[],[get(s.core,n.children[1]).kind=="Omitted",get(s.core,n.children[2]).kind=="Omitted"])?
+    } else if k=="StructLiteral" {
+        simple(s,n,19,n.text)?
+        for child in n.children {
+            let field = get(s.core,child)
+            expression(s,field.children[0])?
+            emit(s,field,30,field.text,"",0,contextual(s.core,field.children[0]),nil_scalar(),[],[])?
+        }
+    } else if k=="Member" { expression(s,n.children[0])?
+        simple(s,n,20,n.text)? }
+    else if k=="Call" {
+        for child in n.children { expression(s,child)? }
+        emit(s,n,21,"",n.type_name,len(n.children)-1,false,nil_scalar(),[],flags(s.core,n.children,1))?
+    } else { return err(fail(n,"expression outside C06")) }
+    return ok()
+}
+fn block(s mut State, id int, scoped bool) Result<void> {
+    let n = get(s.core,id)
+    if scoped { simple(s,n,9,"")?
+        s.depth += 1 }
+    for child in n.children { statement(s,child)? }
+    if scoped { simple(s,n,10,"")?
+        s.depth -= 1 }
+    return ok()
+}
+fn match_statement(s mut State, n lower.Node) Result<void> {
+    simple(s,n,9,"")?
+    s.depth += 1
+    let binding = "$match$"+str(list.len(s.code.instructions))
+    expression(s,n.children[0])?
+    emit(s,n,2,binding,n.type_name,0,false,nil_scalar(),[],[false])?
+    var empty []int = []
+    var done = list.from_slice(empty)
+    var enumeration = false
+    for st in list.snapshot(s.image.structures) { if st.name==n.type_name { enumeration = st.enumeration } }
+    for i in 1..len(n.children) {
+        let arm = get(s.core,n.children[i])
+        let pattern = get(s.core,arm.children[0])
+        let any = pattern.kind=="Name" && pattern.text=="_"
+        var next = 0
+        var value = nil_scalar()
+        if !any {
+            simple(s,pattern,1,binding)?
+            if enumeration { simple(s,pattern,20,"$case")?
+                let parts = strings.split(pattern.text,".")
+                value = Scalar{kind:4,text:parts[len(parts)-1]} }
+            else { value = scalar(s.core,pattern.id)? }
+            constant(s,pattern,value)?
+            simple(s,pattern,5,"==")?
+            next = simple(s,pattern,7,"")?
+        }
+        simple(s,arm,9,"")?
+        s.depth += 1
+        if !any && enumeration {
+            let bindings = get(s.core,arm.children[1])
+            for j in 0..len(bindings.children) {
+                let p = get(s.core,bindings.children[j])
+                if p.text=="_" { continue }
+                simple(s,p,1,binding)?
+                simple(s,p,20,"$"+value.text+"#"+str(j)+"#"+p.type_name)?
+                emit(s,p,2,p.text,p.type_name,0,false,nil_scalar(),[],[false])?
+            }
+        }
+        block(s,arm.children[2],false)?
+        simple(s,arm,10,"")?
+        s.depth -= 1
+        list.append(done,simple(s,arm,6,"")?)?
+        if !any { patch(s,next,list.len(s.code.instructions))? }
+    }
+    for pc in list.snapshot(done) { patch(s,pc,list.len(s.code.instructions))? }
+    simple(s,n,10,"")?
+    s.depth -= 1
+    return ok()
+}
+fn statement(s mut State, id int) Result<void> {
+    let n = get(s.core,id)
+    let k = n.kind
+    if k=="Block" { return block(s,id,true) }
+    if k=="Let" || k=="Var" {
+        expression(s,n.children[len(n.children)-1])?
+        emit(s,n,2,n.text,n.type_name,0,k=="Var",nil_scalar(),[],[contextual(s.core,n.children[len(n.children)-1])])?
+    } else if k=="MultiBinding" {
+        expression(s,n.children[1])?
+        let bindings = get(s.core,n.children[0])
+        var names []string = []
+        var result = list.from_slice(names)
+        var t = "multi<"
+        for i in 0..len(bindings.children) {
+            let p = get(s.core,bindings.children[i])
+            list.append(result,p.text)?
+            if i>0 { t += "," }
+            if p.text!="_" { t += p.type_name }
+        }
+        emit(s,n,35,"",t+">",len(bindings.children),n.text=="var",nil_scalar(),list.snapshot(result),[])?
+    } else if k=="MultiAssignment" {
+        let targets = get(s.core,n.children[0])
+        for child in targets.children { location(s,child)? }
+        expression(s,n.children[1])?
+        emit(s,n,36,"","",len(targets.children),false,nil_scalar(),[],[])?
+    } else if k=="ExpressionStatement" { expression(s,n.children[0])?
+        simple(s,n,3,"")? }
+    else if k=="Match" { return match_statement(s,n) }
+    else if k=="If" {
+        expression(s,n.children[0])?
+        let branch = simple(s,get(s.core,n.children[0]),7,"")?
+        statement(s,n.children[1])?
+        let done = simple(s,n,6,"")?
+        patch(s,branch,list.len(s.code.instructions))?
+        if len(n.children)==3 { statement(s,n.children[2])? }
+        patch(s,done,list.len(s.code.instructions))?
+    } else if k=="While" {
+        let next = list.len(s.code.instructions)
+        expression(s,n.children[0])?
+        let exit = simple(s,get(s.core,n.children[0]),7,"")?
+        var empty []int = []
+        list.append(s.loops,Loop{depth:s.depth,next:next,breaks:list.from_slice(empty)})?
+        statement(s,n.children[1])?
+        patch(s,simple(s,n,6,"")?,next)?
+        let end = list.len(s.code.instructions)
+        patch(s,exit,end)?
+        let loop = list.pop(s.loops)?
+        for pc in list.snapshot(loop.breaks) { patch(s,pc,end)? }
+    } else if k=="For" {
+        let count = len(n.children)-2
+        let iterable = get(s.core,n.children[count])
+        if iterable.kind=="Range" {
+            expression(s,iterable.children[0])?
+            expression(s,iterable.children[1])?
+            if len(iterable.children)==3 { expression(s,iterable.children[2])? }
+            else { constant(s,n,Scalar{kind:2,text:"1"})? }
+            emit(s,iterable,23,"","",0,iterable.text=="..=",nil_scalar(),[],[])?
+        } else { expression(s,iterable.id)?
+            simple(s,iterable,24,"")? }
+        var names []string = []
+        var bindings = list.from_slice(names)
+        for j in 0..count { list.append(bindings,get(s.core,n.children[j]).text)? }
+        let next = emit(s,n,25,"","",0,false,nil_scalar(),list.snapshot(bindings),[])?
+        var empty []int = []
+        list.append(s.loops,Loop{depth:s.depth,next:next,breaks:list.from_slice(empty)})?
+        s.depth += 1
+        block(s,n.children[len(n.children)-1],false)?
+        s.depth -= 1
+        simple(s,n,10,"")?
+        patch(s,simple(s,n,6,"")?,next)?
+        let end = simple(s,n,26,"")?
+        patch(s,next,end)?
+        let loop = list.pop(s.loops)?
+        for pc in list.snapshot(loop.breaks) { patch(s,pc,end)? }
+    } else if k=="Break" || k=="Continue" {
+        var loop = list.get(s.loops,list.len(s.loops)-1)?
+        emit(s,n,11,"","",s.depth-loop.depth,false,nil_scalar(),[],[])?
+        let jump = simple(s,n,6,"")?
+        if k=="Continue" { patch(s,jump,loop.next)? }
+        else { loop.breaks = list.from_slice(list.snapshot(loop.breaks))
+            list.append(loop.breaks,jump)?
+            list.set(s.loops,list.len(s.loops)-1,loop)? }
+    } else if k=="Return" {
+        if len(n.children)>1 {
+            for child in n.children { expression(s,child)? }
+            emit(s,n,34,"","",len(n.children),false,nil_scalar(),[],flags(s.core,n.children,0))?
+        } else if len(n.children)==0 { constant(s,n,nil_scalar())? }
+        else { expression(s,n.children[0])? }
+        emit(s,n,22,"","",0,len(n.children)==1 && contextual(s.core,n.children[0]),nil_scalar(),[],[])?
+    } else if k=="Defer" {
+        let call = get(s.core,n.children[0])
+        for child in call.children { expression(s,child)? }
+        emit(s,n,40,"","",len(call.children)-1,false,nil_scalar(),[],flags(s.core,call.children,1))?
+    } else { return err(fail(n,"statement outside C06")) }
+    return ok()
+}
+# 外来 Core 仍逐次验证；受控入口只复用刚在同一调用内完成的验证。
+pub fn generate(c lower.Core, model types.Model) Result<Image> {
+    lower.verify(c)?
+    return generate_verified(c,model)
+}
+pub fn compile(model types.Model) Result<Image> {
+    let c = lower.lower(model)?
+    return generate_verified(c,model)
+}
+fn generate_verified(c lower.Core, model types.Model) Result<Image> {
+    var ops []Instruction = []
+    var sites []Site = []
+    var structures []Structure = []
+    var functions []Function = []
+    var loops []Loop = []
+    var initial = Code{name:"<initialize>",instructions:list.from_slice(ops)}
+    var s = State{core:c,image:Image{entry:c.entry,sites:list.from_slice(sites),structures:list.from_slice(structures),functions:list.from_slice(functions),initializer:initial,instructions:0,work:0},code:initial,depth:0,loops:list.from_slice(loops),sites:map[int]int{},published:map[string]bool{}}
+    for symbol in list.snapshot(model.graph.symbols) { s.published[symbol.module+":"+str(symbol.node)] = symbol.published }
+    # 布局先于匹配生成；声明按 C03 初始化/源码次序登记。
+    for init in list.snapshot(c.initialization) {
+        for id in init.roots {
+            let n = get(c,id)
+            if n.kind!="Struct" { continue }
+            var empty []Field = []
+            var fields = list.from_slice(empty)
+            for child in n.children {
+                let field = get(c,child)
+                list.append(fields,Field{name:field.text,type_name:type_text(c,field.children[0]),site:site(s,field)?})?
+            }
+            list.append(s.image.structures,Structure{name:name(n),site:site(s,n)?,published:unwrap_or(s.published[n.module+":"+str(n.origin)],false),enumeration:strings.ends_with(n.text," enum"),fields:list.snapshot(fields)})?
+        }
+    }
+    for init in list.snapshot(c.initialization) { for id in init.roots {
+        let n = get(c,id)
+        if n.kind!="Function" && n.kind!="Struct" { statement(s,id)? }
+    } }
+    let origin = lower.Node{id:-1,module:c.entry,origin:-1,start:0,end:0,line:1,column:1,kind:"Program",text:"",type_name:"",writable:false,role:"initializer",children:[]}
+    constant(s,origin,nil_scalar())?
+    simple(s,origin,22,"")?
+    s.image.initializer = s.code
+    for init in list.snapshot(c.initialization) { for id in init.roots {
+        let n = get(c,id)
+        if n.kind!="Function" { continue }
+        s.code = Code{name:name(n),instructions:list.from_slice(ops)}
+        s.depth = 0
+        var ps []Parameter = []
+        var params = list.from_slice(ps)
+        var rs []string = []
+        var returns = list.from_slice(rs)
+        for child in n.children {
+            let p = get(c,child)
+            if p.kind=="Parameter" {
+                var t = ""
+                if len(p.children)>0 { t = type_text(c,p.children[0]) }
+                list.append(params,Parameter{name:name(p),type_name:t,writable:strings.ends_with(p.text," mut") || (len(p.children)>0 && get(c,p.children[0]).kind=="MutableType"),site:site(s,p)?})?
+            }
+            if p.kind=="ReturnTypes" { for t in p.children { list.append(returns,type_text(c,t))? } }
+        }
+        block(s,n.children[len(n.children)-1],false)?
+        constant(s,n,nil_scalar())?
+        simple(s,n,22,"")?
+        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:unwrap_or(s.published[n.module+":"+str(n.origin)],false),writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+    } }
+    return ok(s.image)
+}

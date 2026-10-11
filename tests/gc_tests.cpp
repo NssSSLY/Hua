@@ -14,5 +14,15 @@ int main(){using namespace hua;ManagedHeap heap;HeapScope scope(heap);
  auto backing=managed<std::vector<Value>>();backing->emplace_back(std::int64_t{7});Value view(SliceValue{backing,0,1,false,"int"});backing.reset();if(heap.collect()!=0||heap.live()!=1)throw std::runtime_error("slice root");view={};heap.collect();if(heap.live())throw std::runtime_error("slice release");
  struct Capture {std::vector<Value> values;};
  auto retained=managed<ListData>();std::weak_ptr<ListData> ordinary=retained;retained.reset();if(!ordinary.expired())throw std::runtime_error("acyclic release must be immediate");
+ for(auto interval:{8192u,65536u}){
+   ManagedHeap compiler(interval);HeapScope compiler_scope(compiler);
+   if(compiler.collection_interval()!=interval)throw std::runtime_error("compiler collection policy");
+   auto left=managed<ListData>(),right=managed<ListData>();
+   left->values.emplace_back(ListValue{right,true});right->values.emplace_back(ListValue{left,true});
+   std::weak_ptr<ListData> cycle=left;left.reset();right.reset();
+   for(unsigned i=0;i<interval;++i)(void)managed<std::vector<Value>>();
+   if(!cycle.expired())throw std::runtime_error("bounded automatic compiler cycle collection");
+   compiler.collect();if(compiler.live())throw std::runtime_error("compiler heap finish");
+ }
  std::cout<<"GC roots, stable addresses, immediate release and mixed cycles OK\n";
 }

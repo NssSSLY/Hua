@@ -24,8 +24,8 @@ void usage(std::ostream& out) {
         << "Usage: hua version\n"
         << "       hua check <file.hua|file.huab>\n"
         << "       hua ast <file.hua>\n"
-        << "       hua run <file.hua|file.huab> [-- args...]\n"
-        << "       hua interpret <file.hua> [-- args...]\n"
+        << "       hua run <file.hua|file.huab> [--execution-profile default|compiler] [--report-budget] [-- args...]\n"
+        << "       hua interpret <file.hua> [--execution-profile default|compiler] [--report-budget] [-- args...]\n"
         << "       hua bytecode <file.hua|file.huab>\n"
         << "       hua build <file.hua> [-o file.huab]\n";
 }
@@ -36,14 +36,17 @@ int cli(const std::vector<std::string>& args) {
     if (args.size() == 2 && (args[1] == "--help" || args[1] == "help")) { usage(std::cout); return 0; }
     bool build = args.size() >= 3 && args[1] == "build";
     bool execute=args.size()>=3&&(args[1]=="run"||args[1]=="interpret");
-    bool valid_size=args.size()==3||(execute&&args.size()>=4&&args[3]=="--");
+    hua::ExecutionOptions execution;
+    bool valid_size=execute?hua::execution_options(args,execution):args.size()==3;
     if (build ? !(args.size() == 3 || (args.size() == 5 && args[3] == "-o")) :
         (!valid_size || (args[1] != "check" && args[1] != "ast" && args[1] != "run" && args[1] != "interpret" && args[1] != "bytecode"))) { usage(std::cerr); return 2; }
+    auto metrics=execution.report?std::make_shared<hua::ExecutionMetrics>():nullptr;
+    hua::ExecutionReport budget_report{execution,metrics,std::cerr};
     std::unique_ptr<hua::Source> source;
     hua::ModuleLoader loader;
     std::unique_ptr<hua::BytecodeImage> image;
     try {
-        hua::RuntimeContext context;context.input=&std::cin;context.working_directory=std::filesystem::current_path();if(execute&&args.size()>=4)context.arguments.assign(args.begin()+4,args.end());
+        hua::RuntimeContext context;context.input=&std::cin;context.working_directory=std::filesystem::current_path();context.execution_limits=execution.limits;context.execution_metrics=metrics;if(execute)context.arguments.assign(args.begin()+execution.arguments,args.end());
         auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
         if(path.extension()==".huab") {
             if(build || args[1]=="ast" || args[1]=="interpret") { usage(std::cerr); return 2; }

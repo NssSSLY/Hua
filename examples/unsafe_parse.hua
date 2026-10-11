@@ -2,7 +2,7 @@ struct User {
     name string
 }
 
-# Phase 1 parses this declaration only; no pointer operation is executed.
+# 仅供 hua ast 展示保留语法；check/run/build 在执行前 E3008 拒绝。
 unsafe fn read(p ptr<byte>) byte {
     return p.load()
 }

@@ -29,37 +29,48 @@ std::vector<Value> VirtualMachine::arguments(std::size_t count,const SourceSpan&
 }
 void VirtualMachine::bind(const Instruction& op,Value value) {
     if(std::holds_alternative<MultiValue>(value.data))runtime_error(op.span,"multiple values require positional binding","E4003");
-    auto type=op.type.empty()?value_type(value):op.type;value=copy_value(value);
+    auto type=op.type.empty()?value_type(value):op.type;value=copy_value(std::move(value));
     if(!op.flag)value=read_only(std::move(value));
     if(!frames_.back().environment->bindings.emplace(op.text,Binding{std::move(value),type,op.flag}).second)
         runtime_error(op.span,"duplicate runtime binding `"+op.text+"`","E4001");
 }
-void VirtualMachine::run(const Bytecode& bytecode) {
-    ExecutionScope execution(context_,output_);TypeRelationScope relation_scope(model_.relations);
+void VirtualMachine::run(const Bytecode& bytecode){
+    ExecutionScope execution(context_,output_);context_->type_relations=&model_.relations;context_->resumable=true;
+    sync_wait(run_body(bytecode,execution),*context_);
+}
+Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
     bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();
     auto builtins=managed<Environment>();global_=managed<Environment>();global_->parent=builtins;
-    for(const auto& name:builtin_names())
-        {builtins->bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
-         builtins->bindings.emplace(std::string("$core$")+name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});}
-    for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_->bindings.emplace(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
-    frames_.push_back({&bytecode.initializer,nullptr,0,0,{},global_,{}});try{dispatch();}catch(...){auto original=std::current_exception();cleanup_error();global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();std::rethrow_exception(original);}
-    if(auto main=model_.functions.find("main");main!=model_.functions.end()) {
-        Instruction site{};site.span=main->second->span;call(Callable{main->second,"",{}},{},site);if(frames_.empty())stack_.clear();else try{dispatch();}catch(...){auto original=std::current_exception();cleanup_error();global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();std::rethrow_exception(original);}
+    for(const auto& name:builtin_names()){
+        builtins->bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
+        builtins->bindings.emplace(std::string("$core$")+name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
     }
-    try{if(completed_&&std::holds_alternative<TaskValue>(completed_->data))context_->tasks->await(*completed_,{});execution.finish();}catch(...){global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();throw;}
-    global_->bindings.clear();completed_.reset();
+    for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_->bindings.emplace(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
+    std::exception_ptr error;
+    try{
+        frames_.push_back({&bytecode.initializer,nullptr,0,0,{},global_,{}});(co_await dispatch());
+        if(auto main=model_.functions.find("main");main!=model_.functions.end()){
+            Instruction site{};site.span=main->second->span;(co_await call(Callable{main->second,"",{}},{},site));if(frames_.empty())stack_.clear();else (co_await dispatch());
+        }
+        if(completed_&&std::holds_alternative<TaskValue>(completed_->data))co_await context_->tasks->await_async(*completed_,{});
+    }catch(...){error=std::current_exception();}
+    if(error)(co_await cleanup_error());
+    try{co_await execution.finish_async(bool(error));}catch(...){if(!error)error=std::current_exception();}
+    global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();if(error)std::rethrow_exception(error);
+    co_return;
 }
-void VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
-    if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));return;}
-    if(callable.builtin=="parallel_map"){stack_.emplace_back(parallel(args,site));return;}
-    if(!callable.builtin.empty()){stack_.emplace_back(invoke_builtin(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));return;}
+Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
+    if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));co_return;}
+    if(callable.builtin=="parallel_map"){stack_.emplace_back(co_await parallel(args,site));co_return;}
+    if(!callable.builtin.empty()){stack_.emplace_back(co_await invoke_resumable(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));co_return;}
     if(!callable.function)invalid(site.span);
     const auto& fn=*callable.function;auto key=declared_name(fn);
-    if(fn.text.find(" external")!=std::string::npos){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));return;}
+    if(fn.text.find(" external")!=std::string::npos){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));co_return;}
     if(fn.text.find(" unsafe")!=std::string::npos)runtime_error(site.span,"unsafe function execution/FFI is not implemented","E4008");
     const auto user_calls=frames_.size()-(!frames_.empty() && !frames_.front().function?1:0);
-    if(user_calls>=128)runtime_error(site.span,"function call depth limit exceeded (128)","E4099");
+    if(user_calls>=context_->execution_limits.calls)runtime_error(site.span,"function call depth limit exceeded ("+std::to_string(context_->execution_limits.calls)+")","E4099");
+    if(context_->execution_metrics)context_->execution_metrics->call(static_cast<unsigned>(user_calls+1));
     std::vector<const Node*> ps;for(const auto& c:fn.children)if(c->kind==N::Parameter)ps.push_back(c.get());
     if(ps.size()!=args.size())runtime_error(site.span,"function argument count mismatch","E4003");
     if(context_&&context_->in_task&&callable.closure)std::static_pointer_cast<Environment>(callable.closure)->parent=global_;
@@ -78,30 +89,45 @@ void VirtualMachine::call(const Callable& callable,const std::vector<Value>& arg
     }
     auto code=bytecode_->functions.find(&fn);if(code==bytecode_->functions.end())invalid(site.span);
     frames_.push_back({&code->second,&fn,0,stack_.size(),site.span,std::move(local),{}});
+    co_return;
 }
-void VirtualMachine::finish_return(Value value,const Instruction& op,bool early) {
+Routine<void> VirtualMachine::finish_return(Value value,const Instruction& op,bool early) {
     auto f=frames_.back();
-    for(auto env=f.environment;env&&env!=global_;env=env->parent)drain(env);if(!f.function)drain(global_);if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),*f.function,f.site,op.flag);
-    auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);if(!frames_.empty())stack_.emplace_back(copy_value(value));else completed_=copy_value(value);
+    for(auto env=f.environment;env&&env!=global_;env=env->parent)(co_await drain(env));if(!f.function)(co_await drain(global_));if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),*f.function,f.site,op.flag);
+    auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
+    if(!f.function)value=copy_value(value);
+    if(!frames_.empty())stack_.emplace_back(std::move(value));else completed_=std::move(value);
+    co_return;
 }
-void VirtualMachine::drain(const std::shared_ptr<Environment>& env){
+Routine<void> VirtualMachine::drain(const std::shared_ptr<Environment>& env){
     struct Cleanup {bool& flag;bool previous;Cleanup(bool& f):flag(f),previous(f){flag=true;}~Cleanup(){flag=previous;}} cleanup(context_->cleanup);
     auto deferred=std::move(env->deferred);env->deferred.clear();std::exception_ptr first;
-    for(auto i=deferred.rbegin();i!=deferred.rend();++i){auto depth=frames_.size(),base=stack_.size();try{call(i->callable,i->arguments,i->site);dispatch(depth);}catch(...){if(!first)first=std::current_exception();while(frames_.size()>depth){auto environment=frames_.back().environment;for(auto e=environment;e&&e!=env&&e!=global_;e=e->parent)try{drain(e);}catch(...){}frames_.pop_back();}}stack_.resize(base);}
+    for(auto i=deferred.rbegin();i!=deferred.rend();++i){
+        auto depth=frames_.size(),base=stack_.size();bool failed=false;
+        try{(co_await call(i->callable,i->arguments,i->site));(co_await dispatch(depth));}catch(...){if(!first)first=std::current_exception();failed=true;}
+        if(failed)while(frames_.size()>depth){
+            auto environment=frames_.back().environment;
+            for(auto e=environment;e&&e!=env&&e!=global_;e=e->parent)try{(co_await drain(e));}catch(...){}
+            frames_.pop_back();
+        }
+        stack_.resize(base);
+    }
     if(first)std::rethrow_exception(first);
+    co_return;
 }
-void VirtualMachine::cleanup_error(){
+Routine<void> VirtualMachine::cleanup_error(){
     struct Unwinding {bool& flag;bool old;Unwinding(bool& f):flag(f),old(f){flag=true;}~Unwinding(){flag=old;}} failed(context_->unwinding);
     std::unordered_set<Environment*> seen;auto frames=frames_;
-    for(auto i=frames.rbegin();i!=frames.rend();++i)for(auto env=i->environment;env;env=env->parent)if(seen.insert(env.get()).second)try{drain(env);}catch(...){}
+    for(auto i=frames.rbegin();i!=frames.rend();++i)for(auto env=i->environment;env;env=env->parent)if(seen.insert(env.get()).second)try{(co_await drain(env));}catch(...){}
+    co_return;
 }
-void VirtualMachine::dispatch(std::size_t stop_depth) {
+Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
     while(frames_.size()>stop_depth) {
         auto& f=frames_.back();if(f.pc>=f.code->instructions.size())invalid(f.site);
         const auto& op=f.code->instructions[f.pc++];const auto& s=op.span;
-        task_checkpoint(context_,s);if(++steps_>1000000)runtime_error(s,"execution step limit exceeded (1000000)","E4099");
+        co_await Yield{};task_checkpoint(context_,s);if(context_->execution_metrics)++context_->execution_metrics->steps;if(++steps_>context_->execution_limits.steps)runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");
         switch(op.op) {
-        case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});stack_.emplace_back(Value(Callable{fn->second,"",{},captured}));break;}
+        case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});Callable callable{fn->second,"",{},captured};std::weak_ptr<Environment> weak=captured;callable.resource_guard=[weak](unsigned d){if(auto env=weak.lock())for(const auto& [_,b]:env->bindings)if(contains_file(b.value,d+1))return true;return false;};stack_.emplace_back(Value(std::move(callable)));break;}
         case Op::Defer:{auto args=arguments(op.argument,s);auto value=pop(s);auto fn=std::get_if<Callable>(&value.data);if(!fn)runtime_error(s,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(arg);f.environment->deferred.push_back({*fn,std::move(args),op});break;}
         case Op::ExternalInit:if(context_&&context_->in_task)runtime_error(s,"Native/WASM initialization cannot run in tasks","E4104");model_.external->initialize(op.text,s);break;
         case Op::Constant:stack_.emplace_back(op.constant);break;
@@ -118,7 +144,7 @@ void VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::EnterScope:{auto env=managed<Environment>();env->parent=f.environment;f.environment=std::move(env);break;}
         case Op::LeaveScope:case Op::Unwind: {
             auto count=op.op==Op::LeaveScope?1:op.argument;
-            for(std::size_t i=0;i<count;++i){if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;drain(env);frames_.back().environment=env->parent;}break;
+            for(std::size_t i=0;i<count;++i){if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;(co_await drain(env));frames_.back().environment=env->parent;}break;
         }
         case Op::LocateName: {
             if(op.text=="_"){stack_.emplace_back(Location{});break;}
@@ -152,7 +178,7 @@ void VirtualMachine::dispatch(std::size_t stop_depth) {
             for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i]);break;}
         case Op::MakeMap:stack_.emplace_back(make_map(op.type,s));break;
         case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);auto m=std::get_if<MapValue>(&std::get<Value>(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
-        case Op::Propagate:{auto value=pop(s);auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else finish_return(propagated_error(value),op,true);break;}
+        case Op::Propagate:{auto value=pop(s);auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else (co_await finish_return(propagated_error(value),op,true));break;}
         case Op::CheckIndex:
             if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);
             if(!std::holds_alternative<SliceValue>(std::get<Value>(stack_.back()).data)&&!std::holds_alternative<MapValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice, array or map","E4003");break;
@@ -178,13 +204,14 @@ void VirtualMachine::dispatch(std::size_t stop_depth) {
         }
         case Op::MakeStruct: {
             if(op.text=="std.error.Value")runtime_error(s,"standard Error must be constructed through std.error","E4003");
+        if(op.text=="std.file.File"||op.text=="std.file.IOFailure")runtime_error(s,"opaque File/IOFailure must be constructed through std.file","E4003");
             auto object=managed<StructData>();object->name=op.text;stack_.emplace_back(Value(StructValue{object,true}));break;
         }
         case Op::InitField: {
             auto item=pop(s);if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
             auto object=std::get_if<StructValue>(&std::get<Value>(stack_.back()).data);if(!object)invalid(s);
             auto value=enforce_type(std::move(item),field_type(model_,object->data->name,op.text,s),s,op.flag);
-            object->data->fields.emplace(op.text,copy_value(value));break;
+            object->data->fields.emplace(op.text,copy_value(std::move(value)));break;
         }
         case Op::Member: {
             auto value=pop(s);
@@ -199,9 +226,9 @@ void VirtualMachine::dispatch(std::size_t stop_depth) {
         }
         case Op::Call: {
             auto args=arguments(op.argument,s);auto callee=pop(s);auto p=std::get_if<Callable>(&callee.data);
-            if(!p)runtime_error(s,"value is not callable","E4003");call(*p,args,op);break;
+            if(!p)runtime_error(s,"value is not callable","E4003");(co_await call(*p,args,op));break;
         }
-        case Op::Return:finish_return(pop(s),op);break;
+        case Op::Return:co_await finish_return(pop(s),op);break;
         case Op::RangeInit: {
             I step=as_int(pop(s),s),end=as_int(pop(s),s),start=as_int(pop(s),s);
             if(!step)runtime_error(s,"range step cannot be zero","E4005");
@@ -241,5 +268,6 @@ void VirtualMachine::dispatch(std::size_t stop_depth) {
         }
     }
     if(stop_depth==0&&!stack_.empty())invalid({});
+    co_return;
 }
 }

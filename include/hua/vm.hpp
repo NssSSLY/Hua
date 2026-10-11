@@ -2,12 +2,14 @@
 #include "hua/bytecode.hpp"
 #include "hua/stdlib.hpp"
 #include <iosfwd>
+#include "hua/tasks.hpp"
 namespace hua {
 class VirtualMachine {
 public:
     VirtualMachine(const SemanticModel& model, std::ostream& output, RuntimeContext* context = nullptr) : model_(model), output_(output), context_(context) {}
     void run(const Bytecode& bytecode);
 private:
+    Routine<void> run_body(const Bytecode& bytecode,ExecutionScope&);
     struct Binding { Value value; std::string type; bool mutable_binding{}; };
     struct Deferred {Callable callable;std::vector<Value> arguments;Instruction site;};
     struct Environment {
@@ -48,13 +50,13 @@ private:
     Value pop(const SourceSpan& span);
     std::vector<Value> arguments(std::size_t count, const SourceSpan& span);
     void bind(const Instruction& op, Value value);
-    void call(const Callable& callable, const std::vector<Value>& args, const Instruction& site);
+    Routine<void> call(const Callable& callable, const std::vector<Value>& args, const Instruction& site);
     Value isolated(const Value& value,unsigned depth=0);
-    Value launch(const Callable&,const std::vector<Value>&,const Instruction&,std::vector<std::int64_t> batch={},std::string element={},bool contextual=false);
-    Value parallel(const std::vector<Value>&,const Instruction&);
-    void dispatch(std::size_t stop_depth=0);
-    void drain(const std::shared_ptr<Environment>& env);
-    void cleanup_error();
-    void finish_return(Value value,const Instruction& op,bool early=false);
+    Routine<Value> launch(const Callable&,const std::vector<Value>&,const Instruction&,std::vector<std::int64_t> batch={},std::string element={},bool contextual=false);
+    Routine<Value> parallel(const std::vector<Value>&,const Instruction&);
+    Routine<void> dispatch(std::size_t stop_depth=0);
+    Routine<void> drain(const std::shared_ptr<Environment>& env);
+    Routine<void> cleanup_error();
+    Routine<void> finish_return(Value value,const Instruction& op,bool early=false);
 };
 }
