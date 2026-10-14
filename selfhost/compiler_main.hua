@@ -1,0 +1,38 @@
+# A06 公开编译器入口。开发工具的 JSON 协议入口保持独立。
+import types as types
+import bytecode as bc
+import archive as archive
+import std.error as e
+import std.os as os
+import std.path as path
+import std.strings as strings
+fn failure(stage string, detail string) e.Value {
+    var code="input"
+    if strings.starts_with(detail,"E8203@") { code="internal" }
+    return e.with_context(unwrap(e.make("hua.cli",code,detail)),"compiler stage: "+stage)
+}
+fn main() Result<void,e.Value> {
+    let args=os.args()
+    if len(args)==1 {
+        if args[0]=="help" || args[0]=="--help" {
+            print("Usage: compiler_main.hua -- build entry.hua -o output.huab")
+            return ok()
+        }
+    }
+    if len(args)!=4 { return err(unwrap(e.make("hua.cli","usage","expected build entry.hua -o output.huab"))) }
+    if args[0]!="build" || args[2]!="-o" { return err(unwrap(e.make("hua.cli","usage","expected build entry.hua -o output.huab"))) }
+    if unwrap(path.ext(args[1]))!=".hua" || unwrap(path.ext(args[3]))!=".huab" {
+        return err(unwrap(e.make("hua.cli","usage","input must be .hua and output must be .huab")))
+    }
+    let checked=types.analyze(args[1])
+    if is_err(checked) { return err(failure("types",unwrap_err(checked))) }
+    let model=unwrap(checked)
+    let emitted=bc.compile(model)
+    if is_err(emitted) { return err(failure("bytecode",unwrap_err(emitted))) }
+    let encoded=archive.encode(unwrap(emitted),model)
+    if is_err(encoded) { return err(failure("archive",unwrap_err(encoded))) }
+    let published=archive.publish(unwrap(encoded).data,args[3])
+    if is_err(published) { return err(failure("publication",unwrap_err(published))) }
+    print("Built "+args[3])
+    return ok()
+}

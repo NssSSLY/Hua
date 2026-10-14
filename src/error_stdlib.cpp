@@ -22,6 +22,18 @@ std::shared_ptr<const ErrorData> shortened(const std::shared_ptr<const ErrorData
 }
 Value error(ErrorData data){return Value(ErrorValue{managed<const ErrorData>(std::move(data))});}
 }
+std::string format_error(const ErrorValue& value){
+        std::string out;auto current=value.data.get();
+        for(std::size_t depth=0;current&&depth<max_depth;++depth){
+            if(depth)out+="\ncaused by: ";out+=current->domain+"."+current->code+": "+current->message;
+            if(!current->origin.empty())out+=" ["+current->origin+"]";
+            if(current->native_code)out+=" ["+current->native_domain+":"+std::to_string(*current->native_code)+"]";
+            for(const auto& context:current->contexts)out+="\ncontext: "+context;
+            if(current->truncated)out+="\n[truncated]";
+            current=current->cause.get();
+        }
+    return out;
+}
 Value invoke_error_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span){
     auto text=[&](std::size_t i)->const std::string&{return std::get<std::string>(args[i].data);};
     auto node=[&](std::size_t i)->const ErrorData&{auto p=std::get_if<ErrorValue>(&args[i].data);if(!p||!p->data)runtime_error(span,"expected std.error.Value","E4003");return *p->data;};
@@ -54,18 +66,7 @@ Value invoke_error_standard(const StandardFunction& f,const std::vector<Value>& 
         else{copy.native_domain=clipped(text(1),128,copy.truncated);copy.native_code=as_int(args[2],span);}
         return error(std::move(copy));
     }
-    if(f.name=="format"){
-        std::string out;auto current=&data;
-        for(std::size_t depth=0;current&&depth<max_depth;++depth){
-            if(depth)out+="\ncaused by: ";out+=current->domain+"."+current->code+": "+current->message;
-            if(!current->origin.empty())out+=" ["+current->origin+"]";
-            if(current->native_code)out+=" ["+current->native_domain+":"+std::to_string(*current->native_code)+"]";
-            for(const auto& context:current->contexts)out+="\ncontext: "+context;
-            if(current->truncated)out+="\n[truncated]";
-            current=current->cause.get();
-        }
-        return Value(std::move(out));
-    }
+    if(f.name=="format")return Value(format_error(std::get<ErrorValue>(args[0].data)));
     runtime_error(span,"unknown error operation","E4003");
 }
 }

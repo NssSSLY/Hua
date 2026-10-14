@@ -35,23 +35,27 @@ void Interpreter::bind(const std::string& name,Value value,std::string type,bool
     if(!environment_->bindings.emplace(name,Binding{std::move(value),std::move(type),mutable_binding}).second)
         runtime_error(span,"duplicate runtime binding `"+name+"`","E4001");
 }
-void Interpreter::run(const Node& program){
+EntryResult Interpreter::run(const Node& program){
     ExecutionScope execution(context_,output_);context_->type_relations=&model_.relations;context_->resumable=true;
-    sync_wait(run_body(program,execution),*context_);
+    sync_wait(run_body(program,execution),*context_);return std::move(entry_);
 }
 Routine<void> Interpreter::run_body(const Node& program,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
     steps_=0;calls_=0;global_.bindings.clear();builtins_.bindings.clear();builtins_.parent=nullptr;global_.parent=&builtins_;environment_=&global_;
     for(const auto& name:builtin_names()){builtins_.bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),"builtin:"+name,false});builtins_.bindings.emplace("$core$"+name,Binding{Value(Callable{nullptr,name,{}}),"builtin:"+name,false});}
     for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_.bindings.insert_or_assign(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
-    std::exception_ptr error;
+    std::exception_ptr error;Value returned;SourceSpan entry_span;
     try{
         for(const auto& n:program.children)if(n->kind!=N::Function&&n->kind!=N::Struct)(co_await execute(*n));
-        if(auto found=model_.functions.find("main");found!=model_.functions.end()){auto result=(co_await call(Callable{found->second,"",{}},{},*found->second));if(std::holds_alternative<TaskValue>(result.data))co_await context_->tasks->await_async(result,found->second->span);}
+        if(auto found=model_.functions.find("main");found!=model_.functions.end()){
+            entry_span=found->second->span;
+            returned=(co_await call(Callable{found->second,"",{}},{},*found->second));
+            if(std::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
+        }
     }catch(...){error=std::current_exception();}
     try{co_await execution.finish_async(bool(error));}catch(...){if(!error)error=std::current_exception();}
     global_.bindings.clear();builtins_.bindings.clear();if(error)std::rethrow_exception(error);
-    co_return;
+    entry_=entry_result(returned,entry_span);co_return;
 }
 Routine<void> Interpreter::block(const Node& n,bool scope){
     Environment local{environment_,{}};Restore guard(environment_,scope?&local:environment_);
@@ -78,10 +82,11 @@ Routine<void> Interpreter::drain(Environment& env){
     co_return;
 }
 Routine<void> Interpreter::execute(const Node& n) {
+    try{
     co_await Yield{};tick(n);
     switch(n.kind) {
     case N::Function:bind(declared_name(n),Value(closure(n)),"fn:"+declared_name(n),false,n.span);break;
-    case N::Defer:{const auto& expression=*n.children[0];auto callee=(co_await evaluate(*expression.children[0]));std::vector<Value> args;for(std::size_t i=1;i<expression.children.size();++i)args.push_back((co_await evaluate(*expression.children[i])));auto fn=std::get_if<Callable>(&callee.data);if(!fn)runtime_error(n.span,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(std::move(arg));environment_->deferred.push_back({*fn,std::move(args),&expression});break;}
+    case N::Defer:{const auto& expression=*n.children[0];auto callee=(co_await evaluate(*expression.children[0]));std::vector<Value> args;for(std::size_t i=1;i<expression.children.size();++i)args.push_back((co_await evaluate(*expression.children[i])));auto fn=std::get_if<Callable>(&callee.data);if(!fn)runtime_error(expression.span,"defer requires a callable","E4003");try{for(auto& arg:args)arg=copy_value(std::move(arg));}catch(const Diagnostic& error){throw error.located(expression.span);}environment_->deferred.push_back({*fn,std::move(args),&expression});break;}
     case N::ExternalInit:if(context_&&context_->in_task)runtime_error(n.span,"Native/WASM initialization cannot run in tasks","E4104");model_.external->initialize(n.text,n.span);break;
     case N::Block:co_await block(n);break;
     case N::Let:case N::Var:case N::Const: {
@@ -142,6 +147,8 @@ Routine<void> Interpreter::execute(const Node& n) {
     default:runtime_error(n.span,"statement is not executable in Phase 2","E4008");
     }
     co_return;
+    }catch(const Diagnostic& error){auto reported=error.located(n.span);throw reported;}
+
 }
 Routine<Interpreter::Location> Interpreter::locate(const Node& n) {
     co_await Yield{};tick(n);
@@ -161,13 +168,14 @@ Routine<Interpreter::Location> Interpreter::locate(const Node& n) {
     runtime_error(n.span,"invalid assignment target","E4003");
 }
 Routine<Value> Interpreter::evaluate(const Node& n) {
+    try{
     co_await Yield{};tick(n);
     switch(n.kind) {
     case N::Integer:case N::Float:case N::String:case N::Boolean:case N::Nil:co_return literal(n);
     case N::Name:{auto& b=environment_->lookup(n.text,n.span);co_return b.value;}
     case N::Pack:{std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back((co_await evaluate(*c)));contextual.push_back(contextual_literal(*c));}for(auto& value:values)value=copy_value(std::move(value));co_return make_multi(std::move(values),std::move(contextual));}
     case N::MapLiteral:{auto value=make_map(type_name(*n.children[0]),n.span);auto& map=std::get<MapValue>(value.data);for(std::size_t i=1;i<n.children.size();++i){auto key=(co_await evaluate(*n.children[i]->children[0]));auto item=(co_await evaluate(*n.children[i]->children[1]));map_put(map,key,std::move(item),n.children[i]->span,contextual_literal(*n.children[i]->children[1]));}co_return value;}
-    case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value),false};co_return result_payload(value,true,n.span);}
+    case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value,n.span),false};co_return result_payload(value,true,n.span);}
     case N::Unary: {
         if(n.text=="&")runtime_error(n.span,"safe reference execution is not implemented","E4008");
         if(numeric_literal(n))co_return literal(n);
@@ -235,8 +243,11 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     }
     default:runtime_error(n.span,"expression is not executable in Phase 2","E4008");
     }
+    }catch(const Diagnostic& error){auto reported=error.located(n.span);throw reported;}
+
 }
 Routine<Value> Interpreter::call(const Callable& callable,const std::vector<Value>& args,const Node& site) {
+    try{
     if(!callable.builtin.empty())co_return (co_await builtin(callable.builtin,args,site));
     const auto& fn=*callable.function;auto name=declared_name(fn);
     if(fn.text.find(" external")!=std::string::npos) {
@@ -271,6 +282,8 @@ Routine<Value> Interpreter::call(const Callable& callable,const std::vector<Valu
     Value result;bool contextual=false;
     try{(co_await block(*fn.children.back(),false));}catch(const Returned& returned){result=returned.value;contextual=returned.contextual;}
     co_return enforce_return(std::move(result),fn,site.span,contextual);
+    }catch(const Diagnostic& error){auto reported=error.located(site.span);reported.add_context(site.span,"called from");throw reported;}
+
 }
 Routine<Value> Interpreter::builtin(const std::string& name,const std::vector<Value>& args,const Node& site) {
     if(name=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=Node(NodeKind::Call,site.span);for(std::size_t i=1;i<site.children.size();++i)nested.add(std::make_unique<Node>(site.children[i]->kind,site.children[i]->span,site.children[i]->text));co_return co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested);}

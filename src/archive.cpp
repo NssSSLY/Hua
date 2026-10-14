@@ -238,9 +238,9 @@ void write_huab(const std::filesystem::path& path,const Bytecode& b,const Semant
     if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(required_format(b,model));header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
     auto tmp=path;std::random_device random;tmp+=".tmp-"+std::to_string(random())+"-"+std::to_string(random());
     try {
-        std::ofstream out(tmp,std::ios::binary|std::ios::trunc);if(!out)throw std::runtime_error("cannot create .huab output");out.write(header.bytes.data(),header.bytes.size());out.write(w.bytes.data(),w.bytes.size());out.flush();if(!out)throw std::runtime_error("failed to write complete .huab output");out.close();
+        std::ofstream out(tmp,std::ios::binary|std::ios::trunc);if(!out)throw Diagnostic("E0001",{utf8(path),0,0,1,1},"cannot create .huab output");out.write(header.bytes.data(),header.bytes.size());out.write(w.bytes.data(),w.bytes.size());out.flush();if(!out)throw Diagnostic("E0001",{utf8(path),0,0,1,1},"failed to write complete .huab output");out.close();if(!out)throw Diagnostic("E0001",{utf8(path),0,0,1,1},"failed to close .huab output");
 #ifdef _WIN32
-        if(!MoveFileExW(tmp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw std::runtime_error("cannot replace .huab output");
+        if(!MoveFileExW(tmp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw Diagnostic("E0001",{utf8(path),0,0,1,1},"cannot replace .huab output");
 #else
         std::filesystem::rename(tmp,path);
 #endif

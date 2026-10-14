@@ -20,7 +20,7 @@ SourceSpan Source::span(std::size_t start, std::size_t end) const {
     start = std::min(start, text_.size());
     auto it = std::upper_bound(line_starts_.begin(), line_starts_.end(), start);
     const auto line = static_cast<std::size_t>(it - line_starts_.begin());
-    return {filename_, start, std::min(end, text_.size()), line, start - line_starts_[line - 1] + 1};
+    return {filename_, start, std::max(start,std::min(end, text_.size())), line, start - line_starts_[line - 1] + 1};
 }
 std::string_view Source::line_text(std::size_t number) const {
     if (number == 0 || number > line_starts_.size()) return {};
@@ -29,12 +29,35 @@ std::string_view Source::line_text(std::size_t number) const {
     if (end == std::string::npos) end = text_.size();
     return std::string_view(text_).substr(start, end - start);
 }
+void SourceTrace::add(const SourceSpan& span,std::string message){
+    if(span.file_id.empty())return;
+    for(const auto& site:sites)if(site.span==span)return;
+    if(sites.size()==32){truncated=true;return;}
+    sites.push_back({span,std::move(message)});
+}
+std::string render_source_trace(const SourceTrace& trace){
+    std::ostringstream out;
+    for(const auto& site:trace.sites)out<<"note: "<<site.message<<" at "<<site.span.file_id<<':'<<site.span.line<<':'<<site.span.column<<'\n';
+    if(trace.truncated)out<<"note: further source context omitted (limit 32)\n";
+    return out.str();
+}
+Diagnostic Diagnostic::located(const SourceSpan& span) const{
+    auto out=*this;if(out.span_.file_id.empty())out.span_=span;return out;
+}
+void Diagnostic::add_context(const SourceSpan& span,std::string message){if(span!=span_)trace_.add(span,std::move(message));}
+void Diagnostic::add_trace(const SourceTrace& trace){for(const auto& site:trace.sites)add_context(site.span,site.message);trace_.truncated=trace_.truncated||trace.truncated;}
 Diagnostic::Diagnostic(std::string code, SourceSpan span, std::string message, std::string help)
     : std::runtime_error(std::move(message)), code_(std::move(code)), help_(std::move(help)), span_(std::move(span)) {}
 std::string Diagnostic::render(const Source& source) const {
     std::ostringstream out;
     out << "error[" << code_ << "]: " << what() << '\n'
         << " --> " << span_.file_id << ':' << span_.line << ':' << span_.column << '\n';
+    auto expected=source.span(span_.start_offset,span_.end_offset);
+    if(span_.file_id!=source.filename()||span_.start_offset>source.text().size()||
+       expected.line!=span_.line||expected.column!=span_.column){
+        if(!help_.empty())out<<"help: "<<help_<<'\n';
+        out<<render_source_trace(trace_);return out.str();
+    }
     auto line = source.line_text(span_.line);
     const auto digits = std::to_string(span_.line).size();
     std::string displayed, underline;
@@ -71,6 +94,7 @@ std::string Diagnostic::render(const Source& source) const {
         << std::string(digits + 1, ' ') << "| " << underline;
     out << '^' << '\n';
     if (!help_.empty()) out << "help: " << help_ << '\n';
+    out<<render_source_trace(trace_);
     return out.str();
 }
 }

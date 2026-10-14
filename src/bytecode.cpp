@@ -35,7 +35,7 @@ void BytecodeCompiler::block(const Node& n,bool scope) {
 void BytecodeCompiler::statement(const Node& n) {
     switch(n.kind) {
     case N::Function:{emit(Op::Closure,n,declared_name(n));auto i=emit(Op::Bind,n,declared_name(n));code_->instructions[i].type="fn:"+declared_name(n);code_->instructions[i].contextual={false};break;}
-    case N::Defer:{const auto& call=*n.children[0];for(const auto& c:call.children)expression(*c);auto i=emit(Op::Defer,n);code_->instructions[i].argument=call.children.size()-1;for(std::size_t j=1;j<call.children.size();++j)code_->instructions[i].contextual.push_back(contextual_literal(*call.children[j]));break;}
+    case N::Defer:{const auto& call=*n.children[0];for(const auto& c:call.children)expression(*c);auto i=emit(Op::Defer,call);code_->instructions[i].argument=call.children.size()-1;for(std::size_t j=1;j<call.children.size();++j)code_->instructions[i].contextual.push_back(contextual_literal(*call.children[j]));break;}
     case N::ExternalInit:emit(Op::ExternalInit,n,n.text);break;
     case N::Block:block(n);break;
     case N::Let:case N::Var:case N::Const: {

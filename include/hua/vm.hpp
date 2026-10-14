@@ -3,12 +3,14 @@
 #include "hua/stdlib.hpp"
 #include <iosfwd>
 #include "hua/tasks.hpp"
+#include "hua/entry.hpp"
 namespace hua {
 class VirtualMachine {
 public:
     VirtualMachine(const SemanticModel& model, std::ostream& output, RuntimeContext* context = nullptr) : model_(model), output_(output), context_(context) {}
-    void run(const Bytecode& bytecode);
+    EntryResult run(const Bytecode& bytecode);
 private:
+    EntryResult entry_;
     Routine<void> run_body(const Bytecode& bytecode,ExecutionScope&);
     struct Binding { Value value; std::string type; bool mutable_binding{}; };
     struct Deferred {Callable callable;std::vector<Value> arguments;Instruction site;};

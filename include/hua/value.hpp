@@ -41,7 +41,7 @@ struct JsonValue { std::shared_ptr<const JsonData> data; };
 using MapKey = std::variant<bool, std::int64_t, std::string>;
 struct MapValue { std::shared_ptr<MapData> data; bool writable{true}; };
 struct MultiValue { std::shared_ptr<MultiData> data; };
-struct ResultValue { bool ok{}; std::shared_ptr<Value> payload; std::string success_type, error_type; bool writable{true}, contextual{}; };
+struct ResultValue { bool ok{}; std::shared_ptr<Value> payload; std::string success_type, error_type; bool writable{true}, contextual{}; std::shared_ptr<const SourceTrace> failure_source{}; };
 struct SliceValue {
     std::shared_ptr<std::vector<Value>> storage;
     std::size_t start{}, length{};
@@ -102,7 +102,8 @@ void location_write(const ValueLocation& where, const Value& value);
 Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span);
 Value enforce_return(Value value, const Node& function, const SourceSpan& span, bool contextual = false);
 Value aggregate_member(const Value& value, const std::string& name, const SourceSpan& span);
-Value propagated_error(const Value& value);
+Value record_failure_source(Value,const SourceSpan&,std::string message="Result error created here");
+Value propagated_error(const Value& value,const SourceSpan& span={});
 Value result_payload(const Value& value, bool success, const SourceSpan& span);
 std::string declared_name(const Node& node);
 std::optional<std::uint64_t> fixed_extent(std::string_view text);

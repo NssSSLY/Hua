@@ -2,6 +2,8 @@
 #include "hua/value.hpp"
 #include "hua/external.hpp"
 #include <unordered_map>
+#include <unordered_set>
+#include <tuple>
 namespace hua {
 struct SemanticModel {
     std::shared_ptr<ExternalRegistry> external;
@@ -19,9 +21,45 @@ class SemanticAnalyzer {
 public:
     SemanticModel analyze(const Node& program, std::shared_ptr<ExternalRegistry> external = {});
 private:
-    struct Info { std::string type; bool writable{}, readonly_children{}; bool operator==(const Info&) const = default; };
+    struct Origin {
+        const Node* owner{};std::string path;bool readonly{},copied{};
+        bool operator==(const Origin&) const=default;
+        bool operator<(const Origin& x) const{if(owner!=x.owner)return std::less<const Node*>{}(owner,x.owner);return std::tie(path,readonly,copied)<std::tie(x.path,x.readonly,x.copied);}
+    };
+    struct Info { std::string type; bool writable{}, readonly_children{}; std::set<Origin> origins{};bool deep_owned{},record_copy{}; bool operator==(const Info&) const = default; };
+    using Views=std::unordered_map<std::string,Info>;
+    struct ReturnFacts {Info value;Views views;std::vector<Info> positions;std::vector<Views> position_views;bool operator==(const ReturnFacts&) const=default;};
+    struct Effects {bool unknown{};std::set<Origin> required;std::unordered_map<const Node*,Views> writes;bool operator==(const Effects&) const=default;};
+    bool probing_{};const Node* defer_site_{};
+    std::unordered_map<const Node*,Views> node_views_;
+    std::unordered_map<const Node*,std::vector<Info>> node_positions_;
+    std::unordered_map<const Node*,std::vector<Views>> node_position_views_;
+    std::unordered_map<std::string,ReturnFacts> return_facts_;
+    std::unordered_map<std::string,Effects> effects_;
+    ReturnFacts pending_return_;bool saw_return_{};
+    void capture_return(const Node&);
+    void seed(const std::string&,const Node*,bool);
+    std::unordered_map<const Node*,Views> actual_views_;
+    static Info meet(Info,const Info&);
+    static Views meet(Views,const Views&,const Info&,const Info&);
+    Effects pending_effects_;
+    std::vector<std::unordered_map<const Node*,Views>> exit_views_;
+    void capture_effect_exit();
+    void finish_effects();
+    std::unordered_map<std::string,std::unordered_set<const Node*>> local_nodes_;
+    std::unordered_map<const Node*,Info> actual_origins_;
+    void bound(Views&,Info&) const;
+    Info projected(Info,const std::string&) const;
+    Views fields(Info,unsigned depth=0) const;
+    void infer_field_capabilities(const Node&);
+    void note_write(const Node&);
+    void update_aliases(const Info&,const std::string&,Info,const Views&);
+    Info instantiate(Info,const Node&) const;
+    Views instantiate(Views,const Node&) const;
+    void apply_effects(const Effects&,const Node&);
+    void forget_unknown(const Node&);
     struct Symbol { std::string type; bool mutable_binding{}, writable{}; std::optional<Value> constant; std::string declared;
-        bool readonly_children{};
+        bool readonly_children{};std::set<Origin> origins{};bool deep_owned{},record_copy{};const Node* declaration{};
         std::unordered_map<std::string,Info> views;
         Symbol(std::string t={},bool mut=false,bool write=false,std::optional<Value> folded={}):type(std::move(t)),mutable_binding(mut),writable(write),constant(std::move(folded)),declared(type){}
     };

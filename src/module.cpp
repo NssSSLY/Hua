@@ -123,7 +123,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
             auto binding=n->children.empty()?n->text:n->children[0]->text;
             if(module.imports.contains(binding))error(n->span,"duplicate import namespace `"+binding+"`","E5004");
             if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
-            else {auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}
+            else {try{auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}catch(const Diagnostic& error){auto reported=error;reported.add_context(n->span,"imported from");throw reported;}}
         }else {
             declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
             if(n->kind==N::MultiBinding){for(const auto& p:n->children[0]->children)if(p->text!="_")module.globals.emplace(p->text,module.prefix+p->text);}
@@ -158,15 +158,17 @@ NodePtr ModuleLoader::link(Module& module) {
     auto local=[&](const std::string& name){for(auto i=locals.rbegin();i!=locals.rend();++i)if(i->contains(name))return true;return false;};
     auto imported=[&](const std::string& name,const SourceSpan& span,bool require_type)->std::string {
         auto root=name.substr(0,name.find('.'));if(!require_type && local(root))return "";
-        for(const auto& [prefix,target]:module.imports)if(name.starts_with(prefix+".")) {
-            auto member=name.substr(prefix.size()+1);
-            auto found=target->exports.find(member);
-            if(found==target->exports.end())error(span,"module `"+prefix+"` has no public export `"+member+"`","E5003");
-            if(require_type && found->second->kind!=N::Struct)error(span,"module export `"+name+"` is not a struct type","E5003");
-            if(!require_type && found->second->kind==N::Struct)error(span,"struct type `"+name+"` requires a named-field initializer","E5003");
-            return target->globals.at(member);
-        }
-        return "";
+        // Resolve the most specific imported namespace, independent of hash/insertion order.
+        const std::string* selected=nullptr;Module* target=nullptr;
+        for(const auto& [prefix,candidate]:module.imports)
+            if(name.starts_with(prefix+".") && (!selected || prefix.size()>selected->size())){selected=&prefix;target=candidate;}
+        if(!target)return "";
+        auto member=name.substr(selected->size()+1);
+        auto found=target->exports.find(member);
+        if(found==target->exports.end())error(span,"module `"+*selected+"` has no public export `"+member+"`","E5003");
+        if(require_type && found->second->kind!=N::Struct)error(span,"module export `"+name+"` is not a struct type","E5003");
+        if(!require_type && found->second->kind==N::Struct)error(span,"struct type `"+name+"` requires a named-field initializer","E5003");
+        return target->globals.at(member);
     };
     auto type=[&](const std::string& name,const SourceSpan& span) {
         if(name.empty())return std::string{};

@@ -14,7 +14,7 @@ Value invoke_builtin(const std::string& name,const std::vector<Value>& args,cons
     if(name=="task_group_begin"){if(!args.empty()||!context||!context->tasks)runtime_error(span,"invalid taskgroup","E4103");return Value(static_cast<I>(context->tasks->begin_group()));}
     if(name=="task_group_end"){if(args.size()!=1||!context||!context->tasks)runtime_error(span,"invalid taskgroup","E4103");context->tasks->end_group(static_cast<std::size_t>(as_int(args[0],span)),span);return {};}
     if(name=="simd_check"){if(args.size()!=1)runtime_error(span,"invalid SIMD metadata","E4104");auto array=std::get_if<SliceValue>(&args[0].data);if(!array||!numeric_spec(array->element_type))runtime_error(span,"SIMD requires a numeric array","E4104");return {};}
-    if(auto standard=standard_function(name))return invoke_standard(*standard,args,span,output,context);
+    if(auto standard=standard_function(name))return record_failure_source(invoke_standard(*standard,args,span,output,context),span);
     auto arity=(name=="min"||name=="max"||name=="has"||name=="delete"||name=="unwrap_or")?2u:name=="clamp"?3u:1u;
     if(name!="print" && !(name=="ok"&&args.empty()) && args.size()!=arity)runtime_error(span,"builtin argument count mismatch","E4003");
     if(numeric_spec(name)&&name!="int"&&name!="float"){
@@ -23,7 +23,7 @@ Value invoke_builtin(const std::string& name,const std::vector<Value>& args,cons
     }
     if((name=="int"||name=="float")&&std::holds_alternative<NumericValue>(args[0].data))return convert_numeric(args[0],name,span,true);
     if(name=="ok"&&args.empty()){auto types=type_arguments(result_type,"Result");if(types.size()!=2||types[0]!="void"||types[1].empty())runtime_error(span,"ok() requires Result<void,E> metadata","E4003");return Value(ResultValue{true,nullptr,"void",types[1],false,false});}
-    if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);auto type=value_type(v);return Value(ResultValue{ok,managed<Value>(std::move(v)),ok?type:"",ok?"":type,true,!contextual.empty()&&contextual[0]});}
+    if(name=="ok"||name=="err"){bool ok=name=="ok";auto v=copy_value(args[0]);auto type=value_type(v);return record_failure_source(Value(ResultValue{ok,managed<Value>(std::move(v)),ok?type:"",ok?"":type,true,!contextual.empty()&&contextual[0]}),span);}
     if(name=="is_ok"||name=="is_err"){auto r=std::get_if<ResultValue>(&args[0].data);if(!r)runtime_error(span,"expected Result","E4003");return Value(r->ok==(name=="is_ok"));}
     if(name=="is_some"||name=="is_none")return Value((args[0].data.index()!=0)==(name=="is_some"));
     if(name=="unwrap_err")return result_payload(args[0],false,span);
@@ -39,7 +39,13 @@ Value invoke_builtin(const std::string& name,const std::vector<Value>& args,cons
     if(name=="str")return Value(show(args[0]));
     if(name=="type")return Value(display_type(value_type(args[0])));
     if(name=="sizeof"||name=="alignof")return Value(static_cast<I>(name=="sizeof"?value_size(args[0],span):value_alignment(args[0],span)));
-    if(name=="clone")return copy_value(args[0],true);
+    if(name=="clone"){
+        try{return copy_value(args[0],true);}
+        catch(const Diagnostic& error){
+            if(error.span().file_id.empty())throw error.located(span);
+            throw;
+        }
+    }
     if(name=="len") {
         if(auto p=std::get_if<MapValue>(&args[0].data))return Value(static_cast<I>(p->data->entries.size()));
         if(auto p=std::get_if<SliceValue>(&args[0].data))return Value(static_cast<I>(p->length));

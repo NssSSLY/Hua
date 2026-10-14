@@ -405,8 +405,8 @@ fn parse_impl(source string, name string, limits Limits, extended bool) Result<T
     let tokens = lexer.scan_bounded(source,limits.tokens)?
     var pool = ast.create()
     let id = ast.register_source(pool,name,source)?
-    var data = tokens
-    if extended { data = clone(tokens) }
+    # State helpers may split tokens; keep their mutable data contract explicit.
+    var data = clone(tokens)
     var s = State{pool:pool,source:id,data:data,pos:0,last_end:0,depth:0,blocks:0,functions:0,loops:0,steps:0,limits:limits,extended:extended,header:false}
     let first = peek(s)
     lines(s)?

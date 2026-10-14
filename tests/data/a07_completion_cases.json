@@ -1,0 +1,422 @@
+[
+  {
+    "name": "mixed_literal_readonly",
+    "source": "struct Box{xs []int\nys []int}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar b=Box{xs:ro,ys:[2]}\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "mixed_literal_writable",
+    "source": "struct Box{xs []int\nys []int}\nfn main(){let ro=[1]\nvar b=Box{xs:ro,ys:[2]}\nb.ys[0]=9\nprint(b.ys)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "mixed_return_readonly",
+    "source": "struct Box{xs []int\nys []int}\nfn make(ro []int) Box{return Box{xs:ro,ys:[2]}}\nprint(\"BAD\")\nfn main(){var b=make([1])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "mixed_return_writable",
+    "source": "struct Box{xs []int\nys []int}\nfn make(ro []int) Box{return Box{xs:ro,ys:[2]}}\nfn main(){var b=make([1])\nb.ys[0]=9\nprint(b.ys)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "refreshed_return",
+    "source": "struct Box{xs []int\nys []int}\nfn make(ro Box) Box{var b=ro\nb.xs=[3]\nreturn b}\nfn main(){var b=make(Box{xs:[1],ys:[2]})\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "mutating_helper_downgrade",
+    "source": "struct Box{xs []int\nys []int}\nfn poison(b mut Box,ro []int){b.xs=ro}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar b=Box{xs:[2],ys:[3]}\npoison(b,ro)\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "mutating_helper_refresh",
+    "source": "struct Box{xs []int\nys []int}\nfn refresh(b mut Box){b.xs=[3]}\nfn main(){let ro=Box{xs:[1],ys:[2]}\nvar b=ro\nrefresh(b)\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "indexed_record_readonly",
+    "source": "struct Box{xs []int\nys []int}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar xs=[Box{xs:ro,ys:[2]}]\nvar b=xs[0]\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "indexed_record_replacement",
+    "source": "struct Box{xs []int\nys []int}\nprint(\"BAD\")\nfn main(){var xs=[Box{xs:[1],ys:[2]}]\nlet ro=Box{xs:[3],ys:[4]}\nxs[0]=ro\nvar b=xs[0]\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "container_shared_alias",
+    "source": "struct Box{xs []int\nys []int}\nprint(\"BAD\")\nfn main(){var xs=[Box{xs:[1],ys:[2]}]\nvar alias=xs\nlet ro=Box{xs:[3],ys:[4]}\nalias[0]=ro\nvar b=xs[0]\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "multi_position",
+    "source": "struct Box{xs []int\nys []int}\nfn pair(ro []int) ([]int,[]int){return ro,[2]}\nfn main(){var ro,fresh=pair([1])\nfresh[0]=9\nprint(fresh)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "recursive_return",
+    "source": "struct Box{xs []int\nys []int}\nfn make(ro []int,n int) Box{if n>0{return make(ro,n-1)}\nreturn Box{xs:ro,ys:[2]}}\nprint(\"BAD\")\nfn main(){var b=make([1],3)\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_optional_scalar_copy",
+    "source": "struct Box{xs []int\nx int}\nfn main(){let ro Box?=Box{xs:[1],x:1}\nvar b=ro\nif b!=nil{b.x=2\nprint(b.x)}}\n",
+    "expected": "ok",
+    "stdout": "2\n"
+  },
+  {
+    "name": "prior_scalar_copy",
+    "source": "struct Box{xs []int\nx int}\nfn main(){let r Result<Box>=ok(Box{xs:[1],x:1})\nvar b=unwrap(r)\nb.x=2\nprint(b.x)}\n",
+    "expected": "ok",
+    "stdout": "2\n"
+  },
+  {
+    "name": "prior_field_refresh",
+    "source": "struct Box{xs []int\nx int}\nfn main(){let r Result<Box>=ok(Box{xs:[1],x:1})\nvar b=unwrap(r)\nb.xs=[3]\nb.xs[0]=4\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[4]\n"
+  },
+  {
+    "name": "prior_fresh_result",
+    "source": "struct Box{xs []int\nx int}\nfn make() Result<Box>{return ok(Box{xs:[1],x:1})}\nfn main(){var r=make()\nvar b=unwrap(r)\nb.xs[0]=2\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[2]\n"
+  },
+  {
+    "name": "prior_alias_refresh",
+    "source": "struct Box{xs []int\nx int}\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nb.xs=[3]\nvar c=b\nc.xs[0]=4\nprint(c.xs)}\n",
+    "expected": "ok",
+    "stdout": "[4]\n"
+  },
+  {
+    "name": "prior_list_record_scalar",
+    "source": "import std.list as l\nstruct Box{xs []int\nx int}\nfn main(){var xs=l.from_slice([Box{xs:[1],x:1}])\nvar b=unwrap(l.get(xs,0))\nb.x=2\nprint(b.x)}\n",
+    "expected": "ok",
+    "stdout": "2\n"
+  },
+  {
+    "name": "prior_nested_refresh",
+    "source": "struct Box{xs []int\nx int}\nstruct Outer{b Box}\nfn main(){let ro=Outer{b:Box{xs:[1],x:1}}\nvar o=ro\no.b=Box{xs:[1],x:1}\no.b.xs[0]=3\nprint(o.b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[3]\n"
+  },
+  {
+    "name": "prior_clone_record",
+    "source": "struct Box{xs []int\nx int}\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=clone(ro)\nb.xs[0]=2\nprint(b.xs,ro.xs)}\n",
+    "expected": "ok",
+    "stdout": "[2] [1]\n"
+  },
+  {
+    "name": "prior_multi_refresh",
+    "source": "struct Box{xs []int\nx int}\nfn main(){let ro=Box{xs:[1],x:1}\nvar b,k=ro,0\nb.xs=[2]\nb.xs[0]=3\nprint(b.xs,k)}\n",
+    "expected": "ok",
+    "stdout": "[3] 0\n"
+  },
+  {
+    "name": "prior_optional_record",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro Box?=Box{xs:[1],x:1}\nvar b=ro\nif b!=nil{b.xs[0]=2}}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_optional_wrapped",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro Box?=Box{xs:[1],x:1}\nvar r Result<Box?>=ok(ro)\nvar b=unwrap(unwrap(r))\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_plain_record",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_result_record",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let r Result<Box>=ok(Box{xs:[1],x:1})\nvar b=unwrap(r)\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_function_record",
+    "source": "struct Box{xs []int\nx int}\nfn get(r Result<Box>) Box{return unwrap(r)}\nprint(\"BAD\")\nfn main(){let r Result<Box>=ok(Box{xs:[1],x:1})\nvar b=get(r)\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_list_record",
+    "source": "import std.list as l\nstruct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let xs=l.from_slice([Box{xs:[1],x:1}])\nvar b=unwrap(l.get(xs,0))\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_map_optional",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let m=map[string]Box{\"a\":Box{xs:[1],x:1}}\nvar b=unwrap(m[\"a\"])\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_error_payload",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let r Result<int,Box>=err(Box{xs:[1],x:1})\nvar b=unwrap_err(r)\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_propagated",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn change() Result<void>{let r Result<Box>=ok(Box{xs:[1],x:1})\nvar b=r?\nb.xs[0]=2\nreturn ok()}\nfn main(){unwrap(change())}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_shared_alias",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nvar xs=b.xs\nxs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_mut_child",
+    "source": "struct Box{xs []int\nx int}\nfn change(xs mut []int){xs[0]=2}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nchange(b.xs)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_nested_result",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let r Result<Result<Box>>=ok(ok(Box{xs:[1],x:1}))\nvar b=unwrap(unwrap(r))\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_reset_override",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nb.xs=[3]\nb=ro\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_branch_refresh",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nif true{b.xs=[3]}\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_branch_downgrade",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar b=Box{xs:[1],x:1}\nif true{b.xs=ro}\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_loop_refresh",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=ro\nwhile false{b.xs=[3]}\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_multi_record",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b,k=ro,0\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "prior_multi_reassign",
+    "source": "struct Box{xs []int\nx int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],x:1}\nvar b=Box{xs:[1],x:1}\nvar k=0\nb,k=ro,1\nb.xs[0]=2}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_literal_ro",
+    "source": "struct Box{xs []int\nys []int}\nstruct Outer{b Box}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],ys:[2]}\nvar o=Outer{b:ro}\no.b.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_scalar_owned_copy",
+    "source": "struct Outer{b Inner}\nstruct Inner{x int\nxs []int}\nfn main(){let ro=Outer{b:Inner{x:1,xs:[2]}}\nvar o=ro\no.b.x=9\nprint(o.b.x)}\n",
+    "expected": "ok",
+    "stdout": "9\n"
+  },
+  {
+    "name": "map_literal_ro",
+    "source": "struct Box{xs []int\nys []int}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar m=map[string]Box{\"x\":Box{xs:ro,ys:[2]}}\nvar b=unwrap(m[\"x\"])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "map_alias_replacement",
+    "source": "struct Box{xs []int\nys []int}\nprint(\"BAD\")\nfn main(){var m=map[string]Box{\"x\":Box{xs:[1],ys:[2]}}\nvar alias=m\nlet ro=Box{xs:[3],ys:[4]}\nalias[\"x\"]=ro\nvar b=unwrap(m[\"x\"])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "helper_requires_member",
+    "source": "struct Box{xs []int\nys []int}\nfn write(b mut Box){b.xs[0]=9}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],ys:[2]}\nvar b=ro\nwrite(b)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "helper_allows_selected_member",
+    "source": "struct Box{xs []int\nys []int}\nfn write(b mut Box){b.ys[0]=9}\nfn main(){let ro=[1]\nvar b=Box{xs:ro,ys:[2]}\nwrite(b)\nprint(b.ys)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "method_downgrade",
+    "source": "struct Box{xs []int\nys []int}\nfn Box.poison(ro []int){self.xs=ro}\nprint(\"BAD\")\nfn main(){var b=Box{xs:[1],ys:[2]}\nb.poison([3])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "method_refresh",
+    "source": "struct Box{xs []int\nys []int}\nfn Box.refresh(){self.xs=[3]}\nfn main(){let ro=Box{xs:[1],ys:[2]}\nvar b=ro\nb.refresh()\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "forwarded_effect",
+    "source": "struct Box{xs []int\nys []int}\nfn poison(b mut Box,ro []int){b.xs=ro}\nfn forward(b mut Box,ro []int){poison(b,ro)}\nprint(\"BAD\")\nfn main(){var b=Box{xs:[1],ys:[2]}\nforward(b,[3])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "refresh_both_branches",
+    "source": "struct Box{xs []int\nys []int}\nfn make(ro Box,flag bool) Box{var b=ro\nif flag{b.xs=[3]}else{b.xs=[4]}\nreturn b}\nfn main(){var b=make(Box{xs:[1],ys:[2]},true)\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "refresh_one_branch",
+    "source": "struct Box{xs []int\nys []int}\nfn make(ro Box,flag bool) Box{var b=ro\nif flag{b.xs=[3]}\nreturn b}\nprint(\"BAD\")\nfn main(){var b=make(Box{xs:[1],ys:[2]},true)\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "multi_readonly_position",
+    "source": "fn pair(ro []int) ([]int,[]int){return ro,[2]}\nprint(\"BAD\")\nfn main(){var ro,fresh=pair([1])\nro[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "fixed_return_preserves_readonly",
+    "source": "fn identity(a [2]int) [2]int{return a}\nfn main(){var b=identity([1,2])\nb[0]=9\nprint(b)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "global_effect",
+    "source": "struct Box{xs []int\nys []int}\nvar global=Box{xs:[1],ys:[2]}\nfn poison(ro []int){global.xs=ro}\nprint(\"BAD\")\nfn main(){poison([3])\nglobal.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "defer_private_field",
+    "source": "struct Box{xs []int\nys []int}\nfn refresh(b mut Box){b.xs=[9]}\nfn make(ro Box) Box{var b=ro\ndefer refresh(b)\nreturn b}\nprint(\"BAD\")\nfn main(){var b=make(Box{xs:[1],ys:[2]})\nb.xs[0]=7}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "defer_private_field_scalar",
+    "source": "struct Box{xs []int\nx int}\nfn refresh(b mut Box){b.xs=[9]}\nfn make(ro Box) Box{var b=ro\ndefer refresh(b)\nreturn b}\nfn main(){var b=make(Box{xs:[1],x:2})\nb.x=7\nprint(b.x)}\n",
+    "expected": "ok",
+    "stdout": "7\n"
+  },
+  {
+    "name": "unknown_callback_global",
+    "source": "struct Box{xs []int}\nvar global=Box{xs:[1]}\nfn poison(){let ro=[3]\nglobal.xs=ro}\nfn invoke(f){f()}\nprint(\"BAD\")\nfn main(){invoke(poison)\nglobal.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "known_callable_global",
+    "source": "struct Box{xs []int}\nvar global=Box{xs:[1]}\nfn poison(){let ro=[3]\nglobal.xs=ro}\nprint(\"BAD\")\nfn main(){let callback=poison\ncallback()\nglobal.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "mut_return_keeps_readonly_field",
+    "source": "struct Box{xs []int\nys []int}\nfn identity(b mut Box) Box{return b}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar b=Box{xs:ro,ys:[2]}\nvar c=identity(b)\nc.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "mut_return_keeps_fresh_field",
+    "source": "struct Box{xs []int\nys []int}\nfn identity(b mut Box) Box{return b}\nfn main(){let ro=[1]\nvar b=Box{xs:ro,ys:[2]}\nvar c=identity(b)\nc.ys[0]=9\nprint(c.ys)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "multi_record_fresh_position",
+    "source": "struct Box{xs []int}\nfn pair(ro Box) (Box,Box){return ro,Box{xs:[2]}}\nfn main(){var ro,fresh=pair(Box{xs:[1]})\nfresh.xs[0]=9\nprint(fresh.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "multi_record_readonly_position",
+    "source": "struct Box{xs []int}\nfn pair(ro Box) (Box,Box){return ro,Box{xs:[2]}}\nprint(\"BAD\")\nfn main(){var ro,fresh=pair(Box{xs:[1]})\nro.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "conditional_buffer_unproven",
+    "source": "struct State{data []int\nflag bool}\nfn change(s mut State){if s.flag{s.data[0]=2}}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar data=ro\nif false{data=clone(ro)}\nvar s=State{data:data,flag:false}\nchange(s)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "mutable_buffer_contract",
+    "source": "struct State{data []int\nflag bool}\nfn change(s mut State){if s.flag{s.data[0]=2}}\nfn main(){let ro=[1]\nvar s=State{data:clone(ro),flag:true}\nchange(s)\nprint(s.data,ro)}\n",
+    "expected": "ok",
+    "stdout": "[2] [1]\n"
+  },
+  {
+    "name": "helper_nested_downgrade",
+    "source": "struct Box{xs []int}\nstruct Outer{box Box}\nfn poison(b mut Outer,ro []int){b.box=Box{xs:ro}}\nprint(\"BAD\")\nfn main(){var b=Outer{box:Box{xs:[1]}}\npoison(b,[2])\nb.box.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "helper_container_alias_downgrade",
+    "source": "struct Box{xs []int}\nfn poison(xs mut []Box,ro Box){xs[0]=ro}\nprint(\"BAD\")\nfn main(){var xs=[Box{xs:[1]}]\nvar alias=xs\npoison(alias,Box{xs:[2]})\nvar b=xs[0]\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "global_root_downgrade",
+    "source": "struct Box{xs []int}\nvar global=Box{xs:[1]}\nfn poison(){let ro=[2]\nglobal=Box{xs:ro}}\nprint(\"BAD\")\nfn main(){poison()\nglobal.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "helper_refresh_one_branch",
+    "source": "struct Box{xs []int}\nfn refresh(b mut Box){if true{b.xs=[3]}}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1]}\nvar b=ro\nrefresh(b)\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "helper_refresh_both_branches",
+    "source": "struct Box{xs []int}\nfn refresh(b mut Box){if true{b.xs=[3]}else{b.xs=[4]}}\nfn main(){let ro=Box{xs:[1]}\nvar b=ro\nrefresh(b)\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "helper_return_branch_downgrade",
+    "source": "struct Box{xs []int}\nfn poison(b mut Box,flag bool){if flag{let ro=[3]\nb.xs=ro\nreturn}\nb.xs=[4]}\nprint(\"BAD\")\nfn main(){var b=Box{xs:[1]}\npoison(b,true)\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "helper_nested_container_alias",
+    "source": "struct Box{xs []int}\nstruct Group{cells []Box}\nfn poison(g mut Group,ro Box){g.cells[0]=ro}\nprint(\"BAD\")\nfn main(){var xs=[Box{xs:[1]}]\nvar g=Group{cells:xs}\npoison(g,Box{xs:[2]})\nvar b=xs[0]\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  }
+]

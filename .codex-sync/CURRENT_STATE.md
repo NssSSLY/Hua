@@ -1,8 +1,41 @@
 # 当前状态
 
-更新：2026-10-14。实际项目C:/file/project/hua；当前HEAD d0d17fb，A02/A03/A04工作未提交推送。
+更新：2026-10-15。实际项目E:/project/hua；用户已授权将当前成果提交并推送origin/main，包含此前安装修复。下文HEAD/SHA为验收时基线，发布提交与同步状态以Git为准；A07保留待验收，自身/代际继续暂停。
 
-## 最新切片：A03/A04执行与整体盘点（2026-10-14，已验收）
+
+## 最新切片：A10已验，A07原生通过/C04未验（2026-10-15）
+
+A10修无来源Diagnostic补位、错误Source片段、函数/defer/import来源与main Err创建/?传播来源，68原生＋31例1157检查169命令通过。A07原生70例1052检查326命令、32次复用通过；修混合构造/逐位置返回/成员效果/全局重绑/共享容器别名，按正常及return出口合并。新增selfhost/capabilities.hua、types接入和Parser显式可变词元clone，T1报告schema不变。首轮C04 59个小输入中12正例location误拒已修，源移走Path拼接脚本错误已修；第二轮构建a07_main.hua 30.099秒超时停止，后续66输入未执行，整条A07开放。初步怀疑原生出口快照复制过多局部元数据，尚未新的修复/验证，不重跑失败负载。用户已明确选择先完成A10交接、A07保留待验收；本轮到此停止C04诊断/修复，自身/代际继续暂停。
+
+当前Windows Release OFF SHA256 f887297d3799e035d881fb50c680055ab7d5dd656d8abc37589b11eaa4e09822；HEAD e98f2ee。13项定向CTest、File35/188、Task17/122、A06 32/619、A08 56/871、错误基础35/179、A03 47/695、A04 57/895通过。原先递归投影的生命周期30秒超时由8层边界/规范字段类型修复，日志保留；最新value_lifetime 0.06秒通过。A10结果build/a10-diagnostics、原生A07结果build/a07-completion、C04首轮失败/第二轮timeout-results.json位于build/a07-c04。6涉及活文档已更新，百科207确认/ID与39 history原字节不变；上述验收时未提交推送；本轮用户已授权提交和推送，实际同步结果以Git为准。
+
+## 历史切片：A09现有生命周期/资源安全（2026-10-15，已验收）
+
+只修contains_file真实图/视图去重、闭包共享扫描状态和异常恢复；深链超限E4099代替误报File，clone补来源，Task扫描超限归E4104。128层值复制、64层Task快照/结果、普通共享/重复后代逐处clone与GC非移动算法保持，循环深clone仍拒绝。
+
+Windows x64 Release OFF：原生5组2202检查；公开33例648检查198命令最终4.257秒；10项CTest通过6.80秒。实际1024/1200声明前端，2048模拟Node/字符串/Result符号根、1200运行时节点/符号、失败后live=0及源值保留；真实File在途/关闭/隔离与Task单工人/双工人迁移、超时/挂起保活重验。File35/188、Task17/122、入口32/619、模块56/871公开相邻回归通过，无自举执行/严重超时/抬限。
+
+执行SHA256 6fae1ff37c88baf599e7bf1c84c6dd1f9ae5788008658f343e4d606c1f20aa29，HEAD e98f2ee，源码证据tests/lifetime_tests.cpp、lifetime_contract_tests.py、data/a09_lifetime_cases.json；本机build/a09-lifetime/red-deep.json、results.json、commands.json、regression-results.json与build日志。初稿Built输出断言修正，失败报告保留；5相关活文档/四上下文更新，207确认与history原字节核对不变。
+
+A06/A08/A09当前范围关闭；A07完整效果、A10更广来源/诊断、A12/G1待用户选择。A11/C07自身/C08/G3暂缓，ON/POSIX/全套未测。此前安装修改保留，无提交推送。运行时#a09-lifetime-contract、进度#a09-lifetime-verification。
+
+## 历史切片：A08本地模块完整验收（2026-10-15）
+
+用户要求A06完成则继续A08、暂不管自举。A06原任务与确认范围已核对，原二进制SHA一致，整数退出/catch/深层诊断属独立后续。随后完成A08：只改ModuleLoader最长限定导入前缀，修复pkg.sub先导入后pkg误匹配短前缀的问题，pub/局部遮蔽/类型规则保持。
+
+本轮Windows Release OFF：56场景/871检查/282命令/3.795秒全部通过，AST/VM/移走Hua/WASM/manifest后的HUAB、完整字节确定性、多模块编译器风格项目、公开类型/私有边界、std、候选、初始化、Junction/cache/root和限额。四相邻CTest通过，A06入口619及宿主9仍通过。red反例2失败、测试夹具纠错报告保留，无严重超时/抬限。
+
+A06/A08当前确认范围关闭；A07/A09/A10/A12/G1仍待，自举A11/C07/C08/G3按用户要求暂缓。实际E:/project/hua HEAD e98f2ee，原安装修改保留；ON/POSIX/全套未实测，未提交推送。权威Runtime#a08-module-contract、进度#a08-module-verification。
+
+## 历史切片：A06公开入口与失败报告（2026-10-14，已验收）
+
+用户确认默认main不强制return；可选Result<void>传播失败，显式Error分类，int返回仍不映射。AST/VM捕获自动入口结果，先完成函数与运行结束清理；普通Err1，Error根hua.cli.usage/internal分别2/3，普通函数/Task的Err仍是值。宿主异常E0002/3、命令E0004/2、入口Err E0003、预期文件写入E0001/1；保旧输出。
+
+新增selfhost/compiler_main.hua复用现有编译库，成功Built，失败stderr/非零；旧JSON开发入口保持。Windows x64 Release Bridge OFF：入口32场景619检查164命令1.77秒，宿主故障9检查，公开编译器105检查29命令9.977秒（三路径，移走编译器与输入源码、独立reader）；6相邻CTest12.63秒全部通过。首轮构建接口/测试defer场景错误已修正；首轮失败证据保留，无严重超时、无抬限。
+
+实际目录E:/project/hua、HEAD e98f2ee；此前安装脚本/文档本地修改保留。完整合同见语言#a06-entry-contract、指南#a06-public-entry、进度#a06-entry-verification。仅OFF定向验收，ON/POSIX/全套/完整自身/代际未跑；A08/A07/A09/A10/A12/G1和A11/C07自身/C08/G3仍待。未提交推送。
+
+## 历史切片：A03/A04执行与整体盘点（2026-10-14，已验收）
 
 用户恢复A03容器与A04执行/清理范围；以当前已确认子集完成AST/源码VM/移走测试源码HUAB对照，不扩语法/不重做VM架构。Map索引新增键绕过百万限额被真实原生表红例确认（0.313秒、6检查2失败），已统一检查并为多目标按存储身份去重新增键预检，避免部分写入。VM返回值在defer后复制导致struct/固定数组结果差异，已前置语言值保存，返回类型检查保持清理后。AST多值RHS/多返回和defer参数改完整左到右求值后复制，对齐现有VM时点；动态Void复制原错不被清理错覆盖；普通调用/defer在完整参数求值后检查动态callee可调用性，保留先发生的参数诊断和副作用。
 

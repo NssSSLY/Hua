@@ -6,8 +6,14 @@
 namespace hua {namespace {
 using I=std::int64_t;
 Value snapshot(const Value& input,const std::function<Callable(const Callable&,unsigned)>& copy,unsigned depth=0){
-    if(std::holds_alternative<FileValue>(input.data)||(std::holds_alternative<Callable>(input.data)&&contains_file(input)))runtime_error({},"task snapshots cannot contain File","E4104");
     if(depth>64)runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
+    bool file=std::holds_alternative<FileValue>(input.data);
+    if(std::holds_alternative<Callable>(input.data))try{file=contains_file(input);}
+    catch(const Diagnostic& error){
+        if(error.code()=="E4099")runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
+        throw;
+    }
+    if(file)runtime_error({},"task snapshots cannot contain File","E4104");
     if(auto f=std::get_if<Callable>(&input.data))return Value(copy(*f,depth+1));
     if(auto p=std::get_if<StructValue>(&input.data)){auto d=managed<StructData>();d->name=p->data->name;for(const auto& [k,v]:p->data->fields)d->fields.emplace(k,snapshot(v,copy,depth+1));return Value(StructValue{d,false});}
     if(auto p=std::get_if<MapValue>(&input.data)){auto d=managed<MapData>();d->key_type=p->data->key_type;d->item_type=p->data->item_type;for(const auto& [k,v]:p->data->entries)d->entries.emplace(k,snapshot(v,copy,depth+1));return Value(MapValue{d,false});}

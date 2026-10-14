@@ -9,7 +9,15 @@ namespace hua {
 struct SourceSpan {
     std::string file_id;
     std::size_t start_offset{}, end_offset{}, line{1}, column{1};
+    bool operator==(const SourceSpan&) const=default;
 };
+struct SourceContext {SourceSpan span;std::string message;};
+struct SourceTrace {
+    std::vector<SourceContext> sites;
+    bool truncated{};
+    void add(const SourceSpan&,std::string message);
+};
+std::string render_source_trace(const SourceTrace&);
 class Source {
 public:
     Source(std::string filename, std::string text);
@@ -27,8 +35,13 @@ public:
     const std::string& code() const { return code_; }
     const SourceSpan& span() const { return span_; }
     std::string render(const Source& source) const;
+    Diagnostic located(const SourceSpan&) const;
+    void add_context(const SourceSpan&,std::string message);
+    void add_trace(const SourceTrace&);
+    const SourceTrace& trace() const{return trace_;}
 private:
     std::string code_, help_;
     SourceSpan span_;
+    SourceTrace trace_;
 };
 }

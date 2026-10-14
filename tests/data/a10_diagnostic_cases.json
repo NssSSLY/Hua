@@ -1,0 +1,396 @@
+[
+  {
+    "name": "unicode_lf",
+    "source": "fn main(){\n\tprint(\"汉é🙂\",1//0)\n}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "unicode_crlf",
+    "source": "fn main(){\r\n\tprint(\"汉é🙂\",1//0)\r\n}\r\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "unicode_cr",
+    "source": "fn main(){\r\tprint(\"汉é🙂\",1//0)\r}\r",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "unicode_bom_crlf",
+    "source": "﻿fn main(){\r\n\tprint(\"汉é🙂\",1//0)\r\n}\r\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "unicode_filename",
+    "source": "fn main(){print(1//0)}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [],
+    "filename": "中文文件.hua"
+  },
+  {
+    "name": "ascii_escape",
+    "source": "print(\"bad\\q\")\n",
+    "error": "E1004",
+    "mark": "q",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "fragments": [
+      "help: supported escapes"
+    ]
+  },
+  {
+    "name": "unterminated_string",
+    "source": "print(\"bad\n",
+    "error": "E1003",
+    "mark": "\"",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "unterminated_comment",
+    "source": "#* bad\n",
+    "error": "E1005",
+    "mark": "#",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "bad_numeric_separator",
+    "source": "let x=1__2\n",
+    "error": "E1002",
+    "mark": "__",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "adjust": 1
+  },
+  {
+    "name": "bad_number_suffix",
+    "source": "let x=0b102\n",
+    "error": "E1002",
+    "mark": "2",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "bad_statement",
+    "source": "print(\"BAD\")\nlet =3\n",
+    "error": "E2001",
+    "mark": "=",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "unknown_name",
+    "source": "print(\"汉\",missing)\n",
+    "error": "E3001",
+    "mark": "missing",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "nested_calls",
+    "source": "fn leaf(){print(1//0)}\nfn middle(){leaf()}\nfn main(){middle()}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [
+      "called from"
+    ]
+  },
+  {
+    "name": "nested_unwrap",
+    "source": "fn leaf() Result<int>{return err(\"bad\")}\nfn middle() Result<int>{return ok(leaf()?)}\nfn main(){unwrap(middle())}\n",
+    "error": "E4009",
+    "mark": "unwrap(middle())",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [
+      "Result error created here",
+      "Result propagated here"
+    ]
+  },
+  {
+    "name": "result_entry",
+    "source": "fn leaf() Result<int>{return err(\"bad\")}\nfn middle() Result<int>{return ok(leaf()?)}\nfn main() Result<void>{middle()?\nreturn ok()}\n",
+    "error": "E0003",
+    "mark": "fn main",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [
+      "Result error created here",
+      "Result propagated here"
+    ],
+    "entry": true
+  },
+  {
+    "name": "task_result_entry",
+    "source": "async fn leaf() Result<int>{return err(\"bad\")}\nasync fn main() Result<int>{return await leaf()}\n",
+    "error": "E0003",
+    "mark": "async fn main",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [
+      "Result error created here"
+    ],
+    "entry": true
+  },
+  {
+    "name": "standard_result_entry",
+    "source": "import std.fs as fs\nfn main() Result<string>{return fs.read_text(\"missing\")}\n",
+    "error": "E0003",
+    "mark": "fn main",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [
+      "Result error created here"
+    ],
+    "entry": true
+  },
+  {
+    "name": "void_copy_location",
+    "source": "fn ready() Result<void>{return ok()}\nfn broken(){print(\"cleanup\")\nprint(unwrap(err(\"bad\")))}\nfn take(f){defer print(\"remaining\")\ndefer broken()\nreturn unwrap(f())}\nfn main(){take(ready)}\n",
+    "error": "E4003",
+    "mark": "return unwrap(f())",
+    "stdout": "cleanup\nremaining\n",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "defer_primary",
+    "source": "fn bad(){unwrap(err(\"cleanup\"))}\nfn main(){defer bad()\nprint(1//0)}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "module_runtime",
+    "source": "import bad\nfn main(){bad.fail()}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {
+      "bad.hua": "pub fn fail(){print(1//0)}\n"
+    },
+    "notes": [
+      "called from"
+    ],
+    "origin": "bad.hua"
+  },
+  {
+    "name": "module_parse",
+    "source": "import middle\nprint(\"BAD\")\n",
+    "error": "E2001",
+    "mark": "=",
+    "stdout": "",
+    "phase": "check",
+    "files": {
+      "middle.hua": "import bad\n",
+      "bad.hua": "let =3\n"
+    },
+    "notes": [
+      "imported from"
+    ],
+    "origin": "bad.hua"
+  },
+  {
+    "name": "lowered_local",
+    "source": "fn main(){fn local(){print(1//0)}\nlocal()}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "lowered_generic",
+    "source": "fn crash<T>(n T) int{return 1//0}\nfn main(){crash<int>(1)}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": []
+  },
+  {
+    "name": "raw_control",
+    "source": "fn main(){print(\"a\u0000b\")}\n",
+    "error": "E1003",
+    "mark": "\u0000",
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "fragments": [
+      "\\x00"
+    ]
+  },
+  {
+    "name": "invalid_utf8_0",
+    "source": "",
+    "error": "E1009",
+    "mark": null,
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "raw_hex": "7072696e74282242414422290a80",
+    "position": [
+      2,
+      1
+    ],
+    "fragments": [
+      "\\x"
+    ]
+  },
+  {
+    "name": "invalid_utf8_1",
+    "source": "",
+    "error": "E1009",
+    "mark": null,
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "raw_hex": "7072696e74282242414422290ac0af",
+    "position": [
+      2,
+      1
+    ],
+    "fragments": [
+      "\\x"
+    ]
+  },
+  {
+    "name": "invalid_utf8_2",
+    "source": "",
+    "error": "E1009",
+    "mark": null,
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "raw_hex": "7072696e74282242414422290ae282",
+    "position": [
+      2,
+      1
+    ],
+    "fragments": [
+      "\\x"
+    ]
+  },
+  {
+    "name": "invalid_utf8_3",
+    "source": "",
+    "error": "E1009",
+    "mark": null,
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "raw_hex": "7072696e74282242414422290aeda080",
+    "position": [
+      2,
+      1
+    ],
+    "fragments": [
+      "\\x"
+    ]
+  },
+  {
+    "name": "invalid_utf8_4",
+    "source": "",
+    "error": "E1009",
+    "mark": null,
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "raw_hex": "7072696e74282242414422290af4908080",
+    "position": [
+      2,
+      1
+    ],
+    "fragments": [
+      "\\x"
+    ]
+  },
+  {
+    "name": "invalid_utf8_5",
+    "source": "",
+    "error": "E1009",
+    "mark": null,
+    "stdout": "",
+    "phase": "check",
+    "files": {},
+    "notes": [],
+    "raw_hex": "7072696e74282242414422290aff",
+    "position": [
+      2,
+      1
+    ],
+    "fragments": [
+      "\\x"
+    ]
+  },
+  {
+    "name": "defer_call_source",
+    "source": "fn broken(){print(1//0)}\nfn main(){defer broken()}\n",
+    "error": "E4004",
+    "mark": "1//0",
+    "stdout": "",
+    "phase": "run",
+    "files": {},
+    "notes": [
+      "called from"
+    ]
+  }
+]

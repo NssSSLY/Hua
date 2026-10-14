@@ -34,7 +34,7 @@ D002-c/E5已接入可恢复Task、共享FIFO计算域、定时器及Task内文�
 `check` 加载完整本地依赖图，再检查作用域、声明、可变性、函数签名和已知基础类型。
 `ast` 只解析当前文件；`run` 在全部依赖通过语义检查后编译为指令并交给 VM 执行。
 `interpret` 保留原解释器供对照；`bytecode` 只显示指令，不执行。
-退出码：0 成功，1 源码/语义/执行/读取错误，2 命令用法错误。
+退出码：0 成功，1 输入/读取/检查/执行或普通入口Err，2 命令用法错误，3 内部故障。默认main无需返回；可选Result<void>入口可用?传播失败，int返回保持旧行为。公开Hua编译器入口为selfhost/compiler_main.hua，运行方式与错误分类见 [A06公开入口](docs/开发与运行指南.md#a06-public-entry)。
 
 ## 构建
 
@@ -253,7 +253,7 @@ parallel for支持独立数组计算，最多8线程块；simd for为受检查�
 
 ## 本地安装、VS Code 与自举起步
 
-现在可把核心安装到用户目录并配置PATH；默认使用build-python-off的hua.exe和wasmtime.dll。不需要为运行普通Hua程序安装C++工具链或Python。
+现在可把核心安装到用户目录并配置PATH；未指定构建目录时，优先使用完整的build-python-off，再使用build中的运行文件。不需要为运行普通Hua程序安装C++工具链或Python。
 
 ```powershell
 .\scripts\install-local.ps1 -AddToUserPath
@@ -263,7 +263,7 @@ hua run .\build\hello.huab
 code --install-extension .\build\hua-language-0.1.0.vsix
 ```
 
-安装包不存在时运行 `python .\scripts\package-vscode.py`。首次构建请先用build.ps1（可指定-BuildDirectory build-python-off）或前文CMake方式生成核心；其他构建可传安装脚本-BuildDirectory。配置用户PATH后重新打开其他终端/VS Code。
+安装包不存在时运行 `python .\scripts\package-vscode.py`。首次构建请先用build.ps1（默认生成build，可指定-BuildDirectory build-python-off）或前文CMake方式生成核心；其他构建可传安装脚本-BuildDirectory，例如 `.\scripts\install-local.ps1 -BuildDirectory build -AddToUserPath`。配置用户PATH后重新打开其他终端/VS Code。安装目录选择、缺文件处理与本机验证见 [开发与运行指南](docs/开发与运行指南.md#安装入口验证2026-10-07)。
 基础插件源码在 [editors/vscode](editors/vscode/README.md)：高亮、片段、保存检查和检查/运行/构建命令；无LSP、定义跳转或调试器。
 Hua编写的 [词法器](selfhost/lexer.hua) 已能扫描自身源码；135输入、541项进程检查对照C++/解释器/VM/移除源码后的HUAB。插件6项针对性测试及真实VS Code隔离安装通过。
 

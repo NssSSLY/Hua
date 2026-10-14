@@ -3,12 +3,14 @@
 #include "hua/stdlib.hpp"
 #include <iosfwd>
 #include "hua/tasks.hpp"
+#include "hua/entry.hpp"
 namespace hua {
 class Interpreter {
 public:
     Interpreter(const SemanticModel& model, std::ostream& output, RuntimeContext* context = nullptr);
-    void run(const Node& program);
+    EntryResult run(const Node& program);
 private:
+    EntryResult entry_;
     Routine<void> run_body(const Node& program,ExecutionScope&);
     struct Binding { Value value; std::string type; bool mutable_binding{}; };
     struct Deferred { Callable callable;std::vector<Value> arguments;const Node* site; };

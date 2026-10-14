@@ -1,0 +1,12 @@
+# 普通 main 不需要返回值；此例选择 Result<void> 传播失败。
+import std.os as os
+fn work() Result<void> {
+    let args=os.args()
+    if len(args)!=0 { return err("this example accepts no arguments") }
+    print("Hello, Hua")
+    return ok()
+}
+fn main() Result<void> {
+    work()?
+    return ok()
+}

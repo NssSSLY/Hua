@@ -2,6 +2,7 @@
 import modules as modules
 import ast_pool as ast
 import type_rules as rules
+import capabilities as flow
 import signatures as signatures
 import std.list as list
 import std.strings as strings
@@ -30,6 +31,7 @@ pub struct Model { graph modules.Graph
     functions map[string]Function
     variants map[string]Function
     facts map[string]Info
+    capabilities map[string]flow.Value
     work int
     capability_passes int }
 struct Environment { unit modules.Unit
@@ -434,7 +436,7 @@ fn location(m mut Model, e mut Environment, n ast.Node) Result<Info> {
         return ok(info(symbol.declared,true))
     }
     var value = expression(m,e,n.id)?
-    if ast.kind(n.payload) == "Member" { value.writable = unwrap(m.facts[key(e.unit.id,n.children[0].index)]).writable }
+    if ast.kind(n.payload) == "Member" || ast.kind(n.payload) == "Index" { value.writable = unwrap(m.facts[key(e.unit.id,n.children[0].index)]).writable }
     if !value.writable { return err(fail(e,n,"E3003","read-only location")) }
     if ast.kind(n.payload) == "Index" {
         let base = unwrap(m.facts[key(e.unit.id,n.children[0].index)])
@@ -448,7 +450,13 @@ fn expression(m mut Model, e mut Environment, id ast.NodeId) Result<Info> {
     tick(m,e,n)?
     if e.depth >= 64 { return err(fail(e,n,"E8202","type expression depth budget")) }
     e.depth += 1
-    let value = expression_body(m,e,n)?
+    var value = expression_body(m,e,n)?
+    let identity=key(e.unit.id,n.id.index)
+    if has(m.capabilities,identity) {
+        let fact=unwrap(m.capabilities[identity]).root
+        value.writable=fact.writable
+        value.readonly_children=fact.readonly_children
+    }
     e.depth -= 1
     m.facts[key(e.unit.id,n.id.index)] = value
     return ok(value)
@@ -779,6 +787,10 @@ fn statement(m mut Model, e mut Environment, id ast.NodeId) Result<void> {
             var item = info(ts[i],actual.writable)
             if ast.kind(value.payload) == "Pack" { source = get(e,value.children[i])
                 item = unwrap(m.facts[key(e.unit.id,source.id.index)]) }
+            let flow_key=key(e.unit.id,value.id.index)
+            if has(m.capabilities,flow_key) { let positions=unwrap(m.capabilities[flow_key]).positions
+                if i<len(positions) { item.writable=positions[i].root.writable
+                    item.readonly_children=positions[i].root.readonly_children } }
             if k == "MultiBinding" { binding(m,e,p,item,source,text == "var")? }
             else { let loc = location(m,e,p)?
                 require(m,e,loc.type_name,item,source)?
@@ -973,7 +985,7 @@ pub fn analyze(entry string) Result<Model> {
     let graph = modules.analyze_compiler(entry)?
     var units = map[string]modules.Unit{}
     for u in list.snapshot(graph.units) { units[u.id] = u }
-    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},work:0,capability_passes:0}
+    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},capabilities:map[string]flow.Value{},work:0,capability_passes:0}
     for ref in list.snapshot(graph.references) { m.refs[key(ref.module,ref.node)] = ref.target }
     for symbol in list.snapshot(graph.symbols) { m.declarations[key(symbol.module,symbol.node)] = symbol.target }
     for symbol in list.snapshot(graph.symbols) {
@@ -1000,6 +1012,17 @@ pub fn analyze(entry string) Result<Model> {
         } else if symbol.kind == "Enum" { m.symbols[symbol.target] = info("enum:"+symbol.target,false) }
     }
     infer(m,units)?
+    var flow_functions=map[string]flow.Function{}
+    for name, f in m.functions {
+        var empty []flow.Parameter=[]
+        var parameters=list.from_slice(empty)
+        for p in f.parameters { list.append(parameters,flow.Parameter{target:p.target,type_name:p.type_name,writable:p.writable})? }
+        flow_functions[name]=flow.Function{target:f.target,module:f.module,node:f.node,parameters:list.snapshot(parameters),result:f.result}
+    }
+    let capabilities=flow.analyze(graph,m.refs,m.declarations,m.fields,flow_functions)?
+    m.capabilities=capabilities.facts
+    m.capability_passes+=capabilities.passes
+    m.work+=capabilities.work
     for name, f in m.functions { m.symbols[name] = info("fn:"+name,false) }
     for name, f in m.variants { m.symbols[name] = info("variant:"+name,false) }
     for name in list.snapshot(graph.order) {

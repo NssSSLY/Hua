@@ -11,7 +11,7 @@ if(MSVC)
 else()
     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-add_library(hua_semantics src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
+add_library(hua_semantics src/entry.cpp src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/numeric.cpp src/array.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(hua_semantics PUBLIC hua_frontend Threads::Threads)
 set(WASMTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.tools/wasmtime-v49.0.2-x86_64-windows-c-api" CACHE PATH "Wasmtime C API SDK")
@@ -47,6 +47,14 @@ if(BUILD_TESTING)
     endif()
     target_compile_definitions(hua_frontend_tests PRIVATE HUA_TEST_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/tests/spec")
     add_test(NAME frontend COMMAND hua_frontend_tests)
+    add_executable(hua_entry_boundary_tests tests/entry_boundary_tests.cpp)
+    target_link_libraries(hua_entry_boundary_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_entry_boundary_tests PRIVATE -static)
+    endif()
+    add_test(NAME entry_boundary COMMAND hua_entry_boundary_tests)
+    set_tests_properties(entry_boundary PROPERTIES TIMEOUT 10)
+
     add_executable(hua_runtime_tests tests/runtime_tests.cpp)
     target_link_libraries(hua_runtime_tests PRIVATE hua_semantics)
     target_compile_definitions(hua_runtime_tests PRIVATE HUA_RUNTIME_TEST_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime")
@@ -66,6 +74,12 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME vm_modules COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/module_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR})
         add_test(NAME cli_contract COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME entry_contract COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/entry_contract_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(entry_contract PROPERTIES TIMEOUT 180)
+        add_test(NAME compiler_entry COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/compiler_entry_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(compiler_entry PROPERTIES TIMEOUT 240)
+
+
     endif()
 endif()
 
@@ -489,4 +503,65 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME container_limits COMMAND hua_container_limits_tests)
     set_tests_properties(container_limits PROPERTIES TIMEOUT 10 LABELS "execution-contract")
+endif()
+
+# A08 native module identity, names, visibility, ordering and bounded graphs.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME module_contract COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/module_contract_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(module_contract PROPERTIES TIMEOUT 180 LABELS "module-contract")
+endif()
+
+# A09 resource graph inspection, compiler roots and deterministic failure release.
+if(BUILD_TESTING)
+    add_executable(hua_lifetime_tests tests/lifetime_tests.cpp)
+    target_link_libraries(hua_lifetime_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_lifetime_tests PRIVATE -static)
+    endif()
+    add_test(NAME value_lifetime COMMAND hua_lifetime_tests)
+    set_tests_properties(value_lifetime PROPERTIES TIMEOUT 30 LABELS "lifetime-contract")
+endif()
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME lifetime_contract COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/lifetime_contract_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(lifetime_contract PROPERTIES TIMEOUT 180 LABELS "lifetime-contract")
+endif()
+
+# A10 normalized source positions and bounded diagnostic/failure provenance.
+if(BUILD_TESTING)
+    add_executable(hua_diagnostic_tests tests/diagnostic_tests.cpp)
+    target_link_libraries(hua_diagnostic_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_diagnostic_tests PRIVATE -static)
+    endif()
+    add_test(NAME diagnostic_source COMMAND hua_diagnostic_tests)
+    set_tests_properties(diagnostic_source PROPERTIES TIMEOUT 10 LABELS "diagnostic-contract")
+endif()
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME diagnostic_contract COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/diagnostic_contract_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(diagnostic_contract PROPERTIES TIMEOUT 180 LABELS "diagnostic-contract")
+endif()
+
+# A07 per-field return/effect provenance and reused analyzer state.
+if(BUILD_TESTING)
+    add_executable(hua_capability_metadata_tests tests/capability_metadata_tests.cpp)
+    target_link_libraries(hua_capability_metadata_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_capability_metadata_tests PRIVATE -static)
+    endif()
+    add_test(NAME capability_metadata COMMAND hua_capability_metadata_tests)
+    set_tests_properties(capability_metadata PROPERTIES TIMEOUT 10 LABELS "capability-contract")
+endif()
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME capability_contract COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_contract_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(capability_contract PROPERTIES TIMEOUT 180 LABELS "capability-contract")
 endif()

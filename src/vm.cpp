@@ -35,9 +35,9 @@ void VirtualMachine::bind(const Instruction& op,Value value) {
     if(!frames_.back().environment->bindings.emplace(op.text,Binding{std::move(value),type,op.flag}).second)
         runtime_error(op.span,"duplicate runtime binding `"+op.text+"`","E4001");
 }
-void VirtualMachine::run(const Bytecode& bytecode){
+EntryResult VirtualMachine::run(const Bytecode& bytecode){
     ExecutionScope execution(context_,output_);context_->type_relations=&model_.relations;context_->resumable=true;
-    sync_wait(run_body(bytecode,execution),*context_);
+    sync_wait(run_body(bytecode,execution),*context_);return std::move(entry_);
 }
 Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
@@ -48,18 +48,20 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
         builtins->bindings.emplace(std::string("$core$")+name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
     }
     for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_->bindings.emplace(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
-    std::exception_ptr error;
+    std::exception_ptr error;Value returned;SourceSpan entry_span;
     try{
         frames_.push_back({&bytecode.initializer,nullptr,0,0,{},global_,{}});(co_await dispatch());
         if(auto main=model_.functions.find("main");main!=model_.functions.end()){
-            Instruction site{};site.span=main->second->span;(co_await call(Callable{main->second,"",{}},{},site));if(frames_.empty())stack_.clear();else (co_await dispatch());
+            entry_span=main->second->span;completed_.reset();
+            Instruction site{};site.span=entry_span;(co_await call(Callable{main->second,"",{}},{},site));if(frames_.empty())stack_.clear();else (co_await dispatch());
+            if(completed_)returned=std::move(*completed_);
+            if(std::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
         }
-        if(completed_&&std::holds_alternative<TaskValue>(completed_->data))co_await context_->tasks->await_async(*completed_,{});
     }catch(...){error=std::current_exception();}
     if(error)(co_await cleanup_error());
     try{co_await execution.finish_async(bool(error));}catch(...){if(!error)error=std::current_exception();}
     global_->bindings.clear();stack_.clear();frames_.clear();completed_.reset();if(error)std::rethrow_exception(error);
-    co_return;
+    entry_=entry_result(returned,entry_span);co_return;
 }
 Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
     if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));co_return;}
@@ -129,6 +131,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         auto& f=frames_.back();if(f.pc>=f.code->instructions.size())invalid(f.site);
         const auto& op=f.code->instructions[f.pc++];const auto& s=op.span;
         co_await Yield{};task_checkpoint(context_,s);if(context_->execution_metrics)++context_->execution_metrics->steps;if(++steps_>context_->execution_limits.steps)runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");
+        try{
         switch(op.op) {
         case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});Callable callable{fn->second,"",{},captured};std::weak_ptr<Environment> weak=captured;callable.resource_guard=[weak](unsigned d){if(auto env=weak.lock())for(const auto& [_,b]:env->bindings)if(contains_file(b.value,d+1))return true;return false;};stack_.emplace_back(Value(std::move(callable)));break;}
         case Op::Defer:{auto args=arguments(op.argument,s);auto value=pop(s);auto fn=std::get_if<Callable>(&value.data);if(!fn)runtime_error(s,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(arg);f.environment->deferred.push_back({*fn,std::move(args),op});break;}
@@ -181,7 +184,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             prepare_map_writes(ls,s);for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i],s);break;}
         case Op::MakeMap:stack_.emplace_back(make_map(op.type,s));break;
         case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);auto m=std::get_if<MapValue>(&std::get<Value>(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
-        case Op::Propagate:{auto value=pop(s);auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else (co_await finish_return(propagated_error(value),op,true));break;}
+        case Op::Propagate:{auto value=pop(s);auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else (co_await finish_return(propagated_error(value,s),op,true));break;}
         case Op::CheckIndex:
             if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);
             if(!std::holds_alternative<SliceValue>(std::get<Value>(stack_.back()).data)&&!std::holds_alternative<MapValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice, array or map","E4003");break;
@@ -268,6 +271,11 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::IterEnd:if(f.iterators.empty())invalid(s);f.iterators.pop_back();break;
         case Op::Fail:runtime_error(s,op.text,op.type.empty()?"E4008":op.type);
         default:invalid(s);
+        }
+        }catch(const Diagnostic& error){
+            auto reported=error.located(s);
+            for(auto frame=frames_.rbegin();frame!=frames_.rend();++frame)if(frame->function)reported.add_context(frame->site,"called from");
+            throw reported;
         }
     }
     if(stop_depth==0&&!stack_.empty())invalid({});

@@ -29,6 +29,7 @@ void usage(std::ostream& out) {
         << "       hua bytecode <file.hua|file.huab>\n"
         << "       hua build <file.hua> [-o file.huab]\n";
 }
+int usage_error() { std::cerr<<"error[E0004]: invalid command arguments\n";usage(std::cerr);return 2; }
 int cli(const std::vector<std::string>& args) {
     if (args.size() == 2 && (args[1] == "version" || args[1] == "--version")) {
         std::cout << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
@@ -39,7 +40,7 @@ int cli(const std::vector<std::string>& args) {
     hua::ExecutionOptions execution;
     bool valid_size=execute?hua::execution_options(args,execution):args.size()==3;
     if (build ? !(args.size() == 3 || (args.size() == 5 && args[3] == "-o")) :
-        (!valid_size || (args[1] != "check" && args[1] != "ast" && args[1] != "run" && args[1] != "interpret" && args[1] != "bytecode"))) { usage(std::cerr); return 2; }
+        (!valid_size || (args[1] != "check" && args[1] != "ast" && args[1] != "run" && args[1] != "interpret" && args[1] != "bytecode"))) { return usage_error(); }
     auto metrics=execution.report?std::make_shared<hua::ExecutionMetrics>():nullptr;
     hua::ExecutionReport budget_report{execution,metrics,std::cerr};
     std::unique_ptr<hua::Source> source;
@@ -49,27 +50,28 @@ int cli(const std::vector<std::string>& args) {
         hua::RuntimeContext context;context.input=&std::cin;context.working_directory=std::filesystem::current_path();context.execution_limits=execution.limits;context.execution_metrics=metrics;if(execute)context.arguments.assign(args.begin()+execution.arguments,args.end());
         auto path = std::filesystem::path(std::u8string(args[2].begin(), args[2].end()));
         if(path.extension()==".huab") {
-            if(build || args[1]=="ast" || args[1]=="interpret") { usage(std::cerr); return 2; }
+            if(build || args[1]=="ast" || args[1]=="interpret") { return usage_error(); }
             image=std::make_unique<hua::BytecodeImage>(hua::read_huab(path));
             if(args[1]=="check")std::cout<<"OK\n";
             else if(args[1]=="bytecode")std::cout<<hua::disassemble(image->bytecode);
-            else hua::VirtualMachine(image->model,std::cout,&context).run(image->bytecode);
+            else return hua::report_entry(hua::VirtualMachine(image->model,std::cout,&context).run(image->bytecode),std::cerr);
             return 0;
         }
+        if(build&&args.size()==5&&std::filesystem::path(std::u8string(args[4].begin(),args[4].end())).extension()!=".huab")return usage_error();
         if (args[1] != "ast") {
             const auto& tree = loader.load(path);
             auto model = hua::SemanticAnalyzer{}.analyze(tree,loader.externals());
             if (args[1] == "check") std::cout << "OK\n";
-            else if (args[1] == "interpret") hua::Interpreter(model, std::cout,&context).run(tree);
+            else if (args[1] == "interpret") return hua::report_entry(hua::Interpreter(model, std::cout,&context).run(tree),std::cerr);
             else {
                 auto bytecode = hua::BytecodeCompiler{}.compile(tree, model);
                 if(build) {
                     auto out=path;out.replace_extension(".huab");
                     if(args.size()==5)out=std::filesystem::path(std::u8string(args[4].begin(),args[4].end()));
-                    if(out.extension()!=".huab") { usage(std::cerr); return 2; }
+                    if(out.extension()!=".huab") { return usage_error(); }
                     hua::write_huab(out,bytecode,model,loader.sources());auto out_utf8=out.u8string();std::cout<<"Built "<<std::string(out_utf8.begin(),out_utf8.end())<<'\n';
                 } else if (args[1] == "bytecode") std::cout << hua::disassemble(bytecode);
-                else hua::VirtualMachine(model, std::cout,&context).run(bytecode);
+                else return hua::report_entry(hua::VirtualMachine(model, std::cout,&context).run(bytecode),std::cerr);
             }
             return 0;
         }
@@ -93,20 +95,20 @@ int cli(const std::vector<std::string>& args) {
     } catch (const hua::Diagnostic& error) {
         const auto* origin = loader.source(error.span().file_id);
         if (!origin && image) origin=image->source(error.span().file_id);
-        if (!origin) origin = source.get();
+        if (!origin && source && source->filename()==error.span().file_id) origin = source.get();
         if (origin) std::cerr << error.render(*origin);
         else {
             std::cerr << "error[" << error.code() << "]: " << error.what() << '\n';
             if(!error.span().file_id.empty())std::cerr << " --> " << error.span().file_id << ':' << error.span().line << ':' << error.span().column << '\n';
+            std::cerr<<hua::render_source_trace(error.trace());
         }
-        return 1;
-    } catch (const std::exception& error) {
-        std::cerr << "error[E0001]: " << error.what() << '\n'; return 1;
+        return hua::diagnostic_exit_code(error.code());
     }
 }
 }
 #ifdef _WIN32
 int wmain(int argc, wchar_t** argv) {
+    return hua::command_boundary([&] {
     SetConsoleCP(CP_UTF8);SetConsoleOutputCP(CP_UTF8);
     std::vector<std::string> args;
     for (int i = 0; i < argc; ++i) {
@@ -117,7 +119,8 @@ int wmain(int argc, wchar_t** argv) {
         value.pop_back(); args.push_back(std::move(value));
     }
     return cli(args);
+    },std::cerr);
 }
 #else
-int main(int argc, char** argv) { return cli(std::vector<std::string>(argv, argv + argc)); }
+int main(int argc, char** argv) { return hua::command_boundary([&]{return cli(std::vector<std::string>(argv, argv + argc));},std::cerr); }
 #endif

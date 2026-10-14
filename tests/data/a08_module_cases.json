@@ -1,0 +1,410 @@
+[
+  {
+    "name": "overlap_root_first",
+    "files": {
+      "main.hua": "import pkg\nimport pkg.sub\nprint(pkg.root(),pkg.sub.value())\n",
+      "pkg/package.hua": "pub fn root() int{return 1}\n",
+      "pkg/sub.hua": "pub fn value() int{return 2}\n"
+    },
+    "stdout": "1 2\n"
+  },
+  {
+    "name": "overlap_type_root_first",
+    "files": {
+      "main.hua": "import pkg\nimport pkg.sub\nfn keep(p pkg.sub.Point) pkg.sub.Point{return p}\nprint(keep(pkg.sub.Point{x:3}).x)\n",
+      "pkg/package.hua": "pub fn root() int{return 1}\n",
+      "pkg/sub.hua": "pub struct Point{x int}\n"
+    },
+    "stdout": "3\n"
+  },
+  {
+    "name": "overlap_child_first",
+    "files": {
+      "main.hua": "import pkg.sub\nimport pkg\nprint(pkg.root(),pkg.sub.value())\n",
+      "pkg/package.hua": "pub fn root() int{return 1}\n",
+      "pkg/sub.hua": "pub fn value() int{return 2}\n"
+    },
+    "stdout": "1 2\n"
+  },
+  {
+    "name": "overlap_type_child_first",
+    "files": {
+      "main.hua": "import pkg.sub\nimport pkg\nfn keep(p pkg.sub.Point) pkg.sub.Point{return p}\nprint(keep(pkg.sub.Point{x:3}).x)\n",
+      "pkg/package.hua": "pub fn root() int{return 1}\n",
+      "pkg/sub.hua": "pub struct Point{x int}\n"
+    },
+    "stdout": "3\n"
+  },
+  {
+    "name": "same_file_alias",
+    "files": {
+      "main.hua": "import state as a\nimport state as b\nprint(a.next(),b.next())\n",
+      "state.hua": "print(\"init\")\nvar n=0\npub fn next() int{n++\nreturn n}\nfn main(){print(\"BAD\") }\n"
+    },
+    "stdout": "init\n1 2\n"
+  },
+  {
+    "name": "package_alias",
+    "files": {
+      "main.hua": "import pkg as a\nimport pkg.package as b\nprint(a.get(),b.get())\n",
+      "pkg/package.hua": "print(\"once\")\npub fn get() int{return 7}\n"
+    },
+    "stdout": "once\n7 7\n"
+  },
+  {
+    "name": "diamond_order",
+    "files": {
+      "main.hua": "import left\nimport right\nprint(\"root\",left.read(),right.read())\nfn main(){print(\"main\")}\n",
+      "left.hua": "import shared\nprint(\"left\")\npub fn read() int{return shared.next()}\n",
+      "right.hua": "import shared\nprint(\"right\")\npub fn read() int{return shared.next()}\n",
+      "shared.hua": "print(\"shared\")\nvar n=0\npub fn next() int{n++\nreturn n}\n"
+    },
+    "stdout": "shared\nleft\nright\nroot 1 2\nmain\n"
+  },
+  {
+    "name": "import_order",
+    "files": {
+      "main.hua": "import right\nimport left\nprint(\"root\")\n",
+      "left.hua": "print(\"left\")\n",
+      "right.hua": "print(\"right\")\n"
+    },
+    "stdout": "right\nleft\nroot\n"
+  },
+  {
+    "name": "entry_root",
+    "files": {
+      "main.hua": "import pkg.left\nprint(pkg.left.get())\n",
+      "pkg/left.hua": "import helper\npub fn get() int{return helper.get()}\n",
+      "helper.hua": "pub fn get() int{return 11}\n",
+      "pkg/helper.hua": "pub fn get() int{return 99}\n"
+    },
+    "stdout": "11\n"
+  },
+  {
+    "name": "source_priority",
+    "files": {
+      "main.hua": "import m\nprint(m.get())\n",
+      "m.hua": "pub fn get() int{return 1}\n",
+      "m/package.hua": "pub fn get() int{return 2}\n",
+      "m.huam": "invalid manifest\n"
+    },
+    "stdout": "1\n"
+  },
+  {
+    "name": "broken_first_no_fallback",
+    "files": {
+      "main.hua": "import m\nprint(\"BAD\")\n",
+      "m.hua": "let =\n",
+      "m/package.hua": "pub fn get() int{return 2}\n"
+    },
+    "error": "E2001"
+  },
+  {
+    "name": "private_globals_isolated",
+    "files": {
+      "main.hua": "import a\nimport b\nprint(a.get(),b.get())\n",
+      "a.hua": "var n=3\npub fn get() int{return n}\n",
+      "b.hua": "var n=4\npub fn get() int{return n}\n"
+    },
+    "stdout": "3 4\n"
+  },
+  {
+    "name": "private_helper_inside_module",
+    "files": {
+      "main.hua": "import m\nprint(m.get())\n",
+      "m.hua": "fn private() int{return 9}\npub fn get() int{return private()}\n"
+    },
+    "stdout": "9\n"
+  },
+  {
+    "name": "public_method",
+    "files": {
+      "main.hua": "import m as d\nvar x=d.Point{x:3}\nx.shift(2)\nprint(x.read())\n",
+      "m.hua": "pub struct Point{x int}\npub fn Point.read() int{return self.x}\npub fn Point.shift(n int){self.x+=n}\n"
+    },
+    "stdout": "5\n"
+  },
+  {
+    "name": "value_shadow_type_alias",
+    "files": {
+      "main.hua": "import m as d\nfn keep(d d.Point) d.Point{return d}\nlet p=d.Point{x:3}\nprint(keep(p).x)\n",
+      "m.hua": "pub struct Point{x int}\n"
+    },
+    "stdout": "3\n"
+  },
+  {
+    "name": "local_namespace_shadow",
+    "files": {
+      "main.hua": "import m\nfn get() int{let m=7\nreturn m+1}\nprint(get(),m.get())\n",
+      "m.hua": "pub fn get() int{return 9}\n"
+    },
+    "stdout": "8 9\n"
+  },
+  {
+    "name": "standard_alias_cached",
+    "files": {
+      "main.hua": "import std.strings as a\nimport std.strings as b\nprint(a.len_bytes(\"abc\"),b.len_bytes(\"abcd\"))\n"
+    },
+    "stdout": "3 4\n"
+  },
+  {
+    "name": "standard_not_disk",
+    "files": {
+      "main.hua": "import std.strings as m\nprint(m.len_bytes(\"abc\"))\n",
+      "std/strings.hua": "print(\"BAD\")\n"
+    },
+    "stdout": "3\n"
+  },
+  {
+    "name": "compiler_style_project",
+    "files": {
+      "main.hua": "import compiler as c\nfn main(){print(c.compile(\"12\"))}\n",
+      "compiler.hua": "import scan as s\nimport parse as p\nimport emit as e\npub fn compile(text string) string{return e.emit(p.parse(s.scan(text)))}\n",
+      "scan.hua": "pub fn scan(text string) string{return text}\n",
+      "parse.hua": "pub struct Node{value int}\npub fn parse(text string) Node{return Node{value:int(text)}}\n",
+      "emit.hua": "import parse as p\npub fn emit(node p.Node) string{return \"PUSH \"+str(node.value)}\n"
+    },
+    "stdout": "PUSH 12\n"
+  },
+  {
+    "name": "unknown_std_no_fallback",
+    "files": {
+      "main.hua": "import std.unknown\nprint(\"BAD\")\n",
+      "std/unknown.hua": "pub fn get(){}\n"
+    },
+    "error": "E5001"
+  },
+  {
+    "name": "missing_module",
+    "files": {
+      "main.hua": "import missing\nprint(\"BAD\")\n"
+    },
+    "error": "E5001"
+  },
+  {
+    "name": "private_function",
+    "files": {
+      "main.hua": "import m\nprint(\"BAD\")\nm.hidden()\n",
+      "m.hua": "fn hidden(){}\n"
+    },
+    "error": "E5003"
+  },
+  {
+    "name": "private_method",
+    "files": {
+      "main.hua": "import m\nlet p=m.Point{x:1}\np.hidden()\n",
+      "m.hua": "pub struct Point{x int}\nfn Point.hidden(){}\n"
+    },
+    "error": "E5003"
+  },
+  {
+    "name": "private_type",
+    "files": {
+      "main.hua": "import m\nlet p=m.Point{x:1}\n",
+      "m.hua": "struct Point{x int}\n"
+    },
+    "error": "E5003"
+  },
+  {
+    "name": "namespace_value",
+    "files": {
+      "main.hua": "import m\nlet v=m\n",
+      "m.hua": ""
+    },
+    "error": "E5003"
+  },
+  {
+    "name": "not_type",
+    "files": {
+      "main.hua": "import m\nlet x m.get=1\n",
+      "m.hua": "pub fn get() int{return 1}\n"
+    },
+    "error": "E5003"
+  },
+  {
+    "name": "duplicate_alias",
+    "files": {
+      "main.hua": "import m as a\nimport m as a\n",
+      "m.hua": ""
+    },
+    "error": "E5004"
+  },
+  {
+    "name": "alias_declaration_conflict",
+    "files": {
+      "main.hua": "import m as a\nlet a=1\n",
+      "m.hua": ""
+    },
+    "error": "E5004"
+  },
+  {
+    "name": "dotted_namespace_conflict",
+    "files": {
+      "main.hua": "import pkg.m\nlet pkg=1\n",
+      "pkg/m.hua": ""
+    },
+    "error": "E5004"
+  },
+  {
+    "name": "nested_import",
+    "files": {
+      "main.hua": "fn main(){import m}\n",
+      "m.hua": ""
+    },
+    "error": "E5004"
+  },
+  {
+    "name": "late_import",
+    "files": {
+      "main.hua": "print(\"BAD\")\nimport m\n",
+      "m.hua": ""
+    },
+    "error": "E5004"
+  },
+  {
+    "name": "private_globals_not_shared",
+    "files": {
+      "main.hua": "import m\nlet rootOnly=1\nprint(m.get())\n",
+      "m.hua": "pub fn get() int{return rootOnly}\n"
+    },
+    "error": "E3001"
+  },
+  {
+    "name": "nominal_type_identity",
+    "files": {
+      "main.hua": "import a\nimport b\nlet x=a.Point{x:1}\nb.take(x)\n",
+      "a.hua": "pub struct Point{x int}\n",
+      "b.hua": "pub struct Point{x int}\npub fn take(x Point){}\n"
+    },
+    "error": "E3004"
+  },
+  {
+    "name": "cycle",
+    "files": {
+      "main.hua": "import a\nprint(\"BAD\")\n",
+      "a.hua": "import b\n",
+      "b.hua": "import a\n"
+    },
+    "error": "E5002"
+  },
+  {
+    "name": "cycle_to_entry",
+    "files": {
+      "main.hua": "import a\nprint(\"BAD\")\n",
+      "a.hua": "import main\n"
+    },
+    "error": "E5002"
+  },
+  {
+    "name": "late_dependency_parse_failure",
+    "files": {
+      "main.hua": "import early\nimport late\nprint(\"BAD\")\n",
+      "early.hua": "print(\"BAD\")\n",
+      "late.hua": "let =\n"
+    },
+    "error": "E2001"
+  },
+  {
+    "name": "late_dependency_type_failure",
+    "files": {
+      "main.hua": "import early\nimport late\nprint(\"BAD\")\n",
+      "early.hua": "print(\"BAD\")\n",
+      "late.hua": "let x=unknown\n"
+    },
+    "error": "E3001"
+  },
+  {
+    "name": "runtime_stops_initialization",
+    "files": {
+      "main.hua": "import bad\nimport later\nprint(\"BAD\")\n",
+      "bad.hua": "print(\"before\")\nprint(1//0)\n",
+      "later.hua": "print(\"BAD\")\n"
+    },
+    "runtime_error": "E4004",
+    "stdout": "before\n"
+  },
+  {
+    "name": "case_alias",
+    "files": {
+      "main.hua": "import shared as a\nimport SHARED as b\nprint(a.get(),b.get())\n",
+      "shared.hua": "print(\"once\")\npub fn get() int{return 1}\n"
+    },
+    "stdout": "once\n1 1\n"
+  },
+  {
+    "name": "three_namespace_levels",
+    "files": {
+      "main.hua": "import pkg.deep.leaf\nimport pkg.deep\nimport pkg\nprint(pkg.root(),pkg.deep.mid(),pkg.deep.leaf.get())\n",
+      "pkg/package.hua": "pub fn root() int{return 1}\n",
+      "pkg/deep/package.hua": "pub fn mid() int{return 2}\n",
+      "pkg/deep/leaf.hua": "pub fn get() int{return 3}\n"
+    },
+    "stdout": "1 2 3\n"
+  },
+  {
+    "name": "longest_missing_no_fallback",
+    "files": {
+      "main.hua": "import pkg.leaf\nimport pkg\nprint(\"BAD\")\npkg.leaf.get()\n",
+      "pkg/package.hua": "pub struct leaf{x int}\npub fn leaf.get() int{return self.x}\n",
+      "pkg/leaf.hua": "pub fn other() int{return 1}\n"
+    },
+    "error": "E5003"
+  },
+  {
+    "name": "dynamic_private_method",
+    "files": {
+      "main.hua": "import m\nlet value=m.make()\nvalue.hidden()\n",
+      "m.hua": "struct Hidden{x int}\nfn Hidden.hidden(){print(\"BAD\")}\npub fn make(){return Hidden{x:1}}\n"
+    },
+    "runtime_error": "E5003",
+    "stdout": ""
+  },
+  {
+    "name": "public_generic_interface_enum",
+    "files": {
+      "main.hua": "import api\nlet item api.Box<int>=api.Box<int>{value:5}\nprint(api.id<int>(item.value))\nprint(api.show(api.Item{value:\"public\"}))\nmatch api.Event.Text(\"event\"){api.Event.Text(x)=>print(x)\napi.Event.Empty=>print(\"empty\")}\n",
+      "api.hua": "pub struct Box<T>{value T}\npub fn id<T>(x T) T{return x}\npub interface Named{fn name() string}\npub struct Item{value string}\npub fn Item.name() string{return self.value}\npub fn show(x Named) string{return x.name()}\npub enum Event{Text(string),Empty}\n"
+    },
+    "stdout": "5\npublic\nevent\n"
+  },
+  {
+    "name": "textual_path_traversal_rejected",
+    "files": {
+      "main.hua": "import ../outside\nprint(\"BAD\")\n"
+    },
+    "error": "E2001"
+  },
+  {
+    "name": "string_path_import_rejected",
+    "files": {
+      "main.hua": "import \"outside.hua\"\nprint(\"BAD\")\n"
+    },
+    "error": "E2001"
+  },
+  {
+    "name": "package_source_before_manifest",
+    "files": {
+      "main.hua": "import m\nprint(m.get())\n",
+      "m/package.hua": "pub fn get() int{return 4}\n",
+      "m.huam": "invalid manifest\n"
+    },
+    "stdout": "4\n"
+  },
+  {
+    "name": "manifest_before_wasm_no_fallback",
+    "files": {
+      "main.hua": "import m\nprint(\"BAD\")\n",
+      "m.huam": "invalid manifest\n",
+      "m.wasm": "\u0000asm\u0001\u0000\u0000\u0000"
+    },
+    "error": "E7002"
+  },
+  {
+    "name": "embedded_wasm_module",
+    "files": {
+      "main.hua": "import m\nprint(\"wasm\")\n",
+      "m.wasm": "\u0000asm\u0001\u0000\u0000\u0000"
+    },
+    "stdout": "wasm\n"
+  }
+]

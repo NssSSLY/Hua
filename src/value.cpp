@@ -1,5 +1,6 @@
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include "hua/location.hpp"
 #include "hua/value.hpp"
 #include "hua/tasks.hpp"
@@ -282,21 +283,57 @@ Value read_only(Value v) {
     if(auto p=std::get_if<MultiValue>(&v.data)){auto copy=managed<MultiData>(*p->data);for(auto& x:copy->values)x=read_only(std::move(x));p->data=std::move(copy);}
     return v;
 }
-bool contains_file(const Value& v,unsigned depth){
-    if(depth>128)return true; // Cyclic graphs fail closed at resource boundaries.
+namespace {
+struct FileVisit {
+    const void* object;std::size_t kind,start{},length{};
+    bool operator==(const FileVisit&) const=default;
+};
+struct FileVisitHash {
+    std::size_t operator()(const FileVisit& v) const {
+        auto h=std::hash<const void*>{}(v.object);
+        for(auto x:{v.kind,v.start,v.length})h^=x+0x9e3779b9+(h<<6)+(h>>2);
+        return h;
+    }
+};
+struct FileScan {std::unordered_set<FileVisit,FileVisitHash> visited;};
+// Closure guards reenter contains_file; they must share this scan's visited graph.
+thread_local FileScan* active_file_scan=nullptr;
+bool scan_file(const Value& v,unsigned depth,FileScan& scan){
+    if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
     if(std::holds_alternative<FileValue>(v.data))return true;
-    auto nested=[&](const Value& x){return contains_file(x,depth+1);};
+    auto first=[&](const void* object,std::size_t start=0,std::size_t length=0){
+        return scan.visited.insert({object,v.data.index(),start,length}).second;
+    };
+    auto nested=[&](const Value& x){return scan_file(x,depth+1,scan);};
     if(auto p=std::get_if<Callable>(&v.data)){
         if(p->receiver&&nested(Value(*p->receiver)))return true;
+        if(p->closure&&!first(p->closure.get()))return false;
         return p->resource_guard&&p->resource_guard(depth+1);
     }
-    if(auto p=std::get_if<StructValue>(&v.data))for(const auto& [_,x]:p->data->fields)if(nested(x))return true;
-    if(auto p=std::get_if<MapValue>(&v.data))for(const auto& [_,x]:p->data->entries)if(nested(x))return true;
-    if(auto p=std::get_if<ListValue>(&v.data))for(const auto& x:p->data->values)if(nested(x))return true;
-    if(auto p=std::get_if<SliceValue>(&v.data);p&&!p->packed)for(std::size_t i=0;i<p->length;++i)if(nested(sequence_read(*p,i)))return true;
-    if(auto p=std::get_if<ResultValue>(&v.data);p&&p->payload&&nested(*p->payload))return true;
-    if(auto p=std::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)if(nested(x))return true;
+    if(auto p=std::get_if<StructValue>(&v.data);p&&first(p->data.get()))
+        for(const auto& [_,x]:p->data->fields)if(nested(x))return true;
+    if(auto p=std::get_if<MapValue>(&v.data);p&&first(p->data.get()))
+        for(const auto& [_,x]:p->data->entries)if(nested(x))return true;
+    if(auto p=std::get_if<ListValue>(&v.data);p&&first(p->data.get()))
+        for(const auto& x:p->data->values)if(nested(x))return true;
+    // Different views of one backing can expose different resources.
+    if(auto p=std::get_if<SliceValue>(&v.data);p&&!p->packed&&first(p->storage.get(),p->start,p->length))
+        for(std::size_t i=0;i<p->length;++i)if(nested(sequence_read(*p,i)))return true;
+    if(auto p=std::get_if<ResultValue>(&v.data);p&&p->payload&&first(p->payload.get())&&nested(*p->payload))return true;
+    if(auto p=std::get_if<MultiValue>(&v.data);p&&first(p->data.get()))
+        for(const auto& x:p->data->values)if(nested(x))return true;
     return false;
+}
+}
+bool contains_file(const Value& v,unsigned depth){
+    if(active_file_scan)return scan_file(v,depth,*active_file_scan);
+    FileScan scan;
+    struct Scope {
+        FileScan* previous;
+        explicit Scope(FileScan& scan):previous(active_file_scan){active_file_scan=&scan;}
+        ~Scope(){active_file_scan=previous;}
+    } scope(scan);
+    return scan_file(v,depth,scan);
 }
 Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     if(deep&&!resource_alias&&depth==0&&contains_file(v))runtime_error({},"File cannot be cloned, including inside containers or closures","E4007");
@@ -465,8 +502,14 @@ Value enforce_return(Value value,const Node& fn,const SourceSpan& s,bool context
     if(auto p=std::get_if<MultiValue>(&value.data))p->data->contextual.clear();if(auto p=std::get_if<ResultValue>(&value.data))p->contextual=false;
     return copy_value(std::move(value));
 }
-Value propagated_error(const Value& value) {auto r=std::get<ResultValue>(copy_value(value).data);r.success_type.clear();return Value(r);}
-Value result_payload(const Value& v,bool success,const SourceSpan& s) {auto p=std::get_if<ResultValue>(&v.data);if(!p)runtime_error(s,"expected Result","E4003");if(p->ok!=success)runtime_error(s,success?"cannot unwrap err Result":"cannot unwrap_err ok Result","E4009");if(success&&!p->payload&&p->success_type=="void")return Value(VoidValue{});if(!p->payload)runtime_error(s,"Result payload is missing","E4003");return copy_value(p->writable?*p->payload:read_only(*p->payload));}
+Value record_failure_source(Value value,const SourceSpan& span,std::string message){
+    auto result=std::get_if<ResultValue>(&value.data);
+    if(!result||result->ok||span.file_id.empty())return value;
+    auto trace=std::make_shared<SourceTrace>(result->failure_source?*result->failure_source:SourceTrace{});
+    trace->add(span,std::move(message));result->failure_source=std::move(trace);return value;
+}
+Value propagated_error(const Value& value,const SourceSpan& span) {auto r=std::get<ResultValue>(copy_value(value).data);r.success_type.clear();return record_failure_source(Value(r),span,"Result propagated here");}
+Value result_payload(const Value& v,bool success,const SourceSpan& s) {auto p=std::get_if<ResultValue>(&v.data);if(!p)runtime_error(s,"expected Result","E4003");if(p->ok!=success){Diagnostic error("E4009",s,success?"cannot unwrap err Result":"cannot unwrap_err ok Result");if(p->failure_source)error.add_trace(*p->failure_source);throw error;}if(success&&!p->payload&&p->success_type=="void")return Value(VoidValue{});if(!p->payload)runtime_error(s,"Result payload is missing","E4003");return copy_value(p->writable?*p->payload:read_only(*p->payload));}
 Value aggregate_member(const Value& v,const std::string& name,const SourceSpan& s) {if(name=="len"){if(auto p=std::get_if<SliceValue>(&v.data))return Value(static_cast<I>(p->length));if(auto p=std::get_if<MapValue>(&v.data))return Value(static_cast<I>(p->data->entries.size()));if(auto p=std::get_if<std::string>(&v.data))return Value(static_cast<I>(p->size()));}runtime_error(s,"unknown aggregate member","E4003");}
 
 }
