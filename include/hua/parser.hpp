@@ -10,7 +10,7 @@ private:
     std::vector<Token> tokens_;
     std::size_t pos_{}, depth_{};
     bool in_header_{};
-    int function_depth_{}, loop_depth_{}, unsafe_depth_{};
+    int function_depth_{}, loop_depth_{}, unsafe_depth_{}, block_depth_{};
     const Token& peek(std::size_t ahead = 0) const;
     bool at(TokenKind kind) const;
     Token take();

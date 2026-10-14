@@ -51,13 +51,15 @@ fn get(e Environment, id ast.NodeId) ast.Node { return unwrap(ast.get(e.unit.tre
 fn target(m Model, e Environment, n ast.Node) string { return unwrap_or(m.refs[key(e.unit.id,n.id.index)],"") }
 fn declaration(m Model, e Environment, n ast.Node) string { return unwrap_or(m.declarations[key(e.unit.id,n.id.index)],"") }
 fn environment(u modules.Unit, values mut map[string]Info) Environment { return Environment{unit:u,values:values,result:"void",function:false,depth:0} }
-fn typename(m mut Model, e Environment, id ast.NodeId) Result<string> {
+fn typename(m mut Model, e Environment, id ast.NodeId) Result<string> { return typename_context(m,e,id,false) }
+fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) Result<string> {
     let n = get(e,id)
     tick(m,e,n)?
     let k = ast.kind(n.payload)
     let text = ast.payload_text(n.payload)
     if k == "MutableType" { return typename(m,e,n.children[0]) }
     if k == "TypeName" {
+        if text == "void" && !allow_void { return err(fail(e,n,"E3004","void is not an ordinary value type")) }
         let resolved = target(m,e,n)
         if resolved == "builtin:std.json#Value" { return ok("Json") }
         if strings.starts_with(resolved,"builtin:type:") {
@@ -69,7 +71,9 @@ fn typename(m mut Model, e Environment, id ast.NodeId) Result<string> {
     }
     var empty []string = []
     var args = list.from_slice(empty)
-    for child in n.children { list.append(args,typename(m,e,child)?)? }
+    if k == "GenericType" && text == "List" && ast.payload_text(get(e,n.children[0]).payload) == "void" { return err(fail(e,n,"E3004","List<void> is invalid")) }
+    if k == "GenericType" && text == "map" && ast.payload_text(get(e,n.children[1]).payload) == "void" { return err(fail(e,n,"E3004","map values cannot be void")) }
+    for i in 0..len(n.children) { list.append(args,typename_context(m,e,n.children[i],k == "GenericType" && text == "Result" && i == 0)?)? }
     let ts = list.snapshot(args)
     if k == "OptionalType" {
         if strings.starts_with(ts[0],"Result<") { return err(fail(e,n,"E3004","Optional<Result> is unsupported")) }
@@ -77,13 +81,9 @@ fn typename(m mut Model, e Environment, id ast.NodeId) Result<string> {
     }
     if k == "SliceType" { return ok("[]"+ts[0]) }
     if k == "ArrayType" {
-        let digits = strings.replace(text,"_","")
-        if len(digits) > 7 { return err(fail(e,n,"E8201","fixed array size outside C04-T1")) }
-        for i in 0..len(digits) { if !strings.contains("0123456789",rules.cut(digits,i,i+1)) { return err(fail(e,n,"E8201","C04-T1 array size requires decimal literal")) } }
-        let count = int(digits)
-        if count > 1000000 { return err(fail(e,n,"E8201","fixed array size outside C04-T1")) }
-        # 保留已验证的尺寸拼写，与现有类型身份和指令元数据一致。
-        return ok("["+text+"]"+ts[0])
+        let size = rules.extent(text)
+        if is_err(size) { return err(fail(e,n,"E3004","fixed array size must be in 0..1000000")) }
+        return ok("["+str(unwrap(size))+"]"+ts[0])
     }
     if k == "GenericType" {
         if text == "Result" {
@@ -109,8 +109,11 @@ fn literal(e Environment, n ast.Node) bool {
     return false
 }
 fn require(m mut Model, e Environment, expected string, actual Info, n ast.Node) Result<void> {
+    if strings.ends_with(expected,"?") && actual.type_name != "nil" && !strings.ends_with(actual.type_name,"?") { return require(m,e,rules.optional(expected),actual,n) }
     if rules.category(expected) != "" && rules.category(actual.type_name) != "" && literal(e,n) && (rules.category(expected) == "f" || rules.category(actual.type_name) != "f") { return ok() }
     if strings.starts_with(expected,"[") && ast.kind(n.payload) == "Array" {
+        let close = strings.index(expected,"]")
+        if close > 1 && unwrap(rules.extent(rules.cut(expected,1,close))) != len(n.children) { return err(fail(e,n,"E3004","fixed array length mismatch")) }
         for child in n.children { let x = get(e,child)
             require(m,e,rules.element(expected),unwrap(m.facts[key(e.unit.id,x.id.index)]),x)? }
         return ok()
@@ -153,7 +156,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
         } else {
             var values []string = []
             var results = list.from_slice(values)
-            for typ in p.children { list.append(results,typename(m,e,typ)?)? }
+            for typ in p.children { list.append(results,typename_context(m,e,typ,len(p.children)==1)?)? }
             if list.len(results) == 1 { result = list.get(results,0)? }
             else { result = "multi<"+strings.join(list.snapshot(results),",")+">" }
         }

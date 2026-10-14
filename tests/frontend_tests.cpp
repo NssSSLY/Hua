@@ -87,6 +87,91 @@ void expression_tests() {
         } catch (const std::exception& error) { check(false, input + ": " + error.what()); }
     }
 }
+void container_header_tests() {
+    const std::pair<std::string, std::string> cases[] = {
+        {"for e in [Empty{}] {}", "StructLiteral:Empty"},
+        {"for k in map[int]Empty{1:Empty{}} {}", "StructLiteral:Empty"},
+        {"if Box{empty:Empty{},flag:true}.flag {}", "StructLiteral:Empty"},
+        {"while Box{empty:Empty{},flag:false}.flag {}", "StructLiteral:Empty"},
+        {"for e in [[Empty{}]] {}", "StructLiteral:Empty"},
+        {"for e in [\nEmpty{}\n] {}", "StructLiteral:Empty"},
+        {"for k in map[int]Empty{\n1:Empty{}\n} {}", "StructLiteral:Empty"},
+        {"if pkg.Box{empty:pkg.Empty{},flag:true}.flag {}", "StructLiteral:pkg.Empty"},
+        {"if Box<int>{empty:Empty{},flag:true}.flag {}", "StructLiteral:Empty"},
+        {"if [true][0] && flag {} else {}", "Binary:&&(Index(Array(Boolean:true),Integer:0),Name:flag)"},
+        {"while map[int]bool{1:true}[1] == nil {}", "Binary:=="},
+        {"if Box{empty:Empty{},flag:true}.flag && flag {} else {}", "Name:flag"}
+    };
+    for (const auto& [input, expected] : cases) {
+        try {
+            hua::Source source("unit.hua", input);
+            auto tree = parse(input);
+            check(shape(*tree).find(expected) != std::string::npos, "container header AST: " + input);
+            span_tree(*tree, source);
+        } catch (const std::exception& error) { check(false, "container header: " + input + ": " + error.what()); }
+    }
+    // A bare condition name followed by {} must still leave {} as the statement body.
+    auto tree = parse("if flag {} else {}\nwhile flag {}\nfor e in values {}");
+    const auto printed = shape(*tree);
+    check(printed.find("StructLiteral") == std::string::npos, "header context restored after container parsing");
+    check(printed.find("Name:flag") != std::string::npos && printed.find("Name:values") != std::string::npos,
+          "bare header names remain expressions");
+}
+void declaration_scope_tests() {
+    const std::string contexts[] = {"fn outer() {BODY}", "{BODY}", "if false {BODY}",
+        "while false {BODY}", "for i in 0..1 {BODY}"};
+    const std::string declarations[] = {"enum E{A}", "pub enum E{A}",
+        "interface I{fn value() int}", "pub interface I{fn value() int}"};
+    for (const auto& context : contexts) for (const auto& declaration : declarations) {
+        auto input = context;
+        input.replace(input.find("BODY"), 4, declaration);
+        bool rejected = false;
+        try { parse(input); }
+        catch (const hua::Diagnostic& error) {
+            const auto keyword = declaration.find("interface") != std::string::npos ? "interface" : "enum";
+            rejected = error.code() == "E2002" && error.span().start_offset == input.find(keyword);
+        }
+        check(rejected, "module-only declaration and keyword span: " + input);
+    }
+    // Scope tracking must reset after a function, ordinary block, or loop closes.
+    const std::string accepted[] = {
+        "fn outer() {}\npub enum E{A}\npub interface I{fn value() int}",
+        "{}\nenum E{A}\ninterface I{fn value() int}",
+        "while false {}\nenum E{A}",
+        "fn outer() {struct Local {x int}\nfn inner(){while true {continue}}}"
+    };
+    for (const auto& input : accepted) {
+        try {
+            hua::Source source("unit.hua", input);
+            auto tree = parse(input);
+            check(true, "legal declaration scope: " + input);
+            span_tree(*tree, source);
+        } catch (const std::exception& error) { check(false, input + ": " + error.what()); }
+    }
+}
+void interface_prototype_span_tests() {
+    const std::string cases[] = {
+        "interface I{fn value() int}",
+        "interface I{fn value() int      }",
+        "pub interface I{fn value() (int,int)}",
+        "interface I{\nfn value() int\nfn close()\n}",
+        "interface I{fn value() (\nint,\nint\n)\n}",
+        "interface I{fn write(data []byte) Result<void>\nfn close()\n}"
+    };
+    for (const auto& input : cases) {
+        try {
+            hua::Source source("unit.hua", input);
+            auto tree = parse(input);
+            span_tree(*tree, source);
+            for (const auto& method : tree->children.at(0)->children) {
+                const auto& body = *method->children.back();
+                check(body.kind == hua::NodeKind::Block && body.children.empty(), "prototype has an empty synthetic body");
+                check(body.span.start_offset == method->span.end_offset && body.span.end_offset == method->span.end_offset,
+                      "prototype body is zero-width at signature end");
+            }
+        } catch (const std::exception& error) { check(false, input + ": " + error.what()); }
+    }
+}
 void lexer_tests() {
     using K = hua::TokenKind;
     hua::Source source("tokens.hua", "let x = 0xff\r\nvar y = 1.5e-3\n\"a\\n\\t\\0\\\\\\\"\"\n");
@@ -268,7 +353,7 @@ int fixtures() {
 }
 int main() {
     try {
-        lexer_tests(); expression_tests(); boundary_tests(); comment_tests(); auto count = fixtures();
+        lexer_tests(); expression_tests(); container_header_tests(); declaration_scope_tests(); interface_prototype_span_tests(); boundary_tests(); comment_tests(); auto count = fixtures();
         std::cout << count << " spec fixtures, " << checks << " checks, " << failures << " failures\n";
     } catch (const std::exception& error) { check(false, error.what()); }
     return failures == 0 ? 0 : 1;

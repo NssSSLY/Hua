@@ -1,2 +1,2 @@
-RUN_ERROR E4003
+CHECK_ERROR E3004
 length mismatch

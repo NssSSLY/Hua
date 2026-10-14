@@ -228,16 +228,24 @@ NodePtr Parser::function(bool is_public, bool is_unsafe, bool prototype) {
     }
     Restore fn(function_depth_, function_depth_ + 1);
     Restore loops(loop_depth_, 0);
-    if(prototype){node->add(make(N::Block,peek()));node->text+=" abstract";}else node->add(block());finish(*node);
+    if(prototype){
+        auto end=tokens_[pos_-1].span;
+        end.column+=end.end_offset-end.start_offset;
+        end.start_offset=end.end_offset;
+        node->add(std::make_unique<Node>(N::Block,std::move(end)));
+        node->text+=" abstract";
+    }else node->add(block());finish(*node);
     return node;
 }
 NodePtr Parser::interface_declaration(bool pub){
+    if(block_depth_ || function_depth_)fail(peek(),"interface requires module scope","E2002");
     auto token=expect(K::Interface,"expected interface"),name=expect(K::Identifier,"expected interface name");auto node=make(N::Interface,token,name.text+(pub?" pub":""));
     expect(K::LBrace,"expected { before interface methods");newlines();
     while(!at(K::RBrace)&&!at(K::End)){bool mut=at(K::Identifier)&&peek().text=="mut";if(mut)take();auto method=function(pub,false,true);method->text=name.text+"."+method->text+(mut?" mutreceiver":"");node->add(std::move(method));statement_end();}
     expect(K::RBrace,"expected } after interface");finish(*node);return node;
 }
 NodePtr Parser::enum_declaration(bool pub){
+    if(block_depth_ || function_depth_)fail(peek(),"enum requires module scope","E2002");
     auto token=expect(K::Enum,"expected enum"),name=expect(K::Identifier,"expected enum name");auto node=make(N::Enum,token,name.text+(pub?" pub":""));expect(K::LBrace,"expected { before variants");newlines();
     while(!at(K::RBrace)&&!at(K::End)){auto variant=expect(K::Identifier,"expected variant name");auto entry=make(N::Variant,variant,variant.text);if(accept(K::LParen)){newlines();if(!at(K::RParen))do{entry->add(type());newlines();}while(accept(K::Comma));expect(K::RParen,"expected ) after variant payload");}finish(*entry);node->add(std::move(entry));if(!accept(K::Comma))statement_end();newlines();}
     expect(K::RBrace,"expected } after enum");finish(*node);return node;
@@ -281,6 +289,7 @@ NodePtr Parser::structure(bool is_public) {
 NodePtr Parser::block() {
     Depth depth(depth_, peek().span);
     auto node = make(N::Block, expect(K::LBrace, "expected { to start block"));
+    Restore scope(block_depth_, block_depth_ + 1);
     newlines();
     while (!at(K::RBrace) && !at(K::End)) node->add(statement());
     expect(K::RBrace, "expected } to close block"); finish(*node); return node;
@@ -338,7 +347,11 @@ NodePtr Parser::type() {
         take(); result = make(N::MutableType, token); result->add(type());
     } else if (accept(K::LBracket)) {
         if (at(K::Integer)) {
-            auto count = take(); result = make(N::ArrayType, token, count.text);
+            auto count = take();
+            if ((count.text.size() > 1 && count.text.front() == '0') ||
+                !std::all_of(count.text.begin(), count.text.end(), [](char c) { return c >= '0' && c <= '9'; }))
+                fail(count, "array length requires plain decimal digits without leading zeroes or separators", "E2006");
+            result = make(N::ArrayType, token, count.text);
         } else result = make(N::SliceType, token);
         expect(K::RBracket, "expected ] in array/slice type"); result->add(type());
     } else {
@@ -394,11 +407,13 @@ NodePtr Parser::primary(bool multiline) {
     case K::Identifier: {
         if(token.text=="map"&&at(K::LBracket)) {
             auto map=make(N::MapLiteral,token);auto t=make(N::GenericType,token,"map");take();t->add(type());expect(K::RBracket,"expected ] after map key type");t->add(type());finish(*t);map->add(std::move(t));
+            Restore header(in_header_, false);
             expect(K::LBrace,"expected { after map value type");newlines();
             if(!at(K::RBrace))do{auto entry=make(N::MapEntry,peek());entry->add(expression(2,true));expect(K::Colon,"expected : after map key");entry->add(expression(1,true));finish(*entry);map->add(std::move(entry));newlines();}while(accept(K::Comma));
             expect(K::RBrace,"expected } after map literal");finish(*map);return map;
         }
         if (!struct_literal_ahead()) return make(N::Name, token, token.text);
+        Restore header(in_header_, false);
         auto node = make(N::StructLiteral, token, token.text); take(); newlines();
         if (!at(K::RBrace)) {
             do {
@@ -418,6 +433,7 @@ NodePtr Parser::primary(bool multiline) {
         finish(*node); return node;
     }
     case K::LBracket: {
+        Restore header(in_header_, false);
         auto node = make(N::Array, token); newlines();
         if (!at(K::RBracket)) {
             do { node->add(expression(1, true)); newlines(); }
@@ -482,6 +498,7 @@ NodePtr Parser::postfix(NodePtr left, bool multiline) {
             if (name.empty()) fail(peek(), "struct initializer requires a qualified type name");
             auto node = std::make_unique<Node>(N::StructLiteral, left->span, name);
             if(left->kind==N::Specialize){auto types=std::make_unique<Node>(N::GenericType,left->span,name);for(std::size_t i=1;i<left->children.size();++i)types->add(std::move(left->children[i]));node->add(std::move(types));}
+            Restore header(in_header_, false);
             take(); newlines();
             if (!at(K::RBrace)) {
                 do {

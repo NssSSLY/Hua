@@ -1,3 +1,4 @@
+from process_guard import run as run_process, guarded_main
 """C05: Hua lowered core, independent host behavior, four component paths, publication."""
 from pathlib import Path
 import subprocess,sys,json,struct,shutil,re,importlib.util,copy,io,time
@@ -7,7 +8,7 @@ hua,probe,oracle,driver,repo,build=map(Path,sys.argv[1:])
 out=build/'c05';out.mkdir(exist_ok=True);work=out/'acceptance';work.mkdir(exist_ok=True)
 rows=[];checks=0
 def invoke(args,code=0,timeout=600):
-    p=subprocess.run(list(map(str,args)),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
+    p=run_process(list(map(str,args)),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
     assert p.returncode==code,(args,p.returncode,p.stdout[:1800],p.stderr)
     return p
 spec=importlib.util.spec_from_file_location('c05_runner',repo/'tools/hua_frontend.py')
@@ -196,7 +197,7 @@ for label,report in mutations:
     old.write_text('KEEP',encoding='utf-8')
     fake=subprocess.CompletedProcess([],0,json.dumps(report),'')
     with patch.object(runner.subprocess,'run',return_value=fake),redirect_stderr(io.StringIO()) as err:
-        rc=runner.main(['lower',str(a/'input.hua'),'-o',str(old),'--hua',str(hua)])
+        rc=guarded_main(runner,['lower',str(a/'input.hua'),'-o',str(old),'--hua',str(hua)])
     assert rc==3 and old.read_text()=='KEEP',(label,rc,err.getvalue())
     checks+=2
 # Source rejection / wrong CLI options also preserve the previous output.

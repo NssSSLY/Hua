@@ -446,7 +446,14 @@ fn compound_type(s mut State) Result<ast.NodeId> {
     } else if t.kind == "[" {
         take(s)?
         var payload = ast.Payload.SliceType()
-        if peek(s).kind == "integer" { payload = ast.Payload.ArrayType(take(s)?.text) }
+        if peek(s).kind == "integer" {
+            let count = take(s)?
+            let digits = unwrap(bytes.to_ints(bytes.from_text(count.text)))
+            var valid_count = !(len(digits) > 1 && digits[0] == 48)
+            for digit in digits { if digit < 48 || digit > 57 { valid_count = false } }
+            if !valid_count { return err(failure(count,"E2006","array length requires plain decimal digits without leading zeroes or separators")) }
+            payload = ast.Payload.ArrayType(count.text)
+        }
         expect(s,"]")?
         let child = compound_type(s)?
         result = node(s,payload,t.start,s.last_end,[child])?
@@ -499,6 +506,8 @@ fn struct_ahead(s State) bool {
     return s.data[i].kind == "identifier" && i+1 < len(s.data) && s.data[i+1].kind == ":"
 }
 fn array_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
+    let saved_header = s.header
+    s.header = false
     var empty []ast.NodeId = []
     var children = list.from_slice(empty)
     lines(s)?
@@ -509,9 +518,12 @@ fn array_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
             take(s)? }
     }
     let close = expect(s,"]")?
+    s.header = saved_header
     return node(s,ast.Payload.Array(),t.start,close.end,list.snapshot(children))
 }
 fn struct_literal(s mut State, start int, name string) Result<ast.NodeId> {
+    let saved_header = s.header
+    s.header = false
     expect(s,"{")?
     lines(s)?
     var empty []ast.NodeId = []
@@ -529,6 +541,7 @@ fn struct_literal(s mut State, start int, name string) Result<ast.NodeId> {
         }
     }
     let close = expect(s,"}")?
+    s.header = saved_header
     return node(s,ast.Payload.StructLiteral(name),start,close.end,list.snapshot(fields))
 }
 fn map_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
@@ -538,6 +551,8 @@ fn map_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
     let value = compound_type(s)?
     let typ = node(s,ast.Payload.GenericType("map"),t.start,s.last_end,[key,value])?
     var children = list.from_slice([typ])
+    let saved_header = s.header
+    s.header = false
     expect(s,"{")?
     lines(s)?
     if peek(s).kind != "}" {
@@ -553,6 +568,7 @@ fn map_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
         }
     }
     let close = expect(s,"}")?
+    s.header = saved_header
     return node(s,ast.Payload.MapLiteral(),t.start,close.end,list.snapshot(children))
 }
 fn dotted(s State, id ast.NodeId) string {
@@ -689,7 +705,7 @@ fn structure(s mut State, public bool) Result<ast.NodeId> {
 }
 fn enumeration(s mut State, public bool) Result<ast.NodeId> {
     let t = take(s)?
-    if s.blocks != 0 { return err(unsupported(t)) }
+    if s.blocks != 0 || s.functions != 0 { return err(failure(t,"E2002","enum requires module scope")) }
     let name = expect(s,"identifier")?
     expect(s,"{")?
     lines(s)?

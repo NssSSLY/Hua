@@ -140,7 +140,7 @@ fn main(){
     runtime_failure('var x i8=127\nx+=1\n',"E4002")
     runtime_failure('print(u8(-1))\n',"E4002")
     runtime_failure('var a [2]u8=[1,256]\n',"E4002")
-    runtime_failure('var a [3]int=[1,2]\n',"E4003")
+    invalid('var a [3]int=[1,2]\n',"E3004")
     runtime_failure('print(f32(1e300))\n',"E4002")
     runtime_failure('var x u8=1\nx=x<<8\n',"E4005")
     triple('@doc(" pub unsafe external")\n@deprecated("message")\nfn ordinary() int{return 3}\nprint(ordinary())\n',"3\n")

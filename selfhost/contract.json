@@ -234,11 +234,28 @@
       "const folding",
       "unannotated value-returning functions",
       "incomplete inferred binding types",
-      "non-decimal fixed array size",
       "interfaces/methods/user generics/async/unsafe/FFI",
       "non-decimal or out-of-signed64 integer match patterns"
     ],
-    "artifact": "typed facts consumed by C05-L1 / C06-BC1 / C07-HUAB1"
+    "artifact": "typed facts consumed by C05-L1 / C06-BC1 / C07-HUAB1",
+    "array_extent": "Source grammar: 0 or [1-9][0-9]* only; no leading zeroes, separators or base prefixes. Legacy valid HUAB metadata is reader-only compatibility; extent 0..1000000.",
+    "void_contexts": {
+      "permitted": [
+        "single no-value function return",
+        "Result success type",
+        "Task success type in production; Task remains outside T1"
+      ],
+      "rejected": [
+        "ordinary binding",
+        "parameter",
+        "struct field",
+        "array/Slice/List/map element",
+        "Optional<void>",
+        "multi value"
+      ],
+      "old_legal_huab": "reader 1-8 and ABI1 retained; malformed metadata E6002"
+    },
+    "literal_contexts": "numeric literals preserve explicit target context through Optional and Result<Optional>; dynamic narrowing/category conversion stays explicit"
   },
   "lowering": {
     "profile": "C05-L1",

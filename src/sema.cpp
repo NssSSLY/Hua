@@ -63,7 +63,9 @@ void SemanticAnalyzer::define(const std::string& name,Symbol symbol,const Source
     if(symbol.declared.empty())symbol.declared=symbol.type;
     if(!scopes_.back().emplace(name,std::move(symbol)).second)throw Diagnostic("E3002",span,"duplicate declaration `"+name+"` in this scope");
 }
-void SemanticAnalyzer::validate_type(const Node& n) {
+void SemanticAnalyzer::validate_type(const Node& n,bool allow_void) {
+    if(n.kind==N::TypeName&&n.text=="void"&&!allow_void)error(n,"void is only a no-value function/Result/Task success type","E3004");
+    if(n.kind==N::ArrayType){auto count=fixed_extent(n.text);if(!count||*count>1000000)error(n,"fixed array size must be an integer literal in 0..1000000","E3004");}
     static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","std.file.File","std.file.IOFailure","Json","Bytes","Buffer","Task"};
     if(n.kind==N::TypeName&&n.text.empty())return;
     if(n.kind==N::TypeName && !types.contains(n.text) && !model_.structures.contains(n.text)) {
@@ -79,11 +81,12 @@ void SemanticAnalyzer::validate_type(const Node& n) {
     }
     if(n.kind==N::GenericType && n.text=="Result"&&n.children.size()>1&&type_name(*n.children[1])=="void")error(n,"Result error type cannot be void","E3004");
     if(n.kind==N::OptionalType && type_name(*n.children[0]).starts_with("Result<"))error(n,"Optional<Result> is not supported; use Result<T?>","E3004");
-    for(const auto& c:n.children)validate_type(*c);
+    for(std::size_t i=0;i<n.children.size();++i)validate_type(*n.children[i],n.kind==N::GenericType&&(n.text=="Result"||n.text=="Task")&&i==0);
 }
 void SemanticAnalyzer::require(const std::string& expected,const Info& actual,const Node& n) {
+    if(expected.ends_with('?')&&actual.type!="nil"&&!actual.type.ends_with('?')){require(expected.substr(0,expected.size()-1),actual,n);return;}
     if(numeric_spec(expected)&&numeric_spec(actual.type)&&numeric_literal(n)&&(numeric_spec(expected)->category=='f'||numeric_spec(actual.type)->category!='f'))return;
-    if(expected.starts_with('[')&&n.kind==N::Array){auto close=expected.find(']');if(close==std::string::npos)error(n,"invalid array type","E3004");auto element=expected.substr(close+1);for(const auto& c:n.children)require(element,{model_.types.at(c.get()),model_.writable.at(c.get())},*c);return;}
+    if(expected.starts_with('[')&&n.kind==N::Array){auto close=expected.find(']');if(close==std::string::npos)error(n,"invalid array type","E3004");auto count=fixed_extent(expected.substr(1,close-1));if(close>1&&(!count||*count!=n.children.size()))error(n,"fixed array length mismatch","E3004");auto element=expected.substr(close+1);for(const auto& c:n.children)require(element,{model_.types.at(c.get()),model_.writable.at(c.get())},*c);return;}
     if(expected=="float" && actual.type=="int" && numeric_literal(n))return;
     auto es=type_arguments(expected,"Result"),as=type_arguments(actual.type,"Result");
     if(as.size()==2&&as[0]=="void"&&as[1].empty()&&n.kind==N::Call&&n.children.size()==1){if(es.size()!=2||es[0]!="void"||es[1].empty())error(n,"ok() requires an explicit Result<void,E> context","E3004");model_.types[&n]=expected;return;}
@@ -176,12 +179,12 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
     std::function<void(const Node&)> collect_nested=[&](const Node& n){for(const auto& c:n.children){if(c->kind==N::Function){model_.functions.emplace(declared_name(*c),c.get());model_.nested[c.get()]=true;}collect_nested(*c);}};for(const auto& n:program.children)if(n->kind==N::Function)collect_nested(*n);
     for(const auto& [name,structure]:model_.structures) {
         std::unordered_set<std::string> fields;
-        for(const auto& f:structure->children){if(!fields.insert(f->text).second)error(*f,"duplicate struct field `"+f->text+"`","E3002");validate_type(*f->children[0]);}
+        for(const auto& f:structure->children){if(!fields.insert(f->text).second)error(*f,"duplicate struct field `"+f->text+"`","E3002");validate_type(*f->children[0],f->text.starts_with("$")&&f->text.ends_with("#void"));}
     }
     for(const auto& [name,fn]:model_.functions) {
         if(auto dot=name.find('.');dot!=std::string::npos && !model_.structures.contains(name.substr(0,dot)))error(*fn,"method owner is not a declared struct","E3004");
         for(const auto& p:parameters(*fn))if(!p->children.empty())validate_type(*p->children[0]);
-        for(const auto& c:fn->children)if(c->kind==N::ReturnTypes)for(const auto& t:c->children)validate_type(*t);
+        for(const auto& c:fn->children)if(c->kind==N::ReturnTypes)for(const auto& t:c->children)validate_type(*t,c->children.size()==1);
     }
     infer_mutating_methods();infer_return_capabilities();model_.relations=interface_relations(model_);TypeRelationScope relation_scope(model_.relations);
     for(const auto& n:program.children)if(n->kind!=N::Function && n->kind!=N::Struct)statement(*n);
@@ -338,7 +341,7 @@ void SemanticAnalyzer::statement(const Node& n) {
         for(std::size_t i=2;i<scopes_.size();++i)for(auto& [_,symbol]:scopes_[i]){symbol.mutable_binding=false;symbol.writable=false;}
         scopes_.emplace_back();
         for(const auto* p:parameters(n)){if(!p->children.empty())validate_type(*p->children[0]);define(declared_name(*p),{p->children.empty()?"":type_name(*p->children[0]),false,mutable_parameter(*p),{}},p->span);}
-        for(const auto& c:n.children)if(c->kind==N::ReturnTypes)for(const auto& t:c->children)validate_type(*t);
+        for(const auto& c:n.children)if(c->kind==N::ReturnTypes)for(const auto& t:c->children)validate_type(*t,c->children.size()==1);
         statements(*n.children.back(),false);
         auto result=result_type(n);if(!result.empty()&&result!="void"&&!result.ends_with('?')&&!definitely_returns(*n.children.back()))error(n,"typed function may reach its end without returning a value","E3006");
         scopes_=std::move(saved);current_function_=outer;break;

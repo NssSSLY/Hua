@@ -52,9 +52,7 @@ fn valid_type(c Catalog, t string, depth int) bool {
         let end = strings.index(t,"]")
         if end<1 { return false }
         let raw = rules.cut(t,1,end)
-        let count = strings.replace(raw,"_","")
-        if len(raw)>0 && len(count)==0 { return false }
-        for i in 0..len(count) { if !strings.contains("0123456789",rules.cut(count,i,i+1)) { return false } }
+        if len(raw)>0 && is_err(rules.extent(raw)) { return false }
         return valid_type(c,rules.cut(t,end+1,len(t)),depth+1)
     }
     for name in ["Result","List","map","multi"] {
@@ -94,6 +92,7 @@ fn metadata(image bc.Image, c Catalog, code bc.Code, returns []string) Result<vo
         let e = error(image,op,"invalid metadata")
         if op.op<0 || op.op>40 || op.op==31 || op.op==39 { return err(error(image,op,"unsupported/unknown opcode")) }
         if op.site<0 || op.site>=list.len(image.sites) || op.argument<0 || op.argument>4096 || op.target<0 || !small(op.text,true) || !(op.op==27 && op.type_name=="E4002") && !valid_type(c,op.type_name,0) || !scalar(op.constant) || len(op.names)>4096 || len(op.contextual)>4096 { return err(e) }
+        if !rules.value_type_allowed(op.type_name,op.op != 2 && op.op != 35) { return err(e) }
         if op.op!=0 && (op.constant.kind!=0 || op.constant.text!="") { return err(error(image,op,"constant on non-constant instruction")) }
         for n in op.names { if !small(n,false) { return err(e) } }
         if alg.contains([6,7,8,25],op.op) && op.target>=size { return err(error(image,op,"jump target out of bounds")) }
@@ -258,17 +257,17 @@ pub fn verify(image bc.Image) Result<Verification> {
     for st in list.snapshot(image.structures) {
         var names = map[string]bool{}
         for field in st.fields {
-            if !small(field.name,false) || has(names,field.name) || !valid_type(c,field.type_name,0) || field.site<0 || field.site>=list.len(image.sites) { return err("E6002@1:1 C06 invalid field metadata") }
+            if !small(field.name,false) || has(names,field.name) || !valid_type(c,field.type_name,0) || !rules.value_type_allowed(field.type_name,strings.starts_with(field.name,"$") && strings.ends_with(field.name,"#void")) || field.site<0 || field.site>=list.len(image.sites) { return err("E6002@1:1 C06 invalid field metadata") }
             names[field.name] = true
         }
     }
     for f in list.snapshot(image.functions) {
         var names = map[string]bool{}
         for p in f.parameters {
-            if !small(p.name,false) || has(names,p.name) || !valid_type(c,p.type_name,0) || p.site<0 || p.site>=list.len(image.sites) { return err("E6002@1:1 C06 invalid parameter metadata") }
+            if !small(p.name,false) || has(names,p.name) || !valid_type(c,p.type_name,0) || !rules.value_type_allowed(p.type_name,false) || p.site<0 || p.site>=list.len(image.sites) { return err("E6002@1:1 C06 invalid parameter metadata") }
             names[p.name] = true
         }
-        for t in f.returns { if !valid_type(c,t,0) { return err("E6002@1:1 C06 invalid return metadata") } }
+        for t in f.returns { if !valid_type(c,t,0) || !rules.value_type_allowed(t,len(f.returns)==1) { return err("E6002@1:1 C06 invalid return metadata") } }
         if f.name=="main" && len(f.parameters)!=0 { return err("E6002@1:1 C06 main requires zero parameters") }
     }
     for op in list.snapshot(image.initializer.instructions) {

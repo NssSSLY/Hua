@@ -435,5 +435,58 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/selfhost_archive_tests.py $<TARGET_FILE:hua>
         $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_instruction_driver>
         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(selfhost_archive PROPERTIES TIMEOUT 2400)
+    set_tests_properties(selfhost_archive PROPERTIES TIMEOUT 900)
+endif()
+
+# A02 numeric/type/binding boundaries, independent Hua analysis and legacy HUAB.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME type_contract COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/a02_type_contract_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_subset_probe> $<TARGET_FILE:hua_parser_oracle>
+        $<TARGET_FILE:hua_instruction_driver> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(type_contract PROPERTIES TIMEOUT 900)
+endif()
+
+# Array sizes have one source spelling; legacy archive spelling stays reader-compatible.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME array_size_syntax COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/array_size_syntax_tests.py $<TARGET_FILE:hua>
+        $<TARGET_FILE:hua_parser_oracle> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(array_size_syntax PROPERTIES TIMEOUT 120)
+endif()
+
+# A03 basic syntax stage: only native parsing and static checking, never VM execution.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME container_syntax COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/container_syntax_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(container_syntax PROPERTIES TIMEOUT 60 LABELS "frontend-only")
+endif()
+
+# A04 scope/call/return/loop-exit gate: source parser and static analysis only.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME function_control_syntax COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/function_control_syntax_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(function_control_syntax PROPERTIES TIMEOUT 60 LABELS "frontend-only")
+endif()
+
+# A03/A04 execution gates: bounded local programs across AST, VM and source-free HUAB.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME container_execution COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/container_control_execution_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} --section a03)
+    add_test(NAME control_cleanup_execution COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/container_control_execution_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} --section a04)
+    set_tests_properties(container_execution control_cleanup_execution PROPERTIES TIMEOUT 240 LABELS "execution-contract")
+endif()
+if(BUILD_TESTING)
+    add_executable(hua_container_limits_tests tests/container_limits_tests.cpp)
+    target_link_libraries(hua_container_limits_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_container_limits_tests PRIVATE -static)
+    endif()
+    add_test(NAME container_limits COMMAND hua_container_limits_tests)
+    set_tests_properties(container_limits PROPERTIES TIMEOUT 10 LABELS "execution-contract")
 endif()

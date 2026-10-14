@@ -70,7 +70,11 @@ pub fn type_text(c lower.Core, id int) string {
     let n = get(c,id)
     if n.kind=="MutableType" { return type_text(c,n.children[0]) }
     if n.kind=="SliceType" { return "[]"+type_text(c,n.children[0]) }
-    if n.kind=="ArrayType" { return "["+n.text+"]"+type_text(c,n.children[0]) }
+    if n.kind=="ArrayType" {
+        let count = rules.extent(n.text)
+        if is_err(count) { return "["+n.text+"]"+type_text(c,n.children[0]) }
+        return "["+str(unwrap(count))+"]"+type_text(c,n.children[0])
+    }
     if n.kind=="OptionalType" { return type_text(c,n.children[0])+"?" }
     if n.kind=="GenericType" {
         var result = n.text+"<"

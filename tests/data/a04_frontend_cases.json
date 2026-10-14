@@ -1,0 +1,547 @@
+{
+  "scope": "native source parsing/static analysis only",
+  "cases": [
+    {
+      "id": "shadow_block",
+      "source": "fn f() int { let x=1\n{ let x=2 }\nreturn x }",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "name_escape",
+      "source": "fn f() int { { let x=1 }\nreturn x }",
+      "parse_error": null,
+      "check_error": "E3001"
+    },
+    {
+      "id": "use_before_local",
+      "source": "fn f() int { let x=y\nlet y=1\nreturn x }",
+      "parse_error": null,
+      "check_error": "E3001"
+    },
+    {
+      "id": "duplicate_parameter",
+      "source": "fn f(x int,x int) int {return x}",
+      "parse_error": null,
+      "check_error": "E3002"
+    },
+    {
+      "id": "parameter_body_duplicate",
+      "source": "fn f(x int) int {let x=2\nreturn x}",
+      "parse_error": null,
+      "check_error": "E3002"
+    },
+    {
+      "id": "body_shadow_parameter",
+      "source": "fn f(x int) int {{let x=2}\nreturn x}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "recursive",
+      "source": "fn f(x int) int {if x==0 {return 0}\nreturn f(x-1)}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "forward_global",
+      "source": "fn a() int {return b()}\nfn b() int {return 1}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "forward_local",
+      "source": "fn f() int {let x=g()\nfn g() int {return 1}\nreturn x}",
+      "parse_error": null,
+      "check_error": "E3001"
+    },
+    {
+      "id": "fn_value",
+      "source": "fn f(x int) int {return x}\nlet g=f\nlet x=g(1)",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "arg_count",
+      "source": "fn f(x int) int {return x}\nlet x=f()",
+      "parse_error": null,
+      "check_error": "E3005"
+    },
+    {
+      "id": "arg_type",
+      "source": "fn f(x int) int {return x}\nlet x=f(true)",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "non_callable",
+      "source": "let f=1\nf()",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "missing_return",
+      "source": "fn f(x bool) int {if x {return 1}}",
+      "parse_error": null,
+      "check_error": "E3006"
+    },
+    {
+      "id": "complete_returns",
+      "source": "fn f(x bool) int {if x {return 1} else {return 2}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "nested_does_not_return_outer",
+      "source": "fn f() int {fn g() int {return 1}}",
+      "parse_error": null,
+      "check_error": "E3006"
+    },
+    {
+      "id": "optional_fallthrough",
+      "source": "fn f(x bool) int? {if x {return 1}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "wrong_return_type",
+      "source": "fn f() int {return true}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "wrong_return_count",
+      "source": "fn f() int {return 1,2}",
+      "parse_error": null,
+      "check_error": "E3006"
+    },
+    {
+      "id": "void_return",
+      "source": "fn f() void {return}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "void_value",
+      "source": "fn f() void {return 1}",
+      "parse_error": null,
+      "check_error": "E3006"
+    },
+    {
+      "id": "multi_forward",
+      "source": "fn pair() (int,int) {return 1,2}\nfn f() (int,int) {return pair()}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "multi_forward_wrong",
+      "source": "fn one() int {return 1}\nfn f() (int,int) {return one()}",
+      "parse_error": null,
+      "check_error": "E3006"
+    },
+    {
+      "id": "continue_nested_fn",
+      "source": "while true {fn f() {continue}}",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    },
+    {
+      "id": "break_nested_fn",
+      "source": "for i in 0..1 {fn f() {break}}",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    },
+    {
+      "id": "inner_fn_loop",
+      "source": "while true {fn f() {while true {break}}\nbreak}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "loop_binding_escape",
+      "source": "for i in 0..1 {}\nprint(i)",
+      "parse_error": null,
+      "check_error": "E3001"
+    },
+    {
+      "id": "loop_binding_readonly",
+      "source": "for i in 0..1 {i=2}",
+      "parse_error": null,
+      "check_error": "E3003"
+    },
+    {
+      "id": "loop_binding_duplicate",
+      "source": "for i in 0..1 {let i=2}",
+      "parse_error": null,
+      "check_error": "E3002"
+    },
+    {
+      "id": "loop_block_shadow",
+      "source": "for i in 0..1 {{let i=2}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "break_tail",
+      "source": "while true {break 1}",
+      "parse_error": "E2003",
+      "check_error": "E2003"
+    },
+    {
+      "id": "return_top",
+      "source": "return 1",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    },
+    {
+      "id": "defer_top",
+      "source": "defer print(1)",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    },
+    {
+      "id": "defer_noncall",
+      "source": "fn f() {defer 1}",
+      "parse_error": "E2002",
+      "check_error": "E2002"
+    },
+    {
+      "id": "dead_code_checked",
+      "source": "fn f() int {return 1\nprint(missing)}",
+      "parse_error": null,
+      "check_error": "E3001"
+    },
+    {
+      "id": "narrow_break",
+      "source": "fn f(x int?) {while true {if x==nil {break}\nprint(x+1)}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "narrow_continue",
+      "source": "fn f(x int?) {while true {if x==nil {continue}\nprint(x+1)}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "nested_break_narrow",
+      "source": "fn f(x int?) {while x!=nil {while true {break}}\nlet y int=x}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "block_after_break",
+      "source": "fn f(x int?) {while true {if x==nil {break\nreturn}\nprint(x+1)}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "empty_return_multiline",
+      "source": "fn f() int {return\n1}",
+      "parse_error": null,
+      "check_error": "E3006"
+    },
+    {
+      "id": "typed_function_alias",
+      "source": "fn f() int{return 1}\nlet g=f\nlet n=g(1)",
+      "parse_error": null,
+      "check_error": "E3005"
+    },
+    {
+      "id": "mut_binding",
+      "source": "fn f(x mut []int) {x=[1]}",
+      "parse_error": null,
+      "check_error": "E3003"
+    },
+    {
+      "id": "mut_readonly_argument",
+      "source": "fn f(x mut []int) {}\nlet x=[1]\nf(x)",
+      "parse_error": null,
+      "check_error": "E3003"
+    },
+    {
+      "id": "nested_return_restored",
+      "source": "fn f() int {fn g() bool {return true}\nreturn 1}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "nested_void_outer_type",
+      "source": "fn f() int {fn g() {}\nreturn true}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "sibling_local_fn",
+      "source": "fn a() int {fn value() int{return 1}\nreturn value()}\nfn b() bool {fn value() bool{return true}\nreturn value()}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "function_scope_outside",
+      "source": "fn a() {fn local(){}}\nfn b(){local()}",
+      "parse_error": null,
+      "check_error": "E3001"
+    },
+    {
+      "id": "callee_shadow",
+      "source": "fn f() int{return 1}\nfn g(){let f=1\nf()}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "function_declaration_shadow",
+      "source": "fn f(x int) int{return x}\nfn g() int {fn f() int{return 1}\nreturn f()}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "block_fn_shadow_restore",
+      "source": "fn f(x int) int{return x}\nfn g() int {{fn f() bool{return true}\nlet n=f()}\nreturn f(1)}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "if_nonbool",
+      "source": "if 1 {}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "while_nonbool",
+      "source": "while 1 {}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "for_noniterable",
+      "source": "for i in 1 {}",
+      "parse_error": null,
+      "check_error": "E3004"
+    },
+    {
+      "id": "loop_duplicate_names",
+      "source": "for i,i in [1] {}",
+      "parse_error": null,
+      "check_error": "E3002"
+    },
+    {
+      "id": "block_nested_continue",
+      "source": "while true {{continue}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "function_enum",
+      "source": "fn outer() {enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "function_public_enum",
+      "source": "fn outer() {pub enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "function_interface",
+      "source": "fn outer() {interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "function_public_interface",
+      "source": "fn outer() {pub interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "block_enum",
+      "source": "{enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "block_public_enum",
+      "source": "{pub enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "block_interface",
+      "source": "{interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "block_public_interface",
+      "source": "{pub interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "if_enum",
+      "source": "if false {enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "if_public_enum",
+      "source": "if false {pub enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "if_interface",
+      "source": "if false {interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "if_public_interface",
+      "source": "if false {pub interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "while_enum",
+      "source": "while false {enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "while_public_enum",
+      "source": "while false {pub enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "while_interface",
+      "source": "while false {interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "while_public_interface",
+      "source": "while false {pub interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "for_enum",
+      "source": "for i in 0..1 {enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "for_public_enum",
+      "source": "for i in 0..1 {pub enum E{A}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "enum"
+    },
+    {
+      "id": "for_interface",
+      "source": "for i in 0..1 {interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "for_public_interface",
+      "source": "for i in 0..1 {pub interface I{fn value() int}}",
+      "parse_error": "E2002",
+      "check_error": "E2002",
+      "error_token": "interface"
+    },
+    {
+      "id": "module_declaration_after_function",
+      "source": "fn outer() {}\npub enum E{A}\npub interface I{fn value() int}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "module_declaration_after_block",
+      "source": "{}\nenum E{A}\ninterface I{fn value() int}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "module_declaration_after_loop",
+      "source": "while false {}\nenum E{A}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "local_struct_function_kept",
+      "source": "fn outer() {struct Local{x int}\nfn inner(){while true {continue}}}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "function_alias_return_context",
+      "source": "fn f(x int) int{return x}\nfn g() int {let alias=f\nreturn alias(1)}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "unannotated_callee_deferred",
+      "source": "fn apply(f,x) {return f(x)}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "nested_loop_scope_restored",
+      "source": "fn f(){for i in 0..1 {fn inner(){while true{break}}\ncontinue}\nreturn}",
+      "parse_error": null,
+      "check_error": null
+    },
+    {
+      "id": "outer_local_capture_readonly",
+      "source": "fn f(){var x=1\nfn g(){x=2}}",
+      "parse_error": null,
+      "check_error": "E3003"
+    },
+    {
+      "id": "parameter_rebind",
+      "source": "fn f(x int){x=2}",
+      "parse_error": null,
+      "check_error": "E3003"
+    },
+    {
+      "id": "bare_break_after_function",
+      "source": "fn f(){while true{break}}\nbreak",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    },
+    {
+      "id": "bare_continue_after_loop",
+      "source": "while false{}\ncontinue",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    },
+    {
+      "id": "bare_return_after_function",
+      "source": "fn f(){return}\nreturn",
+      "parse_error": "E2004",
+      "check_error": "E2004"
+    }
+  ]
+}

@@ -1,0 +1,425 @@
+[
+  {
+    "name": "module_scope_not_caller",
+    "source": "var value=1\nfn get() int{return value}\nfn main(){let value=9\nprint(get(),value)}\n",
+    "phase": "ok",
+    "want": "1 9\n",
+    "tag": "scope"
+  },
+  {
+    "name": "module_function_forward",
+    "source": "fn main(){print(later(4))}\nfn later(x int) int{return x+1}\n",
+    "phase": "ok",
+    "want": "5\n",
+    "tag": "scope"
+  },
+  {
+    "name": "global_read_before_initialization",
+    "source": "let before=read()\nvar later=9\nfn read() int{return later}\n",
+    "phase": "run",
+    "want": "E4001",
+    "tag": "scope",
+    "stdout": ""
+  },
+  {
+    "name": "nested_shadow_restoration",
+    "source": "fn main(){let x=1\n{let x=2\nprint(x)\n{let x=3\nprint(x)}\nprint(x)}\nprint(x)}\n",
+    "phase": "ok",
+    "want": "2\n3\n2\n1\n",
+    "tag": "scope"
+  },
+  {
+    "name": "local_structure_execution",
+    "source": "fn make(){struct Box{value int}\nvar box=Box{value:3}\nvar other=box\nother.value=8\nprint(box.value,other.value)\nreturn other}\nfn main(){let box=make()\nprint(box.value)}\n",
+    "phase": "ok",
+    "want": "3 8\n8\n",
+    "tag": "scope"
+  },
+  {
+    "name": "call_arguments_left_to_right",
+    "source": "fn mark(x int) int{print(\"arg\",x)\nreturn x}\nfn pair(a int,b int) int{return a*10+b}\nfn main(){print(pair(mark(1),mark(2)))}\n",
+    "phase": "ok",
+    "want": "arg 1\narg 2\n12\n",
+    "tag": "call"
+  },
+  {
+    "name": "ordinary_struct_parameter_copy",
+    "source": "struct Box{value int}\nfn edit(value Box) int{var local=value\nlocal.value=9\nreturn local.value}\nfn main(){var source=Box{value:1}\nprint(edit(source),source.value)}\n",
+    "phase": "ok",
+    "want": "9 1\n",
+    "tag": "call"
+  },
+  {
+    "name": "dynamic_call_not_callable",
+    "source": "fn invoke(action){defer print(\"cleanup\")\naction()}\nfn main(){invoke(1)}\n",
+    "phase": "run",
+    "want": "E4003",
+    "tag": "call",
+    "stdout": "cleanup\n"
+  },
+  {
+    "name": "dynamic_call_wrong_arity",
+    "source": "fn invoke(action){defer print(\"cleanup\")\naction()}\nfn target(x int) int{return x}\nfn main(){invoke(target)}\n",
+    "phase": "run",
+    "want": "E4003",
+    "tag": "call",
+    "stdout": "cleanup\n"
+  },
+  {
+    "name": "dynamic_argument_type_failure",
+    "source": "fn source(){return \"bad\"}\nfn take(x int) int{return x}\nfn main(){defer print(\"cleanup\")\nprint(take(source()))}\n",
+    "phase": "run",
+    "want": "E4003",
+    "tag": "call",
+    "stdout": "cleanup\n"
+  },
+  {
+    "name": "recursive_frame_returns",
+    "source": "fn factorial(n int) int{if n==0{return 1}\nreturn n*factorial(n-1)}\nfn main(){print(factorial(5))}\n",
+    "phase": "ok",
+    "want": "120\n",
+    "tag": "return"
+  },
+  {
+    "name": "void_and_optional_fallthrough",
+    "source": "fn nothing(){defer print(\"void\")\nreturn}\nfn maybe(flag bool) int?{defer print(\"optional\")\nif flag{return 7}}\nfn main(){nothing()\nprint(maybe(false),maybe(true))}\n",
+    "phase": "ok",
+    "want": "void\noptional\noptional\nnil 7\n",
+    "tag": "return"
+  },
+  {
+    "name": "multi_forward_cleanup",
+    "source": "fn pair()(int,int){defer print(\"pair\")\nreturn 2,3}\nfn forward()(int,int){defer print(\"forward\")\nreturn pair()}\nfn main(){let first,second=forward()\nprint(first,second)}\n",
+    "phase": "ok",
+    "want": "pair\nforward\n2 3\n",
+    "tag": "return"
+  },
+  {
+    "name": "return_struct_snapshot_before_defer",
+    "source": "struct Box{value int}\nvar current=Box{value:1}\nfn replace(){current.value=2}\nfn take() Box{defer replace()\nreturn current}\nfn main(){let saved=take()\nprint(saved.value,current.value)}\n",
+    "phase": "ok",
+    "want": "1 2\n",
+    "tag": "return",
+    "note": "Return复制值字段发生在退出清理之前；既有struct值复制合同。"
+  },
+  {
+    "name": "return_fixed_array_snapshot_before_defer",
+    "source": "var current [1]int=[1]\nfn replace(){current[0]=2}\nfn take() [1]int{defer replace()\nreturn current}\nfn main(){let saved=take()\nprint(saved[0],current[0])}\n",
+    "phase": "ok",
+    "want": "1 2\n",
+    "tag": "return",
+    "note": "固定数组为值复制，不能在defer后才冻结返回值。"
+  },
+  {
+    "name": "return_slice_keeps_shared_storage",
+    "source": "var current []int=[1]\nfn replace(){current[0]=2}\nfn take() []int{defer replace()\nreturn current}\nfn main(){let saved=take()\nprint(saved[0],current[0])}\n",
+    "phase": "ok",
+    "want": "2 2\n",
+    "tag": "return",
+    "note": "Slice复制view，保留底层共享；与struct/固定数组值字段快照区分。"
+  },
+  {
+    "name": "closure_scalar_snapshot_and_global",
+    "source": "var global=10\nfn outer(){var local=3\nfn captured() int{return local+global}\nlocal=9\nreturn captured}\nfn main(){let callback=outer()\nglobal=20\nprint(callback())}\n",
+    "phase": "ok",
+    "want": "23\n",
+    "tag": "closure"
+  },
+  {
+    "name": "closure_struct_snapshot",
+    "source": "struct Box{value int}\nfn outer(){var box=Box{value:1}\nfn captured() int{return box.value}\nbox.value=9\nreturn captured}\nfn main(){let callback=outer()\nprint(callback())}\n",
+    "phase": "ok",
+    "want": "1\n",
+    "tag": "closure"
+  },
+  {
+    "name": "closure_slice_shared_readonly_view",
+    "source": "fn outer(){var source=[1]\nfn captured() int{return source[0]}\nsource[0]=9\nreturn captured}\nfn main(){let callback=outer()\nprint(callback())}\n",
+    "phase": "ok",
+    "want": "9\n",
+    "tag": "closure"
+  },
+  {
+    "name": "escaped_recursive_closure",
+    "source": "fn outer(){let base=3\nfn recurse(n int) int{if n==0{return base}\nreturn recurse(n-1)+1}\nreturn recurse}\nfn main(){let callback=outer()\nprint(callback(4))}\n",
+    "phase": "ok",
+    "want": "7\n",
+    "tag": "closure"
+  },
+  {
+    "name": "escaped_closure_does_not_repeat_outer_cleanup",
+    "source": "fn outer(){let value=4\ndefer print(\"outer\")\nfn callback(){print(\"callback\",value)}\nreturn callback}\nfn main(){let callback=outer()\nprint(\"after\")\ncallback()\ncallback()}\n",
+    "phase": "ok",
+    "want": "outer\nafter\ncallback 4\ncallback 4\n",
+    "tag": "closure"
+  },
+  {
+    "name": "while_break_continue_lexical_cleanup",
+    "source": "fn main(){defer print(\"function\")\nvar index=0\nwhile index<3{index+=1\ndefer print(\"iteration\",index)\n{defer print(\"nested\",index)\nif index==1{continue}\nif index==2{break}}\nprint(\"BAD\")}\nprint(\"after\",index)}\n",
+    "phase": "ok",
+    "want": "nested 1\niteration 1\nnested 2\niteration 2\nafter 2\nfunction\n",
+    "tag": "loop"
+  },
+  {
+    "name": "for_iteration_cleanup_and_nearest_break",
+    "source": "fn main(){for outer in 0..2{defer print(\"outer\",outer)\nfor inner in 0..3{defer print(\"inner\",outer,inner)\nif inner==0{continue}\nbreak}\nprint(\"body\",outer)}}\n",
+    "phase": "ok",
+    "want": "inner 0 0\ninner 0 1\nbody 0\nouter 0\ninner 1 0\ninner 1 1\nbody 1\nouter 1\n",
+    "tag": "loop"
+  },
+  {
+    "name": "return_from_nested_loop_cleans_all_scopes",
+    "source": "fn choose() int{defer print(\"function\")\nfor index in 0..2{defer print(\"iteration\",index)\n{defer print(\"nested\")\nreturn index}}\nreturn 9}\nfn main(){print(choose())}\n",
+    "phase": "ok",
+    "want": "nested\niteration 0\nfunction\n0\n",
+    "tag": "loop"
+  },
+  {
+    "name": "short_circuit_skips_failure_and_side_effect",
+    "source": "fn broken() bool{print(\"BAD\")\nreturn (1//0)==0}\nfn main(){print(false&&broken(),true||broken())}\n",
+    "phase": "ok",
+    "want": "false true\n",
+    "tag": "short-circuit"
+  },
+  {
+    "name": "short_circuit_required_branch_order",
+    "source": "fn mark(value bool) bool{print(\"right\",value)\nreturn value}\nfn main(){print(true&&mark(false),false||mark(true))}\n",
+    "phase": "ok",
+    "want": "right false\nright true\nfalse true\n",
+    "tag": "short-circuit"
+  },
+  {
+    "name": "defer_lexical_block_lifo",
+    "source": "fn main(){defer print(\"function first\")\n{defer print(\"block first\")\ndefer print(\"block last\")\nprint(\"inside\")}\nprint(\"after block\")\ndefer print(\"function last\")}\n",
+    "phase": "ok",
+    "want": "inside\nblock last\nblock first\nafter block\nfunction last\nfunction first\n",
+    "tag": "defer"
+  },
+  {
+    "name": "defer_callee_and_arguments_evaluated_at_registration",
+    "source": "fn finish(value int){print(\"finish\",value)}\nfn callee(){print(\"callee\")\nreturn finish}\nfn argument() int{print(\"argument\")\nreturn 7}\nfn main(){defer callee()(argument())\nprint(\"body\")}\n",
+    "phase": "ok",
+    "want": "callee\nargument\nbody\nfinish 7\n",
+    "tag": "defer"
+  },
+  {
+    "name": "defer_scalar_and_struct_capture",
+    "source": "struct Box{value int}\nfn show(value Box){print(\"box\",value.value)}\nfn main(){var scalar=1\nvar box=Box{value:2}\ndefer print(\"scalar\",scalar)\ndefer show(box)\nscalar=8\nbox.value=9\nprint(\"body\",scalar,box.value)}\n",
+    "phase": "ok",
+    "want": "body 8 9\nbox 2\nscalar 1\n",
+    "tag": "defer"
+  },
+  {
+    "name": "defer_slice_capture_shares_storage",
+    "source": "fn show(value []int){print(value[0])}\nfn main(){var source=[1]\ndefer show(source)\nsource[0]=9}\n",
+    "phase": "ok",
+    "want": "9\n",
+    "tag": "defer"
+  },
+  {
+    "name": "defer_registration_failure_cleans_prior_entries",
+    "source": "fn fail() int{return 1//0}\nfn main(){defer print(\"registered\")\ndefer print(fail())\nprint(\"BAD\")}\n",
+    "phase": "run",
+    "want": "E4004",
+    "tag": "defer",
+    "stdout": "registered\n"
+  },
+  {
+    "name": "result_propagation_cleans_nested_blocks",
+    "source": "fn failure() Result<int>{return err(\"bad\")}\nfn forward() Result<int>{defer print(\"function\")\n{defer print(\"block\")\nlet value=failure()?\nreturn ok(value)}\nreturn ok(0)}\nfn main(){print(unwrap_err(forward()))}\n",
+    "phase": "ok",
+    "want": "block\nfunction\nbad\n",
+    "tag": "result"
+  },
+  {
+    "name": "result_success_continues_and_cleans",
+    "source": "fn success() Result<int>{return ok(4)}\nfn forward() Result<int>{defer print(\"function\")\nlet value=success()?\nprint(\"body\",value)\nreturn ok(value+1)}\nfn main(){print(unwrap(forward()))}\n",
+    "phase": "ok",
+    "want": "body 4\nfunction\n5\n",
+    "tag": "result"
+  },
+  {
+    "name": "result_void_propagation_cleans",
+    "source": "fn failure() Result<void>{return err(\"bad\")}\nfn forward() Result<void>{defer print(\"cleanup\")\nfailure()?\nprint(\"BAD\")\nreturn ok()}\nfn main(){print(forward())}\n",
+    "phase": "ok",
+    "want": "cleanup\nerr(bad)\n",
+    "tag": "result"
+  },
+  {
+    "name": "business_error_replaced_by_cleanup_diagnostic",
+    "source": "fn failure() Result<int>{return err(\"business\")}\nfn broken(){print(\"cleanup\")\nprint(unwrap(err(\"cleanup failure\")))}\nfn forward() Result<int>{defer print(\"remaining\")\ndefer broken()\nreturn ok(failure()?)}\nfn main(){print(forward())}\n",
+    "phase": "run",
+    "want": "E4009",
+    "tag": "cleanup",
+    "stdout": "cleanup\nremaining\n"
+  },
+  {
+    "name": "original_diagnostic_beats_cleanup_diagnostic",
+    "source": "fn broken(){print(\"cleanup\")\nprint(unwrap(err(\"cleanup failure\")))}\nfn main(){defer print(\"remaining\")\ndefer broken()\nprint(1//0)}\n",
+    "phase": "run",
+    "want": "E4004",
+    "tag": "cleanup",
+    "stdout": "cleanup\nremaining\n"
+  },
+  {
+    "name": "first_cleanup_diagnostic_wins_and_remaining_run",
+    "source": "fn divide(){print(\"divide\")\nprint(1//0)}\nfn unwrap_bad(){print(\"unwrap\")\nprint(unwrap(err(\"failure\")))}\nfn main(){defer print(\"remaining\")\ndefer divide()\ndefer unwrap_bad()\nprint(\"body\")}\n",
+    "phase": "run",
+    "want": "E4009",
+    "tag": "cleanup",
+    "stdout": "body\nunwrap\ndivide\nremaining\n"
+  },
+  {
+    "name": "failing_cleanup_runs_own_deferred_entries",
+    "source": "fn broken(){defer print(\"inner remaining\")\ndefer print(\"inner first\")\nprint(\"cleanup body\")\nprint(unwrap(err(\"failure\")))}\nfn main(){defer print(\"outer remaining\")\ndefer broken()\nprint(\"body\")}\n",
+    "phase": "run",
+    "want": "E4009",
+    "tag": "cleanup",
+    "stdout": "body\ncleanup body\ninner first\ninner remaining\nouter remaining\n"
+  },
+  {
+    "name": "nested_cleanup_failure_preserves_original_diagnostic",
+    "source": "fn cleanup_error(){print(\"nested failure\")\nprint(unwrap(err(\"failure\")))}\nfn broken(){defer print(\"inner remaining\")\ndefer cleanup_error()\nprint(\"cleanup body\")\nprint(1//0)}\nfn main(){defer print(\"outer remaining\")\ndefer broken()\nprint(1//0)}\n",
+    "phase": "run",
+    "want": "E4004",
+    "tag": "cleanup",
+    "stdout": "cleanup body\nnested failure\ninner remaining\nouter remaining\n"
+  },
+  {
+    "name": "block_cleanup_failure_cleans_enclosing_scope",
+    "source": "fn broken(){print(\"failure\")\nprint(unwrap(err(\"failure\")))}\nfn main(){defer print(\"outer\")\n{defer print(\"inner remaining\")\ndefer broken()\nprint(\"block\")}\nprint(\"BAD\")}\n",
+    "phase": "run",
+    "want": "E4009",
+    "tag": "cleanup",
+    "stdout": "block\nfailure\ninner remaining\nouter\n"
+  },
+  {
+    "name": "capture_write_static_rejected_before_effect",
+    "source": "print(\"BAD\")\nfn outer(){var source=[1]\nfn inner(){source[0]=2}}\n",
+    "phase": "check",
+    "want": "E3003",
+    "tag": "static"
+  },
+  {
+    "name": "parameter_rebind_static_rejected_before_effect",
+    "source": "print(\"BAD\")\nfn edit(value int){value=2}\n",
+    "phase": "check",
+    "want": "E3003",
+    "tag": "static"
+  },
+  {
+    "name": "escaped_local_name_static_rejected_before_effect",
+    "source": "print(\"BAD\")\nfn main(){{let hidden=1}\nprint(hidden)}\n",
+    "phase": "check",
+    "want": "E3001",
+    "tag": "static"
+  },
+  {
+    "name": "cross_function_loop_exit_static_rejected_before_effect",
+    "source": "print(\"BAD\")\nfn main(){while false{fn inner(){break}}}\n",
+    "phase": "check",
+    "want": "E2004",
+    "tag": "static"
+  },
+  {
+    "name": "return_result_struct_snapshot_before_defer",
+    "source": "struct Box{value int}\nvar current=Box{value:1}\nfn replace(){current.value=2}\nfn take() Result<Box>{defer replace()\nreturn ok(current)}\nfn main(){let saved=unwrap(take())\nprint(saved.value,current.value)}\n",
+    "phase": "ok",
+    "want": "1 2\n",
+    "tag": "return",
+    "note": "Result包装的struct已经按值复制；修复VM Return不能破坏此行为。"
+  },
+  {
+    "name": "propagate_struct_error_snapshot_before_defer",
+    "source": "struct Box{value int}\nvar current=Box{value:1}\nfn replace(){current.value=2}\nfn failure() Result<int,Box>{return err(current)}\nfn forward() Result<int,Box>{defer replace()\nlet value=failure()?\nreturn ok(value)}\nfn main(){let saved=unwrap_err(forward())\nprint(saved.value,current.value)}\n",
+    "phase": "ok",
+    "want": "1 2\n",
+    "tag": "result",
+    "note": "?传播原兼容E，不因cleanup晚复制改变Err payload值字段。"
+  },
+  {
+    "name": "multi_rhs_struct_snapshot_after_all_expressions",
+    "source": "struct Box{n int}\nvar g=Box{n:1}\nfn bump() int{g.n=2\nreturn 0}\nfn main(){let b,n=g,bump()\nprint(b.n,n)}\n",
+    "phase": "ok",
+    "want": "2 0\n",
+    "note": "Complete RHS evaluation precedes positional value copying, matching frozen multiple binding contract."
+  },
+  {
+    "name": "multi_return_snapshot_before_cleanup",
+    "source": "struct Box{n int}\nvar g=Box{n:1}\nfn bump() int{g.n=2\nreturn 0}\nfn cleanup(){g.n=3}\nfn f() (Box,int){defer cleanup()\nreturn g,bump()}\nfn main(){let b,n=f()\nprint(b.n,n,g.n)}\n",
+    "phase": "ok",
+    "want": "2 0 3\n"
+  },
+  {
+    "name": "return_void_copy_error_beats_cleanup_error",
+    "source": "fn ready() Result<void>{return ok()}\nfn broken(){print(\"cleanup\")\nprint(unwrap(err(\"bad\")))}\nfn take(f){defer print(\"remaining\")\ndefer broken()\nreturn unwrap(f())}\nfn main(){take(ready)}\n",
+    "phase": "run",
+    "want": "E4003",
+    "stdout": "cleanup\nremaining\n",
+    "diagnostic_location": false,
+    "note": "Value copying failure before cleanup remains primary; existing copy_value Diagnostic has no source span (A10 remains separate)."
+  },
+  {
+    "name": "escaped_closure_map_shared_readonly_view",
+    "source": "fn outer(source map[string]int){fn captured(){print(unwrap(source[\"key\"]),len(source))}\nreturn captured}\nfn main(){var source=map[string]int{\"key\":1}\nlet callback=outer(source)\nsource[\"key\"]=9\nsource[\"extra\"]=2\ncallback()}\n",
+    "phase": "ok",
+    "want": "9 2\n",
+    "tag": "closure",
+    "note": "Map默认参数/捕获只读共享；outer返回后原可写别名修改内容与长度，逃逸闭包可观察。"
+  },
+  {
+    "name": "escaped_closure_list_shared_readonly_view",
+    "source": "import std.list as list\nfn outer(source List<int>){fn captured(){print(unwrap(list.get(source,0)),list.len(source))}\nreturn captured}\nfn main(){var source=list.from_slice([1])\nlet callback=outer(source)\nunwrap(list.set(source,0,9))\nunwrap(list.append(source,2))\ncallback()}\n",
+    "phase": "ok",
+    "want": "9 2\n",
+    "tag": "closure",
+    "note": "List默认参数/捕获只读共享；outer返回后set/append只通过原可写别名执行。"
+  },
+  {
+    "name": "escaped_closure_buffer_shared_readonly_view",
+    "source": "import std.buffer as buffer\nfn outer(source Buffer){fn captured(){print(unwrap(buffer.text(source)),buffer.len(source))}\nreturn captured}\nfn main(){var source=buffer.new()\nunwrap(buffer.write_text(source,\"a\"))\nlet callback=outer(source)\nunwrap(buffer.write_text(source,\"b\"))\ncallback()}\n",
+    "phase": "ok",
+    "want": "ab 2\n",
+    "tag": "closure",
+    "note": "Buffer默认参数/捕获只读共享；outer返回后原可写别名追加字节，逃逸闭包看到完整内容。"
+  },
+  {
+    "name": "defer_arguments_snapshot_after_all_expressions",
+    "source": "struct Box{n int}\nvar g=Box{n:1}\nfn bump() int{g.n=2\nreturn 0}\nfn show(b Box,n int){print(b.n,n)}\nfn main(){defer show(g,bump())}\n",
+    "phase": "ok",
+    "want": "2 0\n",
+    "note": "Deferred calls evaluate all arguments left to right before saving positional values, like ordinary calls."
+  },
+  {
+    "name": "call_dynamic_invalid_callee_arguments_evaluated",
+    "source": "fn mark() int{print(\"arg\")\nreturn 1}\nfn install(action){defer print(\"remaining\")\naction(mark())}\nfn main(){install(1)}\n",
+    "phase": "run",
+    "want": "E4003",
+    "stdout": "arg\nremaining\n",
+    "note": "Evaluate callee and all arguments before checking dynamic callable; original argument Diagnostic wins and prior lexical cleanup runs."
+  },
+  {
+    "name": "call_dynamic_invalid_callee_argument_failure_first",
+    "source": "fn mark() int{print(\"arg\")\nreturn 1//0}\nfn install(action){defer print(\"remaining\")\naction(mark())}\nfn main(){install(1)}\n",
+    "phase": "run",
+    "want": "E4004",
+    "stdout": "arg\nremaining\n",
+    "note": "Evaluate callee and all arguments before checking dynamic callable; original argument Diagnostic wins and prior lexical cleanup runs."
+  },
+  {
+    "name": "defer_dynamic_invalid_callee_arguments_evaluated",
+    "source": "fn mark() int{print(\"arg\")\nreturn 1}\nfn install(action){defer print(\"remaining\")\ndefer action(mark())}\nfn main(){install(1)}\n",
+    "phase": "run",
+    "want": "E4003",
+    "stdout": "arg\nremaining\n",
+    "note": "Evaluate callee and all arguments before checking dynamic callable; original argument Diagnostic wins and prior lexical cleanup runs."
+  },
+  {
+    "name": "defer_dynamic_invalid_callee_argument_failure_first",
+    "source": "fn mark() int{print(\"arg\")\nreturn 1//0}\nfn install(action){defer print(\"remaining\")\ndefer action(mark())}\nfn main(){install(1)}\n",
+    "phase": "run",
+    "want": "E4004",
+    "stdout": "arg\nremaining\n",
+    "note": "Evaluate callee and all arguments before checking dynamic callable; original argument Diagnostic wins and prior lexical cleanup runs."
+  }
+]

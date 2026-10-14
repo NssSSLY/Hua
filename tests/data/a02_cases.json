@@ -1,0 +1,631 @@
+[
+  {
+    "name": "array_identity",
+    "source": "fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a),type(a))}\n",
+    "phase": "ok",
+    "want": "2 [2]int\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_binding",
+    "source": "fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a),type(a))}\n",
+    "phase": "ok",
+    "want": "2 [2]int\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_decimal_extent",
+    "source": "fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a),type(a))}\n",
+    "phase": "ok",
+    "want": "2 [2]int\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_nested",
+    "source": "fn f(x [2][2]i16) int{return int(x[1][1])}\nfn main(){let a [2][2]i16=[[1,2],[3,4]]\nprint(f(a),type(a),sizeof(a))}\n",
+    "phase": "ok",
+    "want": "4 [2][2]i16 8\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_map",
+    "source": "fn main(){let a=map[string][2]int{\"x\":[1,2]}\nprint(type(a),type(unwrap(a[\"x\"])),unwrap(a[\"x\"])[1])}\n",
+    "phase": "ok",
+    "want": "map<string,[2]int> [2]int 2\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_length",
+    "source": "print(\"BAD\")\nlet a [2]int=[1]\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "array_nested_length",
+    "source": "print(\"BAD\")\nlet a [2][2]int=[[1,2],[3]]\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "array_size_cap",
+    "source": "print(\"BAD\")\nfn f(x [1000001]int){}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "array_size_overflow",
+    "source": "print(\"BAD\")\nfn f(x [18446744073709551616]int){}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "array_zero",
+    "source": "fn main(){let a [0]i8=[]\nprint(type(a),len(a),sizeof(a))}\n",
+    "phase": "ok",
+    "want": "[0]i8 0 0\n",
+    "analyzer": true
+  },
+  {
+    "name": "numeric_widen",
+    "source": "fn main(){let a i8=127\nlet b i16=a\nlet c i16=u8(255)\nprint(type(b),b,c,type(a+i16(1)))}\n",
+    "phase": "ok",
+    "want": "i16 127 255 i16\n",
+    "analyzer": true
+  },
+  {
+    "name": "numeric_round",
+    "source": "fn main(){let a=f32(16777216)+f32(1)\nprint(type(a),a,i8(-2.9),f32(1e-300),u64(\"18446744073709551615\"))}\n",
+    "phase": "ok",
+    "want": "f32 16777216 -2 0 18446744073709551615\n",
+    "analyzer": true
+  },
+  {
+    "name": "numeric_floor",
+    "source": "fn main(){print(-5//2,-5%2,5%-2,5/2,(-9223372036854775808)%-1)}\n",
+    "phase": "ok",
+    "want": "-3 1 -1 2.5 0\n",
+    "analyzer": true
+  },
+  {
+    "name": "i8_overflow",
+    "source": "fn main(){print(i8(127)+i8(1))}\n",
+    "phase": "run",
+    "want": "E4002",
+    "analyzer": true
+  },
+  {
+    "name": "u8_negative",
+    "source": "fn main(){print(u8(-1))}\n",
+    "phase": "run",
+    "want": "E4002",
+    "analyzer": true
+  },
+  {
+    "name": "invalid_shift",
+    "source": "fn main(){print(u8(1)<<8)}\n",
+    "phase": "run",
+    "want": "E4005",
+    "analyzer": true
+  },
+  {
+    "name": "int_div_overflow",
+    "source": "fn main(){print((-9223372036854775808)//-1)}\n",
+    "phase": "run",
+    "want": "E4002",
+    "analyzer": true
+  },
+  {
+    "name": "zero_division",
+    "source": "fn main(){print(1/0)}\n",
+    "phase": "run",
+    "want": "E4004",
+    "analyzer": true
+  },
+  {
+    "name": "negative_zero_division",
+    "source": "fn main(){print(1.0/-0.0)}\n",
+    "phase": "run",
+    "want": "E4004",
+    "analyzer": true
+  },
+  {
+    "name": "float_overflow",
+    "source": "fn main(){print(f32(3.4e38)*f32(2))}\n",
+    "phase": "run",
+    "want": "E4002",
+    "analyzer": true
+  },
+  {
+    "name": "literal_f32",
+    "source": "fn main(){let a f32=1\nlet b i8=-128\nprint(type(a),a,b)}\n",
+    "phase": "ok",
+    "want": "f32 1 -128\n",
+    "analyzer": true
+  },
+  {
+    "name": "mixed_numeric",
+    "source": "print(\"BAD\")\nlet a=1\nlet b=1.0\nlet c=a+b\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "narrowing",
+    "source": "print(\"BAD\")\nlet a i16=1\nlet b i8=a\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "signed_unsigned",
+    "source": "print(\"BAD\")\nlet a i8=1\nlet b=u8(1)\nlet c=a+b\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "float_int_literal",
+    "source": "print(\"BAD\")\nlet a i8=1.5\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "int_to_float",
+    "source": "print(\"BAD\")\nlet a=1\nlet b float=a\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "nil_int",
+    "source": "print(\"BAD\")\nlet a int=nil\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "optional_context",
+    "source": "fn main(){let a i8?=1\nlet b f32?=2\nprint(unwrap(a),type(unwrap(a)),unwrap(b),type(unwrap(b)))}\n",
+    "phase": "ok",
+    "want": "1 i8 2 f32\n",
+    "analyzer": true
+  },
+  {
+    "name": "optional_nil",
+    "source": "fn main(){let a int?=nil\nlet b int?=2\nif b!=nil{print(a,b+1,is_none(a))}}\n",
+    "phase": "ok",
+    "want": "nil 3 true\n",
+    "analyzer": true
+  },
+  {
+    "name": "optional_nil_unwrap",
+    "source": "fn main(){let a int?=nil\nprint(unwrap(a))}\n",
+    "phase": "run",
+    "want": "E4009",
+    "analyzer": true
+  },
+  {
+    "name": "optional_result_reject",
+    "source": "print(\"BAD\")\nlet a Result<int>?=nil\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "map_result_reject",
+    "source": "print(\"BAD\")\nlet a=map[string]Result<int>{}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "result_nested",
+    "source": "fn main(){let a Result<Result<int>>=ok(ok(2))\nlet b Result<int?>=ok(nil)\nprint(unwrap(unwrap(a)),is_ok(b),unwrap(b))}\n",
+    "phase": "ok",
+    "want": "2 true nil\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_context",
+    "source": "fn f() Result<i8>{return ok(127)}\nfn main(){let a Result<f32>=ok(2)\nprint(unwrap(f()),type(unwrap(f())),unwrap(a),type(unwrap(a)))}\n",
+    "phase": "ok",
+    "want": "127 i8 2 f32\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_optional_context",
+    "source": "fn main(){let a Result<i8?>=ok(1)\nprint(unwrap(unwrap(a)),type(unwrap(unwrap(a))))}\n",
+    "phase": "ok",
+    "want": "1 i8\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_void",
+    "source": "fn f() Result<void>{return ok()}\nfn main(){let a=f()\nunwrap(a)\nprint(is_ok(a))}\n",
+    "phase": "ok",
+    "want": "true\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_void_nil",
+    "source": "print(\"BAD\")\nfn f() Result<void>{return ok(nil)}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "result_error_mismatch",
+    "source": "print(\"BAD\")\nlet a Result<int,string>=err(1)\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "result_inactive_mismatch",
+    "source": "fn f(){let a Result<int,string>=ok(1)\nreturn a}\nfn main(){let a Result<float,string>=f()\nprint(a)}\n",
+    "phase": "run",
+    "want": "E4003",
+    "analyzer": false
+  },
+  {
+    "name": "result_unwrap_error",
+    "source": "fn main(){let a Result<int>=err(\"bad\")\nprint(unwrap(a))}\n",
+    "phase": "run",
+    "want": "E4009",
+    "analyzer": true
+  },
+  {
+    "name": "result_propagate",
+    "source": "fn f() Result<int>{let a Result<int>=err(\"bad\")\nlet x=a?\nprint(\"BAD\")\nreturn ok(x)}\nfn main(){print(f())}\n",
+    "phase": "ok",
+    "want": "err(bad)\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_propagate_mismatch",
+    "source": "print(\"BAD\")\nfn f() Result<int,string>{let a Result<int,int>=err(1)\nreturn ok(a?)}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": false,
+    "analyzer_limit": "SB1/T1 currently require string error types; production covers this rejection"
+  },
+  {
+    "name": "multi_forward",
+    "source": "fn f()(i8,int?){return 2,nil}\nfn g()(i16,int?){return f()}\nfn main(){let a,b=g()\nprint(type(a),a,b)}\n",
+    "phase": "ok",
+    "want": "i16 2 nil\n",
+    "analyzer": true
+  },
+  {
+    "name": "multi_context",
+    "source": "fn main(){let a i8,b f32=1,2\nvar c,d=3,4\nc,d=d,c\nprint(a,type(a),b,type(b),c,d)}\n",
+    "phase": "ok",
+    "want": "1 i8 2 f32 4 3\n",
+    "analyzer": true
+  },
+  {
+    "name": "multi_single",
+    "source": "print(\"BAD\")\nfn f()(int,int){return 1,2}\nlet a=f()\n",
+    "phase": "check",
+    "want": "E3006",
+    "analyzer": true
+  },
+  {
+    "name": "multi_duplicate",
+    "source": "print(\"BAD\")\nlet a,a=1,2\n",
+    "phase": "check",
+    "want": "E3002",
+    "analyzer": true
+  },
+  {
+    "name": "multi_count",
+    "source": "print(\"BAD\")\nlet a,b=1\n",
+    "phase": "check",
+    "want": "E3006",
+    "analyzer": true
+  },
+  {
+    "name": "no_initializer",
+    "source": "print(\"BAD\")\nvar a int\n",
+    "phase": "check",
+    "want": "E2001",
+    "analyzer": true
+  },
+  {
+    "name": "missing_field",
+    "source": "print(\"BAD\")\nstruct A{x int\ny int}\nlet a=A{x:1}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "late_global",
+    "source": "fn f() int{return later}\nlet early=f()\nlet later=2\n",
+    "phase": "run",
+    "want": "E4001",
+    "analyzer": true
+  },
+  {
+    "name": "array_mut_borrow",
+    "source": "fn f(x mut [2]i16){x[1]=3}\nfn main(){var a [2]i16=[1,2]\nf(a)\nprint(a)}\n",
+    "phase": "ok",
+    "want": "[1, 3]\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_optional",
+    "source": "fn main(){let a [2]int?=[1,2]\nprint(type(unwrap(a)),unwrap(a)[1])}\n",
+    "phase": "ok",
+    "want": "[2]int 2\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_result",
+    "source": "fn f() Result<[2]int>{return ok([1,2])}\nfn main(){let a Result<[2]int>=f()\nprint(type(a),unwrap(a))}\n",
+    "phase": "ok",
+    "want": "Result<[2]int,string> [1, 2]\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_list",
+    "source": "import std.list as l\nfn main(){var a [] [2]int=[]\nvar xs=l.from_slice(a)\nl.append(xs,[1,2])\nprint(type(xs),unwrap(l.get(xs,0)))}\n",
+    "phase": "ok",
+    "want": "List<[2]int> [1, 2]\n",
+    "analyzer": true
+  },
+  {
+    "name": "array_dynamic_size",
+    "source": "fn f(){return [1]}\nfn main(){print(\"before\")\nlet a [2]int=f()}\n",
+    "phase": "run",
+    "want": "E4003",
+    "analyzer": false,
+    "stdout": "before\n"
+  },
+  {
+    "name": "numeric_dynamic_mixed",
+    "source": "fn f(x){return x+1.0}\nfn main(){print(\"before\")\nprint(f(1))}\n",
+    "phase": "run",
+    "want": "E4003",
+    "analyzer": false,
+    "stdout": "before\n"
+  },
+  {
+    "name": "numeric_literal_range",
+    "source": "fn main(){print(\"before\")\nlet a i8=128}\n",
+    "phase": "run",
+    "want": "E4002",
+    "analyzer": true,
+    "stdout": "before\n"
+  },
+  {
+    "name": "multi_atomic_failure",
+    "source": "var a=1\nvar b=2\nfn show(){print(a,b)}\nfn dynamic(){return \"bad\"}\nfn main(){defer show()\na,b=3,dynamic()}\n",
+    "phase": "run",
+    "want": "E4003",
+    "analyzer": false,
+    "stdout": "1 2\n"
+  },
+  {
+    "name": "result_nested_void",
+    "source": "fn make() Result<void>{return ok()}\nfn main(){let r Result<Result<void>>=ok(make())\nunwrap(unwrap(r))\nprint(is_ok(r))}\n",
+    "phase": "ok",
+    "want": "true\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_nested_error",
+    "source": "fn main(){let r Result<Result<int>>=ok(err(\"inner\"))\nprint(is_ok(r),is_err(unwrap(r)),unwrap_err(unwrap(r)))}\n",
+    "phase": "ok",
+    "want": "true true inner\n",
+    "analyzer": true
+  },
+  {
+    "name": "result_no_automatic_wrap",
+    "source": "print(\"BAD\")\nfn f() Result<int>{return 1}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "result_void_binding",
+    "source": "print(\"BAD\")\nfn f() Result<void>{return ok()}\nlet a=unwrap(f())\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "multi_void",
+    "source": "print(\"BAD\")\nlet a,b=print(1),2\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "no_struct_zero",
+    "source": "print(\"BAD\")\nstruct A{x int}\nlet a=A{}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "optional_no_double",
+    "source": "print(\"BAD\")\nlet a int??=nil\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "nested_array_bad_category",
+    "source": "print(\"BAD\")\nlet x [2]i8=[1,1.5]\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_binding",
+    "source": "print(\"BAD\")\nlet x void=nil\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_optional",
+    "source": "print(\"BAD\")\nlet x void?=nil\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_array",
+    "source": "print(\"BAD\")\nlet x [1]void=[nil]\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_slice",
+    "source": "print(\"BAD\")\nlet x []void=[]\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_param",
+    "source": "print(\"BAD\")\nfn f(x void){}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_field",
+    "source": "print(\"BAD\")\nstruct A{x void}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_multi_result",
+    "source": "print(\"BAD\")\nfn f()(int,void){return 1,nil}\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_list",
+    "source": "print(\"BAD\")\nlet x List<void>=nil\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "optional_dynamic_narrow",
+    "source": "print(\"BAD\")\nlet x i16=1\nlet y i8?=x\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "result_optional_dynamic_narrow",
+    "source": "print(\"BAD\")\nlet x i16=1\nlet y Result<i8?>=ok(x)\n",
+    "phase": "check",
+    "want": "E3004",
+    "analyzer": true
+  },
+  {
+    "name": "void_function_task_enum",
+    "source": "import std.task as t\nenum E{A,B}\nfn f() void{}\nasync fn worker() void{}\nfn main(){f()\nlet x=worker()\nawait x\nprint(E.A())}\n",
+    "phase": "ok",
+    "want": "E.A()\n",
+    "analyzer": false,
+    "analyzer_limit": "async/Task remain outside SB1/T1"
+  },
+  {
+    "name": "array_syntax_02",
+    "source": "print(\"BAD\")\nlet a [02]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_0_2",
+    "source": "print(\"BAD\")\nlet a [0_2]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_00",
+    "source": "print(\"BAD\")\nlet a [00]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_2_0",
+    "source": "print(\"BAD\")\nlet a [2_0]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_0x2",
+    "source": "print(\"BAD\")\nlet a [0x2]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_0b10",
+    "source": "print(\"BAD\")\nlet a [0b10]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_0o2",
+    "source": "print(\"BAD\")\nlet a [0o2]int=[1,2]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_parameter",
+    "source": "fn f(x [02]int){}\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_field",
+    "source": "struct S{x [0_2]int}\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_nested",
+    "source": "let a [2][02]int=[[1,2],[3,4]]\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_result",
+    "source": "fn f() Result<[0_2]int>{return ok([1,2])}\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  },
+  {
+    "name": "array_syntax_map",
+    "source": "let a=map[string][02]int{}\n",
+    "phase": "check",
+    "want": "E2006",
+    "analyzer": true
+  }
+]

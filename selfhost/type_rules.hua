@@ -19,6 +19,28 @@ pub fn arguments(t string, name string) []string {
     unwrap(list.append(parts,cut(t,start,len(t)-1)))
     return list.snapshot(parts)
 }
+# Lexer already validates digit separators; cap before arithmetic can overflow.
+pub fn extent(text string) Result<int> {
+    if strings.starts_with(text,"_") || strings.ends_with(text,"_") || strings.contains(text,"__") || strings.contains(text,"x_") || strings.contains(text,"o_") || strings.contains(text,"b_") { return err("invalid array separator") }
+    let digits = strings.replace(text,"_","")
+    var base = 10
+    var start = 0
+    if strings.starts_with(digits,"0x") { base = 16
+        start = 2 }
+    if strings.starts_with(digits,"0o") { base = 8
+        start = 2 }
+    if strings.starts_with(digits,"0b") { base = 2
+        start = 2 }
+    if start == len(digits) { return err("invalid array size") }
+    if start == 2 && cut(text,0,2) != cut(digits,0,2) { return err("invalid array prefix") }
+    var count = 0
+    for i in start..len(digits) {
+        let value = strings.index("0123456789abcdef",strings.lower_ascii(cut(digits,i,i+1)))
+        if 0 > value || value >= base || count > (1000000-value)//base { return err("array size outside 0..1000000") }
+        count = count*base+value
+    }
+    return ok(count)
+}
 pub fn element(t string) string {
     if !strings.starts_with(t,"[") { return "" }
     let end = strings.index(t,"]")
@@ -74,4 +96,15 @@ pub fn compatible(expected string, actual string) bool {
 }
 pub fn shared(t string) bool {
     return strings.starts_with(t,"[") || strings.starts_with(t,"map<") || strings.starts_with(t,"Result<") || strings.starts_with(t,"List<") || t == "Buffer"
+}
+
+pub fn value_type_allowed(t string, allow_void bool) bool {
+    if t == "void" { return allow_void }
+    if strings.ends_with(t,"?") { return value_type_allowed(optional(t),false) }
+    if strings.starts_with(t,"[") { return value_type_allowed(element(t),false) }
+    for name in ["Result","Task","map","List","multi"] {
+        let ts = arguments(t,name)
+        for i in 0..len(ts) { if !value_type_allowed(ts[i],i == 0 && (name == "Result" || name == "Task")) { return false } }
+    }
+    return true
 }

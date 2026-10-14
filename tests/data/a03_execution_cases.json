@@ -1,0 +1,344 @@
+[
+  {
+    "name": "slice_alias_subview_rebind",
+    "tag": "slice",
+    "source": "fn main(){var a=[1,2,3]\nvar alias=a\nvar view=a[1:]\nalias[0]=8\nview[0]=9\na=[4,5,6]\nprint(a,alias,view)}\n",
+    "phase": "ok",
+    "want": "[4, 5, 6] [8, 9, 3] [9, 3]\n"
+  },
+  {
+    "name": "slice_all_endpoint_forms",
+    "tag": "slice",
+    "source": "fn main(){var a=[1,2,3]\nprint(a[:],a[:2],a[1:],a[1:2],a[1:1],a[3:3])}\n",
+    "phase": "ok",
+    "want": "[1, 2, 3] [1, 2] [2, 3] [2] [] []\n"
+  },
+  {
+    "name": "slice_clone_nested",
+    "tag": "slice",
+    "source": "fn main(){var a=[[1],[2]]\nvar b=clone(a)\nb[0][0]=9\nprint(a,b)}\n",
+    "phase": "ok",
+    "want": "[[1], [2]] [[9], [2]]\n"
+  },
+  {
+    "name": "slice_mut_parameter",
+    "tag": "slice",
+    "source": "fn set(x mut []int){x[0]=9}\nfn main(){var a=[1,2]\nset(a)\nprint(a)}\n",
+    "phase": "ok",
+    "want": "[9, 2]\n"
+  },
+  {
+    "name": "slice_readonly_alias",
+    "tag": "slice",
+    "source": "print(\"BAD\")\nfn main(){let a=[1]\nvar b=a\nb[0]=2}\n",
+    "phase": "check",
+    "want": "E3003"
+  },
+  {
+    "name": "slice_readonly_parameter",
+    "tag": "slice",
+    "source": "print(\"BAD\")\nfn set(x []int){x[0]=9}\nfn main(){var a=[1]\nset(a)}\n",
+    "phase": "check",
+    "want": "E3003"
+  },
+  {
+    "name": "slice_dynamic_readonly",
+    "tag": "slice",
+    "source": "fn set(x){x[0]=9}\nfn main(){let a=[1]\nprint(\"before\")\nset(a)}\n",
+    "phase": "check",
+    "want": "E3003",
+    "note": "未注解默认参数依然静态只读；入口check以E3003拒绝，不能把未注解等同动态可写。"
+  },
+  {
+    "name": "slice_negative_index",
+    "tag": "slice",
+    "source": "fn main(){var a=[1]\nprint(\"before\")\nprint(a[-1])}\n",
+    "phase": "run",
+    "want": "E4006",
+    "stdout": "before\n"
+  },
+  {
+    "name": "slice_end_index",
+    "tag": "slice",
+    "source": "fn main(){var a=[1]\nprint(\"before\")\na[len(a)]=2}\n",
+    "phase": "run",
+    "want": "E4006",
+    "stdout": "before\n"
+  },
+  {
+    "name": "slice_reversed_bounds",
+    "tag": "slice",
+    "source": "fn main(){var a=[1,2]\nprint(\"before\")\nprint(a[2:1])}\n",
+    "phase": "run",
+    "want": "E4006",
+    "stdout": "before\n"
+  },
+  {
+    "name": "slice_outside_bounds",
+    "tag": "slice",
+    "source": "fn main(){var a=[1,2]\nprint(\"before\")\nprint(a[:3])}\n",
+    "phase": "run",
+    "want": "E4006",
+    "stdout": "before\n"
+  },
+  {
+    "name": "slice_wrong_index_type",
+    "tag": "slice",
+    "source": "print(\"BAD\")\nlet a=[1]\nprint(a[true])\n",
+    "phase": "check",
+    "want": "E3004"
+  },
+  {
+    "name": "array_copy_and_view",
+    "tag": "array",
+    "source": "fn main(){var a [2]int=[1,2]\nvar b=a\nvar view=a[:]\nb[0]=8\nview[1]=9\nprint(a,b,view,type(view))}\n",
+    "phase": "ok",
+    "want": "[1, 9] [8, 2] [1, 9] []int\n"
+  },
+  {
+    "name": "array_nested_packed_copy",
+    "tag": "array",
+    "source": "fn main(){var a [2][2]i16=[[1,2],[3,4]]\nvar b=a\nb[0][1]=9\nprint(a,b,sizeof(a),alignof(a))}\n",
+    "phase": "ok",
+    "want": "[[1, 2], [3, 4]] [[1, 9], [3, 4]] 8 2\n"
+  },
+  {
+    "name": "array_nontrivial_copy",
+    "tag": "array",
+    "source": "fn main(){var a [2]string=[\"a\",\"b\"]\nvar b=a\nb[1]=\"changed\"\nprint(a,b)}\n",
+    "phase": "ok",
+    "want": "[a, b] [a, changed]\n"
+  },
+  {
+    "name": "array_struct_nested_shared",
+    "tag": "array",
+    "source": "struct Box{n int\nxs []int}\nfn main(){var a [1]Box=[Box{n:1,xs:[7]}]\nvar b=a\nb[0].n=2\nb[0].xs[0]=8\nprint(a[0].n,a[0].xs,b[0].n)}\n",
+    "phase": "ok",
+    "want": "1 [8] 2\n",
+    "note": "固定数组与结构外层按值复制；Slice字段保留共享。"
+  },
+  {
+    "name": "array_mut_borrow_view_liveness",
+    "tag": "array",
+    "source": "fn set(x mut [2]int){x[0]=8}\nfn main(){var a [2]int=[1,2]\nvar view=a[:]\nset(a)\na=[4,5]\nprint(a,view)}\n",
+    "phase": "ok",
+    "want": "[4, 5] [8, 2]\n"
+  },
+  {
+    "name": "array_value_boundary_copy",
+    "tag": "array",
+    "source": "fn identity(x [2]int) [2]int{return x}\nfn main(){var a [2]int=[1,2]\nvar b=identity(a)\nvar independent=clone(b)\nindependent[0]=9\nprint(a,b,independent)}\n",
+    "phase": "ok",
+    "want": "[1, 2] [1, 2] [9, 2]\n"
+  },
+  {
+    "name": "array_empty_and_bool_layout",
+    "tag": "array",
+    "source": "fn main(){var zero [0]int=[]\nvar flags [3]bool=[true,false,true]\nprint(len(zero),sizeof(zero),flags,sizeof(flags),alignof(flags))}\n",
+    "phase": "ok",
+    "want": "0 0 [true, false, true] 3 1\n"
+  },
+  {
+    "name": "map_nil_presence",
+    "tag": "map",
+    "source": "fn main(){var m=map[string]int?{\"nil\":nil,\"value\":3}\nprint(m[\"missing\"],m[\"nil\"],has(m,\"nil\"),has(m,\"missing\"),len(m),m.len)\nprint(delete(m,\"nil\"),delete(m,\"nil\"),len(m))}\n",
+    "phase": "ok",
+    "want": "nil nil true false 2 2\ntrue false 1\n"
+  },
+  {
+    "name": "map_alias_clone",
+    "tag": "map",
+    "source": "fn main(){var a=map[string]int{\"x\":1}\nvar alias=a\nvar independent=clone(a)\nalias[\"x\"]=2\nindependent[\"x\"]=3\nprint(unwrap(a[\"x\"]),unwrap(alias[\"x\"]),unwrap(independent[\"x\"]))}\n",
+    "phase": "ok",
+    "want": "2 2 3\n"
+  },
+  {
+    "name": "map_key_value_eval_order",
+    "tag": "map",
+    "source": "fn key(x int) int{print(x)\nreturn x}\nfn value(x int) int{print(x)\nreturn x}\nfn main(){var m=map[int]int{key(1):value(10),key(1):value(20)}\nprint(len(m),unwrap(m[1]))}\n",
+    "phase": "ok",
+    "want": "1\n10\n1\n20\n1 20\n"
+  },
+  {
+    "name": "map_snapshot_replace_add_delete",
+    "tag": "map",
+    "source": "fn main(){var m=map[int]int{1:10,2:20}\nvar sum=0\nfor k,v in m{sum+=k+v\nm[3]=99\ndelete(m,k)}\nprint(sum,len(m),unwrap(m[3]))}\n",
+    "phase": "ok",
+    "want": "33 1 99\n",
+    "note": "输出只使用集合总和与长度，未依赖Map顺序。"
+  },
+  {
+    "name": "map_snapshot_nested_shared",
+    "tag": "map",
+    "source": "fn main(){var nested=[1]\nvar m=map[int][]int{1:nested}\nvar seen=0\nfor k,v in m{nested[0]=8\nseen+=v[0]\nm[k]=[3]}\nprint(seen,unwrap(m[1]))}\n",
+    "phase": "ok",
+    "want": "8 [3]\n"
+  },
+  {
+    "name": "map_record_value_copy",
+    "tag": "map",
+    "source": "struct Item{n int}\nfn main(){var m=map[string]Item{\"x\":Item{n:1}}\nvar item=unwrap(m[\"x\"])\nitem.n=3\nprint(unwrap(m[\"x\"]).n,item.n)}\n",
+    "phase": "ok",
+    "want": "1 3\n"
+  },
+  {
+    "name": "map_nested_clone",
+    "tag": "map",
+    "source": "fn main(){var m=map[string][]int{\"x\":[1]}\nvar copy=clone(m)\nvar target=unwrap(copy[\"x\"])\ntarget[0]=9\nprint(unwrap(m[\"x\"]),unwrap(copy[\"x\"]))}\n",
+    "phase": "ok",
+    "want": "[1] [9]\n"
+  },
+  {
+    "name": "map_mut_parameter",
+    "tag": "map",
+    "source": "fn set(m mut map[string]int){m[\"x\"]=2}\nfn main(){var m=map[string]int{}\nset(m)\nprint(unwrap(m[\"x\"]))}\n",
+    "phase": "ok",
+    "want": "2\n"
+  },
+  {
+    "name": "map_missing_compound",
+    "tag": "map",
+    "source": "fn main(){var m=map[string]int{}\nprint(\"before\")\nm[\"missing\"]+=1}\n",
+    "phase": "run",
+    "want": "E4006",
+    "stdout": "before\n"
+  },
+  {
+    "name": "map_readonly_alias",
+    "tag": "map",
+    "source": "print(\"BAD\")\nfn main(){let a=map[string]int{\"x\":1}\nvar b=a\nb[\"x\"]=2}\n",
+    "phase": "check",
+    "want": "E3003"
+  },
+  {
+    "name": "map_dynamic_readonly",
+    "tag": "map",
+    "source": "fn set(m){m[\"x\"]=2}\nfn main(){let m=map[string]int{}\nprint(\"before\")\nset(m)}\n",
+    "phase": "check",
+    "want": "E3003",
+    "note": "未注解默认参数依然静态只读；入口check以E3003拒绝，不能把未注解等同动态可写。"
+  },
+  {
+    "name": "map_wrong_key_static",
+    "tag": "map",
+    "source": "print(\"BAD\")\nlet m=map[string]int{}\nprint(m[1])\n",
+    "phase": "check",
+    "want": "E3004"
+  },
+  {
+    "name": "map_wrong_key_dynamic",
+    "tag": "map",
+    "source": "fn read(m,k){return m[k]}\nfn main(){var m=map[string]int{}\nprint(\"before\")\nprint(read(m,1))}\n",
+    "phase": "run",
+    "want": "E4003",
+    "stdout": "before\n"
+  },
+  {
+    "name": "map_boolean_key",
+    "tag": "map",
+    "source": "fn main(){var m=map[bool]int{true:1,false:2}\nprint(unwrap(m[true]),unwrap(m[false]),len(m))}\n",
+    "phase": "ok",
+    "want": "1 2 2\n"
+  },
+  {
+    "name": "list_shared_clone",
+    "tag": "list",
+    "source": "import std.list as l\nfn main(){var xs=l.from_slice([1,2])\nvar alias=xs\nvar copy=clone(xs)\nprint(unwrap(l.append(alias,3)),l.len(xs),l.snapshot(copy))\nl.clear(alias)\nprint(l.len(xs),l.snapshot(copy))}\n",
+    "phase": "ok",
+    "want": "3 3 [1, 2]\n0 [1, 2]\n"
+  },
+  {
+    "name": "list_operations_snapshot",
+    "tag": "list",
+    "source": "import std.list as l\nfn main(){var xs=l.from_slice([1,2])\nlet before=l.snapshot(xs)\nprint(unwrap(l.set(xs,0,9)),unwrap(l.get(xs,0)),unwrap(l.extend(xs,before)))\nprint(unwrap(l.pop(xs)),l.snapshot(xs),before)\nl.clear(xs)\nprint(l.len(xs),is_err(l.pop(xs)),before)}\n",
+    "phase": "ok",
+    "want": "true 9 4\n2 [9, 2, 1] [1, 2]\n0 true [1, 2]\n"
+  },
+  {
+    "name": "list_from_slice_deep",
+    "tag": "list",
+    "source": "import std.list as l\nfn main(){var source=[[1]]\nvar xs=l.from_slice(source)\nsource[0][0]=8\nvar independent=clone(unwrap(l.get(xs,0)))\nindependent[0]=9\nprint(source,l.snapshot(xs),independent)}\n",
+    "phase": "ok",
+    "want": "[[8]] [[1]] [9]\n"
+  },
+  {
+    "name": "list_snapshot_nested_shared",
+    "tag": "list",
+    "source": "import std.list as l\nfn main(){var seed [][]int=[]\nvar xs=l.from_slice(seed)\nvar element=[1]\nunwrap(l.append(xs,element))\nlet before=l.snapshot(xs)\nelement[0]=8\nunwrap(l.set(xs,0,[3]))\nprint(before,l.snapshot(xs))}\n",
+    "phase": "ok",
+    "want": "[[8]] [[3]]\n",
+    "note": "snapshot独立顶层序列，嵌套Slice仍按既有共享规则。"
+  },
+  {
+    "name": "list_empty_typed",
+    "tag": "list",
+    "source": "import std.list as l\nfn main(){var source []int=[]\nvar xs List<int>=l.from_slice(source)\nprint(type(xs),l.len(xs),unwrap(l.append(xs,7)),l.snapshot(xs))}\n",
+    "phase": "ok",
+    "want": "List<int> 0 1 [7]\n"
+  },
+  {
+    "name": "list_business_errors_preserve",
+    "tag": "list",
+    "source": "import std.list as l\nfn main(){var xs=l.from_slice([1])\nprint(is_err(l.get(xs,-1)),is_err(l.get(xs,1)),is_err(l.set(xs,-1,8)),is_err(l.set(xs,1,8)),l.snapshot(xs))\nprint(is_err(l.reserve(xs,-1)),is_err(l.reserve(xs,1000001)),l.len(xs),l.snapshot(xs))\nunwrap(l.reserve(xs,16))\nprint(unwrap(l.reserve(xs,0)),unwrap(l.reserve(xs,1)),l.len(xs))}\n",
+    "phase": "ok",
+    "want": "true true true true [1]\ntrue true 1 [1]\nfalse false 1\n",
+    "note": "不对初始vector容量/扩容倍数作假定。"
+  },
+  {
+    "name": "list_mut_parameter",
+    "tag": "list",
+    "source": "import std.list as l\nfn add(xs mut List<int>){unwrap(l.append(xs,2))}\nfn main(){var xs=l.from_slice([1])\nadd(xs)\nprint(l.snapshot(xs))}\n",
+    "phase": "ok",
+    "want": "[1, 2]\n"
+  },
+  {
+    "name": "list_readonly_alias",
+    "tag": "list",
+    "source": "import std.list as l\nprint(\"BAD\")\nfn main(){let xs=l.from_slice([1])\nvar alias=xs\nl.append(alias,2)}\n",
+    "phase": "check",
+    "want": "E3003"
+  },
+  {
+    "name": "list_snapshot_readonly",
+    "tag": "list",
+    "source": "import std.list as l\nprint(\"BAD\")\nfn main(){var xs=l.from_slice([1])\nvar view=l.snapshot(xs)\nview[0]=2}\n",
+    "phase": "check",
+    "want": "E3003"
+  },
+  {
+    "name": "list_get_nested_readonly",
+    "tag": "list",
+    "source": "import std.list as l\nprint(\"BAD\")\nfn main(){var xs=l.from_slice([[1]])\nvar item=unwrap(l.get(xs,0))\nitem[0]=2}\n",
+    "phase": "check",
+    "want": "E3003"
+  },
+  {
+    "name": "list_dynamic_readonly",
+    "tag": "list",
+    "source": "import std.list as l\nfn add(xs){l.append(xs,2)}\nfn main(){let xs=l.from_slice([1])\nprint(\"before\")\nadd(xs)}\n",
+    "phase": "check",
+    "want": "E3003",
+    "note": "未注解默认参数依然静态只读；入口check以E3003拒绝，不能把未注解等同动态可写。"
+  },
+  {
+    "name": "list_direct_index_rejected",
+    "tag": "list",
+    "source": "import std.list as l\nprint(\"BAD\")\nvar xs=l.from_slice([1])\nprint(xs[0])\n",
+    "phase": "check",
+    "want": "E3004"
+  },
+  {
+    "name": "list_direct_iteration_rejected",
+    "tag": "list",
+    "source": "import std.list as l\nprint(\"BAD\")\nvar xs=l.from_slice([1])\nfor x in xs{print(x)}\n",
+    "phase": "check",
+    "want": "E3004"
+  },
+  {
+    "name": "list_invariant_item_type",
+    "tag": "list",
+    "source": "import std.list as l\nprint(\"BAD\")\nvar xs=l.from_slice([1.0])\nl.append(xs,1)\n",
+    "phase": "check",
+    "want": "E3004"
+  }
+]

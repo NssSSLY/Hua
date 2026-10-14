@@ -1,3 +1,4 @@
+from process_guard import run as run_process, guarded_main
 """A11/C04: independent semantics, four execution paths, failure publication."""
 from pathlib import Path
 import subprocess,json,re,shutil,struct,sys,time,importlib.util,io
@@ -7,7 +8,7 @@ hua,probe,oracle,repo,build=map(Path,sys.argv[1:])
 out=build/'a11-c04';out.mkdir(exist_ok=True);work=out/'acceptance';work.mkdir(exist_ok=True)
 rows=[];checks=0
 def invoke(args,code=0,timeout=600):
-    p=subprocess.run(list(map(str,args)),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
+    p=run_process(list(map(str,args)),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
     assert p.returncode==code,(args,p.returncode,p.stdout[:1500],p.stderr)
     return p
 def diag(d):
@@ -35,8 +36,9 @@ def run(entry,path,parse=False):
     assert all(x==reports[0] for x in reports),(entry,path,reports)
     return reports[0]
 positive={
-'array_spelling':'fn f(x [0_2]int) int{return x[1]}\nfn g(x [02]int) int{return x[1]}\n',
-'map_array_spelling':'fn main(){let a map[string][0_2]int=map[string][0_2]int{"x":[1,2]}\nprint(type(a),type(unwrap(a["x"])),unwrap(a["x"])[1])}\n',
+'array_identity':'fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a))}\n',
+'array_parameters':'fn f(x [2]int) int{return x[1]}\nfn g(x [2]int) int{return x[1]}\n',
+'map_array':'fn main(){let a map[string][2]int=map[string][2]int{"x":[1,2]}\nprint(type(a),type(unwrap(a["x"])),unwrap(a["x"])[1])}\n',
 'scalars':'fn main(){var x int=2\nx+=1\nlet y=x/2\nprint(y)}\n',
 'sizes':'fn f(x i16,y u8) i32{return i32(x)+i32(y)}\nfn main(){let x i8=3\nlet a [2]int=[1,2]\nprint(f(x,byte(1)),sizeof(a))}\n',
 'struct':'struct A{x int}\nfn f(a A) int{return a.x}\nfn main(){var a=A{x:1}\na.x=2\nprint(f(a))}\n',
@@ -67,7 +69,6 @@ positive={
 
 }
 negative={
-'array_mixed_spelling':'fn f(x [02]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a))}\n',
 'badmain':'fn main(x int){}\n',
 'capread':'fn a(x []int) []int{return x}\nfn main(){let z=[1]\nvar x=a(z)\nx[0]=2}\n',
 'capbranch':'fn main(){let ro=[1]\nvar x=[2]\nif true{x=ro}\nx[0]=3}\n',
@@ -120,6 +121,7 @@ def type_case(name,text,phase,files=None):
         else:assert diag(result)[0]=='E8201',(name,result)
     checks+=7;rows.append({'case':name,'phase':phase,'diagnostic':result.get('error'),'facts':len(result.get('facts',[])),'paths':'AST/VM/source-free HUAB/SB1'})
     return source,result
+negative.update({c['name']:c['source'] for c in json.loads((repo/'tests/data/a02_cases.json').read_text(encoding='utf-8')) if c['name'].startswith('array_syntax_')})
 for phase,cases in [('positive',positive),('negative',negative),('excluded',excluded)]:
     for name,text in cases.items():type_case(name,text,phase)
     print('C04',phase,'passed',flush=True)
@@ -171,7 +173,7 @@ spec=importlib.util.spec_from_file_location('frontend',repo/'tools/hua_frontend.
 for mutate in [lambda x:x['symbols'].pop(),lambda x:x['facts'][0].update(node=-1),lambda x:x['functions'][0].update(writable='yes'),lambda x:x['graph'].update(budget_profile='slice'),lambda x:x.update(status='error',stage='types',error='E3004@1:1 bad')]:
     bad=json.loads(json.dumps(report));mutate(bad);old.write_text('KEEP',encoding='utf-8')
     with patch.object(frontend.subprocess,'run',return_value=subprocess.CompletedProcess([],0,json.dumps(bad),'')),redirect_stderr(io.StringIO()):
-        code=frontend.main(['check',str(source),'--hua',str(hua),'-o',str(old)])
+        code=guarded_main(frontend,['check',str(source),'--hua',str(hua),'-o',str(old)])
     assert code==3 and old.read_text()=='KEEP';checks+=2
 result={'cases':len(rows),'checks':checks,'rows':rows,'signature_count':len(actual),'source_free_huab':True}
 (out/'types-results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')

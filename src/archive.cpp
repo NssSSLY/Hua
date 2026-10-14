@@ -30,7 +30,24 @@ void valid_utf8(const std::string& s,const SourceSpan& site) {
     }
 }
 void small_name(const std::string& s,const SourceSpan& site,bool empty=false){if((!empty&&s.empty())||s.size()>4096||s.find('\0')!=std::string::npos)bad(site,"invalid name/type length");}
-void type_string(const std::string& s,const SourceSpan& site){small_name(s,site,true);
+bool value_type_allowed(std::string_view type,bool allow_void,unsigned depth=0){
+    if(depth>192)return false;
+    if(type=="void")return allow_void;
+    if(type.ends_with('?'))return value_type_allowed(type.substr(0,type.size()-1),false,depth+1);
+    if(type.starts_with('[')){auto close=type.find(']');return close!=std::string_view::npos&&value_type_allowed(type.substr(close+1),false,depth+1);}
+    for(auto name:{"Result","Task","map","List","multi"}){
+        auto ts=type_arguments(type,name);if(ts.empty())continue;
+        for(std::size_t i=0;i<ts.size();++i)if(!value_type_allowed(ts[i],i==0&&(std::string_view(name)=="Result"||std::string_view(name)=="Task"),depth+1))return false;
+    }
+    return true;
+}
+void type_string(const std::string& s,const SourceSpan& site,bool allow_void=true){small_name(s,site,true);
+    if(!value_type_allowed(s,allow_void))bad(site,"void is not an ordinary value type");
+    for(auto at=s.find('[');at!=std::string::npos;at=s.find('[',at+1)){
+        auto close=s.find(']',at+1);if(close==std::string::npos)bad(site,"invalid array type metadata");
+        auto text=std::string_view(s).substr(at+1,close-at-1);
+        if(!text.empty()){auto count=fixed_extent(text);if(!count||*count>1000000)bad(site,"fixed array size outside 0..1000000");}
+    }
     for(auto prefix:{"ref<","ptr<"})for(auto at=s.find(prefix);at!=std::string::npos;at=s.find(prefix,at+1))
         if(at==0||s[at-1]=='<'||s[at-1]==','||s[at-1]==']')bad(site,"reference/pointer execution is not implemented");
 if(std::count_if(s.begin(),s.end(),[](char c){return c=='?'||c=='['||c=='<';})>192)bad(site,"type nesting limit exceeded");}
@@ -86,7 +103,7 @@ Code code(Reader& r,const Sources& sources,std::size_t& total) {
     for(std::size_t j=0;j<count;++j) {
         auto kind=r.u8();if(kind>static_cast<unsigned>(r.format==1?Op::ExternalInit:r.format<5?Op::CheckIndex:Op::Defer))bad(r.site,"unknown opcode");Instruction op{};op.op=static_cast<Op>(kind);op.span=sources.read(r);
         op.text=r.str();small_name(op.text,r.site,true);
-        auto intrinsic=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(op.op==Op::Load&&intrinsic.starts_with("$std$")&&(!standard_function(intrinsic)||r.format<standard_function(intrinsic)->since))bad(r.site,"unsupported standard library reference");if(op.op==Op::Load&&r.format<6&&(intrinsic=="task_start"||intrinsic=="task_await"||intrinsic=="task_group_begin"||intrinsic=="task_group_end"||intrinsic=="parallel_map"||intrinsic=="simd_check"))bad(r.site,"unsupported concurrency intrinsic");op.type=r.str();type_string(op.type,r.site);op.argument=r.u32();op.target=r.u32();op.flag=r.boolean();op.constant=value(r);
+        auto intrinsic=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(op.op==Op::Load&&intrinsic.starts_with("$std$")&&(!standard_function(intrinsic)||r.format<standard_function(intrinsic)->since))bad(r.site,"unsupported standard library reference");if(op.op==Op::Load&&r.format<6&&(intrinsic=="task_start"||intrinsic=="task_await"||intrinsic=="task_group_begin"||intrinsic=="task_group_end"||intrinsic=="parallel_map"||intrinsic=="simd_check"))bad(r.site,"unsupported concurrency intrinsic");op.type=r.str();type_string(op.type,r.site,op.op!=Op::Bind&&op.op!=Op::BindMulti);op.argument=r.u32();op.target=r.u32();op.flag=r.boolean();op.constant=value(r);
         auto names=r.count(4096);for(std::size_t i=0;i<names;++i){auto n=r.str();small_name(n,r.site);op.names.push_back(std::move(n));}
         auto flags=r.count(4096);for(std::size_t i=0;i<flags;++i)op.contextual.push_back(r.boolean());c.instructions.push_back(std::move(op));
     }
@@ -112,7 +129,7 @@ void verify(const Code& c,const SemanticModel& model) {
         if(static_cast<unsigned>(op.op)>static_cast<unsigned>(Op::Defer))bad(op.span,"unknown opcode");
         if(op.op==Op::Fail&&op.type.empty()&&op.text!="interface prototype requires a concrete receiver")
             bad(op.span,"unsupported executable operation: "+op.text);
-        if(op.argument>4096)bad(op.span,"instruction argument limit exceeded");type_string(op.type,op.span);
+        if(op.argument>4096)bad(op.span,"instruction argument limit exceeded");type_string(op.type,op.span,op.op!=Op::Bind&&op.op!=Op::BindMulti);
         if(auto precise=std::get_if<NumericValue>(&op.constant.data)){auto spec=numeric_spec(precise->type);if(!spec||precise->type=="@integer"||precise->type=="int"||precise->type=="float")bad(op.span,"invalid numeric constant type");try{convert_numeric(op.constant,precise->type,op.span,true);}catch(const Diagnostic&){bad(op.span,"numeric constant out of range");}}
         if(op.constant.data.index()>4&&op.constant.data.index()!=15)bad(op.span,"non-scalar constant");if(auto f=std::get_if<double>(&op.constant.data);f&&!std::isfinite(*f))bad(op.span,"non-finite constant");
         if((op.op==Op::Jump||op.op==Op::JumpFalse||op.op==Op::JumpTrue||op.op==Op::IterNext)&&op.target>=c.instructions.size())bad(op.span,"jump target out of bounds");
@@ -195,8 +212,8 @@ void write_huab(const std::filesystem::path& path,const Bytecode& b,const Semant
     std::size_t text_bytes=0,metadata=0;
     for(auto s:sources){if(!s||s->filename().empty()||s->filename().size()>16384||s->filename().find('\0')!=std::string::npos)bad({},"invalid source id");text_bytes+=s->text().size();}
     if(text_bytes>64*1024*1024)bad({},"source table exceeds 64 MiB");
-    for(const auto& [name,n]:model.structures){small_name(name,n->span);if(n->children.size()>4096)bad(n->span,"field count limit exceeded");metadata+=n->children.size();for(const auto& f:n->children){small_name(f->text,f->span);type_string(type_name(*f->children[0]),f->span);}}
-    for(const auto& [name,n]:model.functions){small_name(name,n->span);std::size_t ps=0,rs=0;for(const auto& c:n->children){if(c->kind==NodeKind::Parameter){++ps;small_name(declared_name(*c),c->span);type_string(c->children.empty()?"":type_name(*c->children[0]),c->span);}if(c->kind==NodeKind::ReturnTypes){rs+=c->children.size();for(const auto& t:c->children)type_string(type_name(*t),t->span);}}if(ps>4096||rs>4096)bad(n->span,"signature count limit exceeded");metadata+=ps+rs;}
+    for(const auto& [name,n]:model.structures){small_name(name,n->span);if(n->children.size()>4096)bad(n->span,"field count limit exceeded");metadata+=n->children.size();for(const auto& f:n->children){small_name(f->text,f->span);type_string(type_name(*f->children[0]),f->span,f->text.starts_with("$")&&f->text.ends_with("#void"));}}
+    for(const auto& [name,n]:model.functions){small_name(name,n->span);std::size_t ps=0,rs=0;for(const auto& c:n->children){if(c->kind==NodeKind::Parameter){++ps;small_name(declared_name(*c),c->span);type_string(c->children.empty()?"":type_name(*c->children[0]),c->span,false);}if(c->kind==NodeKind::ReturnTypes){rs+=c->children.size();for(const auto& t:c->children)type_string(type_name(*t),t->span,c->children.size()==1);}}if(ps>4096||rs>4096)bad(n->span,"signature count limit exceeded");metadata+=ps+rs;}
     if(metadata>1000000)bad({},"metadata count budget exceeded");
     Sources src(sources);Writer w;w.count(sources.size());for(auto s:sources){w.str(s->filename());w.str(s->text());}
     std::vector<std::pair<std::string,const Node*>> structures(model.structures.begin(),model.structures.end()),functions(model.functions.begin(),model.functions.end());
@@ -240,15 +257,15 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     std::vector<const Source*> originals;for(const auto& s:image.sources)originals.push_back(s.get());Sources src(originals);std::size_t fields_total=0;
     auto structures=r.count(16384);for(std::size_t i=0;i<structures;++i) {
         auto raw=r.str();auto name=raw.substr(0,raw.find(' '));if(raw!=name&&format<5)bad(site,"unsupported structure kind");if(raw!=name&&raw!=name+" interface"&&raw!=name+" enum")bad(site,"unknown structure kind");small_name(name,site);auto span=src.read(r);bool pub=r.boolean();auto n=std::make_unique<Node>(NodeKind::Struct,span,raw+(pub?" pub":""));auto count=r.count(4096);fields_total+=count;if(fields_total>1000000)bad(site,"metadata count budget exceeded");std::set<std::string> fields;
-        for(std::size_t j=0;j<count;++j){auto field=r.str(),type=r.str();small_name(field,site);type_string(type,site);auto fs=src.read(r);if(!fields.insert(field).second)bad(site,"duplicate field");auto f=std::make_unique<Node>(NodeKind::Field,fs,field);f->add(std::make_unique<Node>(NodeKind::TypeName,fs,type));n->add(std::move(f));}
+        for(std::size_t j=0;j<count;++j){auto field=r.str(),type=r.str();small_name(field,site);type_string(type,site,field.starts_with("$")&&field.ends_with("#void"));auto fs=src.read(r);if(!fields.insert(field).second)bad(site,"duplicate field");auto f=std::make_unique<Node>(NodeKind::Field,fs,field);f->add(std::make_unique<Node>(NodeKind::TypeName,fs,type));n->add(std::move(f));}
         if(!image.model.structures.emplace(name,n.get()).second)bad(site,"duplicate struct metadata");image.declarations.push_back(std::move(n));
     }
     auto functions=r.count(16384);for(std::size_t i=0;i<functions;++i) {
         auto raw=r.str();auto name=raw.substr(0,raw.find(' '));if(raw!=name&&format<5)bad(site,"unsupported function kind");if(raw!=name&&raw!=name+" abstract"&&raw!=name+" nested")bad(site,"unknown function kind");small_name(name,site);auto span=src.read(r);bool pub=r.boolean(),unsafe=r.boolean(),external=r.boolean(),mut=r.boolean();
         auto n=std::make_unique<Node>(NodeKind::Function,span,raw+(pub?" pub":"")+(unsafe?" unsafe":"")+(external?" external":""));auto count=r.count(4096);fields_total+=count;if(fields_total>1000000)bad(site,"metadata count budget exceeded");std::set<std::string> params;
         if(name=="main"&&count)bad(site,"main requires no parameters");
-        for(std::size_t j=0;j<count;++j){auto name_p=r.str(),type=r.str();small_name(name_p,site);type_string(type,site);bool writable=r.boolean();auto ps=src.read(r);if(!params.insert(name_p).second)bad(site,"duplicate parameter");auto p=std::make_unique<Node>(NodeKind::Parameter,ps,name_p+(writable?" mut":""));if(!type.empty())p->add(std::make_unique<Node>(NodeKind::TypeName,ps,type));n->add(std::move(p));}
-        auto results=r.count(4096);fields_total+=results;if(fields_total>1000000)bad(site,"metadata count budget exceeded");if(results){auto returns=std::make_unique<Node>(NodeKind::ReturnTypes,span);for(std::size_t j=0;j<results;++j){auto t=r.str();type_string(t,site);returns->add(std::make_unique<Node>(NodeKind::TypeName,span,t));}n->add(std::move(returns));}
+        for(std::size_t j=0;j<count;++j){auto name_p=r.str(),type=r.str();small_name(name_p,site);type_string(type,site,false);bool writable=r.boolean();auto ps=src.read(r);if(!params.insert(name_p).second)bad(site,"duplicate parameter");auto p=std::make_unique<Node>(NodeKind::Parameter,ps,name_p+(writable?" mut":""));if(!type.empty())p->add(std::make_unique<Node>(NodeKind::TypeName,ps,type));n->add(std::move(p));}
+        auto results=r.count(4096);fields_total+=results;if(fields_total>1000000)bad(site,"metadata count budget exceeded");if(results){auto returns=std::make_unique<Node>(NodeKind::ReturnTypes,span);for(std::size_t j=0;j<results;++j){auto t=r.str();type_string(t,site,results==1);returns->add(std::make_unique<Node>(NodeKind::TypeName,span,t));}n->add(std::move(returns));}
         if(image.model.structures.contains(name)||!image.model.functions.emplace(name,n.get()).second)bad(site,"duplicate function metadata");
         if(auto dot=name.find('.');dot!=std::string::npos){if(!image.model.structures.contains(name.substr(0,dot)))bad(site,"method owner missing");image.model.mutating[name]=mut;}
         if(raw==name+" nested")image.model.nested[n.get()]=true;

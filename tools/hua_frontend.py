@@ -347,24 +347,34 @@ def validate_bytecode(report,contract):
         if t.endswith("?"):return valid_type(t[:-1],depth+1)
         if t.startswith("["):
             a=re.fullmatch(r"\[([0-9_]*)\](.*)",t)
-            return bool(a) and (not a[1] or bool(a[1].replace("_",""))) and valid_type(a[2],depth+1)
+            if not a:return False
+            digits=a[1].replace("_","").lstrip("0") or "0"
+            return (not a[1] or bool(re.fullmatch(r"[0-9](?:_?[0-9])*",a[1])) and len(digits)<=7 and int(digits)<=1000000) and valid_type(a[2],depth+1)
         for name,counts in [("Result",{2}),("map",{2}),("List",{1}),("multi",None)]:
             ps=parts(t,name)
             if ps:return (len(ps) in counts if counts else len(ps)>=2) and all(valid_type(p,depth+1) for p in ps)
         return False
+    def value_type_allowed(t,allow_void):
+        if t=="void":return allow_void
+        if t.endswith("?"):return value_type_allowed(t[:-1],False)
+        if t.startswith("["):return value_type_allowed(t[t.index("]")+1:],False)
+        for name in ("Result","List","map","multi"):
+            ps=parts(t,name)
+            if ps:return all(value_type_allowed(p,i==0 and name=="Result") for i,p in enumerate(ps))
+        return True
     for st in structures:
         if not small(st["name"]) or not site(st["site"]) or type(st["published"]) is not bool or type(st["enumeration"]) is not bool or not isinstance(st["fields"],list) or len(st["fields"])>4096:raise ValueError("invalid C06 structure")
         names=set()
         for f in st["fields"]:
-            if not small(f["name"]) or f["name"] in names or not site(f["site"]) or not valid_type(f["type_name"]):raise ValueError("invalid C06 field")
+            if not small(f["name"]) or f["name"] in names or not site(f["site"]) or not valid_type(f["type_name"]) or not value_type_allowed(f["type_name"],f["name"].startswith("$") and f["name"].endswith("#void")):raise ValueError("invalid C06 field")
             names.add(f["name"])
     for f in functions:
         if not small(f["name"]) or not site(f["site"]) or type(f["published"]) is not bool or type(f["writable"]) is not bool or not isinstance(f["parameters"],list) or not isinstance(f["returns"],list) or max(len(f["parameters"]),len(f["returns"]))>4096 or f["name"]!=f["code"]["name"]:raise ValueError("invalid C06 function")
         names=set()
         for p in f["parameters"]:
-            if not small(p["name"]) or p["name"] in names or not valid_type(p["type_name"]) or not site(p["site"]) or type(p["writable"]) is not bool:raise ValueError("invalid C06 parameter")
+            if not small(p["name"]) or p["name"] in names or not valid_type(p["type_name"]) or not value_type_allowed(p["type_name"],False) or not site(p["site"]) or type(p["writable"]) is not bool:raise ValueError("invalid C06 parameter")
             names.add(p["name"])
-        if not all(valid_type(t) for t in f["returns"]) or f["name"]=="main" and f["parameters"]:raise ValueError("invalid C06 return/entry")
+        if not all(valid_type(t) and value_type_allowed(t,len(f["returns"])==1) for t in f["returns"]) or f["name"]=="main" and f["parameters"]:raise ValueError("invalid C06 return/entry")
     initializer=report["initializer"]
     if initializer["name"]!="<initialize>":raise ValueError("invalid C06 initializer")
     globals_=fn|{op["text"] for op in initializer["instructions"] if op["op"]==2}|{n for op in initializer["instructions"] if op["op"]==35 for n in op["names"]}
@@ -377,6 +387,7 @@ def validate_bytecode(report,contract):
         for op in ops:
             tag=op["op"];const=op["constant"]
             if type(tag) is not int or not 0<=tag<len(limits["opcodes"]) or tag in limits["excluded_opcodes"] or not site(op["site"]) or not small(op["text"],True) or not (tag==27 and op["type_name"]=="E4002" or valid_type(op["type_name"])) or type(op["flag"]) is not bool:raise ValueError("invalid C06 instruction")
+            if not value_type_allowed(op["type_name"],tag not in (2,35)):raise ValueError("invalid C06 void value")
             if type(op["argument"]) is not int or not 0<=op["argument"]<=4096 or type(op["target"]) is not int or op["target"]<0:raise ValueError("invalid C06 operand")
             if not isinstance(op["names"],list) or not isinstance(op["contextual"],list) or max(len(op["names"]),len(op["contextual"]))>4096 or not all(small(n) for n in op["names"]) or not all(type(b) is bool for b in op["contextual"]):raise ValueError("invalid C06 vector metadata")
             kind,text=const["kind"],const["text"]

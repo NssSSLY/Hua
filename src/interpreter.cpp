@@ -1,3 +1,4 @@
+#include "hua/location.hpp"
 #include <exception>
 #include "hua/interpreter.hpp"
 #include "hua/runtime.hpp"
@@ -80,7 +81,7 @@ Routine<void> Interpreter::execute(const Node& n) {
     co_await Yield{};tick(n);
     switch(n.kind) {
     case N::Function:bind(declared_name(n),Value(closure(n)),"fn:"+declared_name(n),false,n.span);break;
-    case N::Defer:{const auto& expression=*n.children[0];auto callee=(co_await evaluate(*expression.children[0]));auto fn=std::get_if<Callable>(&callee.data);if(!fn)runtime_error(n.span,"defer requires a callable","E4003");std::vector<Value> args;for(std::size_t i=1;i<expression.children.size();++i)args.push_back(copy_value((co_await evaluate(*expression.children[i]))));environment_->deferred.push_back({*fn,std::move(args),&expression});break;}
+    case N::Defer:{const auto& expression=*n.children[0];auto callee=(co_await evaluate(*expression.children[0]));std::vector<Value> args;for(std::size_t i=1;i<expression.children.size();++i)args.push_back((co_await evaluate(*expression.children[i])));auto fn=std::get_if<Callable>(&callee.data);if(!fn)runtime_error(n.span,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(std::move(arg));environment_->deferred.push_back({*fn,std::move(args),&expression});break;}
     case N::ExternalInit:if(context_&&context_->in_task)runtime_error(n.span,"Native/WASM initialization cannot run in tasks","E4104");model_.external->initialize(n.text,n.span);break;
     case N::Block:co_await block(n);break;
     case N::Let:case N::Var:case N::Const: {
@@ -95,7 +96,7 @@ Routine<void> Interpreter::execute(const Node& n) {
         auto pack=(co_await evaluate(*n.children[1]));auto values=unpack_multi(pack,list.children.size(),n.span);auto data=std::get<MultiValue>(pack.data).data;
         for(std::size_t i=0;i<values.size();++i){auto type=n.kind==N::MultiBinding?(list.children[i]->text=="_"?"":model_.types.at(list.children[i].get())):locations[i].type;values[i]=copy_value(enforce_type(std::move(values[i]),type,n.span,i<data->contextual.size()&&data->contextual[i]));}
         if(n.kind==N::MultiBinding){for(std::size_t i=0;i<values.size();++i)if(list.children[i]->text!="_")bind(list.children[i]->text,values[i],model_.types.at(list.children[i].get()),n.text=="var",n.span);}
-        else for(std::size_t i=0;i<values.size();++i)if(locations[i].value||locations[i].map||locations[i].sequence)location_write(locations[i],values[i]);break;
+        else {prepare_map_writes(locations,n.span);for(std::size_t i=0;i<values.size();++i)if(locations[i].value||locations[i].map||locations[i].sequence)location_write(locations[i],values[i],n.span);}break;
     }
     case N::ExpressionStatement:co_await evaluate(*n.children[0]);break;
     case N::Match:{auto value=(co_await evaluate(*n.children[0]));Value tag=value;auto object=std::get_if<StructValue>(&value.data);if(object&&object->data->fields.contains("$case"))tag=object->data->fields.at("$case");for(std::size_t i=1;i<n.children.size();++i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];bool any=pattern.kind==N::Name&&display_type(pattern.text)=="_";if(!any&&!as_bool(binary_value("==",tag,model_.constants.at(&pattern),pattern.span),pattern.span))continue;Environment local{environment_,{}};Restore guard(environment_,&local);if(!any&&object){auto name=show(tag);for(std::size_t j=0;j<arm.children[1]->children.size();++j){const auto& binding=*arm.children[1]->children[j];if(binding.text=="_")continue;auto field="$"+name+"#"+std::to_string(j)+"#"+model_.types.at(&binding);bind(binding.text,enforce_type(copy_value(object->data->fields.at(field)),model_.types.at(&binding),binding.span),model_.types.at(&binding),false,binding.span);}}(co_await block(*arm.children[2],false));break;}break;}
@@ -133,7 +134,7 @@ Routine<void> Interpreter::execute(const Node& n) {
         break;
     }
     case N::Return:
-        if(n.children.size()>1){std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back(copy_value((co_await evaluate(*c))));contextual.push_back(contextual_literal(*c));}throw Returned{make_multi(std::move(values),std::move(contextual)),false};}
+        if(n.children.size()>1){std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back((co_await evaluate(*c)));contextual.push_back(contextual_literal(*c));}for(auto& value:values)value=copy_value(std::move(value));throw Returned{make_multi(std::move(values),std::move(contextual)),false};}
         throw Returned{n.children.empty()?Value{}:copy_value((co_await evaluate(*n.children[0]))),!n.children.empty()&&contextual_literal(*n.children[0])};
     case N::Break:throw Broken{};case N::Continue:throw Continued{};
     case N::Import:runtime_error(n.span,"module loading requires the ModuleLoader entry point","E4008");
@@ -164,7 +165,7 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     switch(n.kind) {
     case N::Integer:case N::Float:case N::String:case N::Boolean:case N::Nil:co_return literal(n);
     case N::Name:{auto& b=environment_->lookup(n.text,n.span);co_return b.value;}
-    case N::Pack:{std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back(copy_value((co_await evaluate(*c))));contextual.push_back(contextual_literal(*c));}co_return make_multi(std::move(values),std::move(contextual));}
+    case N::Pack:{std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back((co_await evaluate(*c)));contextual.push_back(contextual_literal(*c));}for(auto& value:values)value=copy_value(std::move(value));co_return make_multi(std::move(values),std::move(contextual));}
     case N::MapLiteral:{auto value=make_map(type_name(*n.children[0]),n.span);auto& map=std::get<MapValue>(value.data);for(std::size_t i=1;i<n.children.size();++i){auto key=(co_await evaluate(*n.children[i]->children[0]));auto item=(co_await evaluate(*n.children[i]->children[1]));map_put(map,key,std::move(item),n.children[i]->span,contextual_literal(*n.children[i]->children[1]));}co_return value;}
     case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value),false};co_return result_payload(value,true,n.span);}
     case N::Unary: {
@@ -188,7 +189,7 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
             if(n.text!="=")value=binary_value(n.text.substr(0,n.text.size()-1),location_read(where,n.span),value,n.span,numeric_literal(*n.children[1]));
         }
         value=enforce_type(std::move(value),where.type,n.span,n.kind==N::Update||n.text!="="||contextual_literal(*n.children[1]));
-        location_write(where,value);co_return value;
+        location_write(where,value,n.span);co_return value;
     }
     case N::Array: {
         auto storage=managed<std::vector<Value>>();std::string type;
@@ -227,9 +228,10 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
         co_return Value(Callable{method->second,"",*object});
     }
     case N::Call: {
-        auto value=(co_await evaluate(*n.children[0]));auto callable=std::get_if<Callable>(&value.data);
-        if(!callable)runtime_error(n.span,"value is not callable","E4003");
-        std::vector<Value> args;for(std::size_t i=1;i<n.children.size();++i)args.push_back((co_await evaluate(*n.children[i])));co_return (co_await call(*callable,args,n));
+        auto value=(co_await evaluate(*n.children[0]));
+        std::vector<Value> args;for(std::size_t i=1;i<n.children.size();++i)args.push_back((co_await evaluate(*n.children[i])));
+        auto callable=std::get_if<Callable>(&value.data);if(!callable)runtime_error(n.span,"value is not callable","E4003");
+        co_return (co_await call(*callable,args,n));
     }
     default:runtime_error(n.span,"expression is not executable in Phase 2","E4008");
     }

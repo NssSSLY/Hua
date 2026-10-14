@@ -1,3 +1,4 @@
+from process_guard import run as run_process, guarded_main
 # C06: exact instructions, four compiler paths, independent behavior and corruptions.
 from pathlib import Path
 import ast,subprocess,sys,json,struct,shutil,re,importlib.util,copy,io,time
@@ -8,7 +9,7 @@ smoke=len(sys.argv)>8 and sys.argv[8]=='--smoke'
 out=build/'c06';out.mkdir(exist_ok=True);work=out/'acceptance';work.mkdir(exist_ok=True)
 rows=[];checks=0;started=time.monotonic()
 def invoke(args,code=0,timeout=600):
-    p=subprocess.run(list(map(str,args)),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
+    p=run_process(list(map(str,args)),capture_output=True,text=True,encoding='utf-8',timeout=timeout)
     assert p.returncode==code,(args,p.returncode,p.stdout[:1500],p.stderr[:4000])
     return p
 spec=importlib.util.spec_from_file_location('c06_runner',repo/'tools/hua_frontend.py')
@@ -32,11 +33,12 @@ for n in ast.parse((repo/'tests/selfhost_lowering_tests.py').read_text(encoding=
     if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id in ('positive','runtime_errors','negative'):
         fixtures[n.targets[0].id]=ast.literal_eval(n.value)
 positive=fixtures['positive'];errors={k:(v if isinstance(v,str) else v[0]) for k,v in fixtures['runtime_errors'].items()};negative=fixtures['negative']
-negative['array_mixed_spelling']=('fn f(x [02]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a))}\n','E3004')
+positive['array_identity']=('fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a))}\n','2\n')
 positive.update({
-'array_raw_argument':('fn f(x [0_2]int) int{return x[1]}\nfn main(){print(f([1,2]))}\n','2\n'),
-'array_raw_metadata':('fn f(x [0_2]int) int{return x[1]}\nfn g(x [02]int) int{return x[1]}\nfn main(){print("raw")}\n','raw\n'),
-'map_array_raw':('fn main(){let a map[string][0_2]int=map[string][0_2]int{"x":[1,2]}\nprint(type(a),type(unwrap(a["x"])),unwrap(a["x"])[1])}\n','map<string,[0_2]int> [2]int 2\n'),
+'array_binding':('fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a))}\n','2\n'),
+'array_argument':('fn f(x [2]int) int{return x[1]}\nfn main(){print(f([1,2]))}\n','2\n'),
+'array_metadata':('fn f(x [2]int) int{return x[1]}\nfn g(x [2]int) int{return x[1]}\nfn main(){print("raw")}\n','raw\n'),
+'map_array':('fn main(){let a map[string][2]int=map[string][2]int{"x":[1,2]}\nprint(type(a),type(unwrap(a["x"])),unwrap(a["x"])[1])}\n','map<string,[2]int> [2]int 2\n'),
 'literal_bases':('fn main(){print(0x7f,0b101,0o17,1_234,-0x8000000000000000,+1,-(-1))}\n',None),
 'float_constants':('fn main(){print(0.1,1.2345678901234567,1e3,-0.0,+(-1.5),01.5,~2)}\n',None),
 'multi_discard':('fn f()(int,string){return 2,"a"}\nfn main(){let _,b=f()\nvar a,_=f()\na,_=f()\nprint(a,b)}\n','2 a\n'),
@@ -47,7 +49,6 @@ positive.update({
 })
 errors.update({
 
-'array_raw_binding':'fn f(x [02]int) int{return x[1]}\nfn main(){let a [02]int=[1,2]\nprint(f(a))}\n',
 'int_too_large':'fn main(){print(9223372036854775808)}\n',
 'min_negation':'fn main(){print(-(-9223372036854775808))}\n',
 'float_too_large':'fn main(){print(1e999)}\n',
@@ -123,6 +124,7 @@ def case(label,text,expected=None,error=None,files=None,filename='input.hua'):
     checks+=14+r['instructions'];rows.append({'case':label,'status':'ok','instructions':r['instructions'],'output':baseline[0].stdout})
     return r
 case('filesystem_effect','',expected='true\n')
+negative.update({c['name']:(c['source'],c['want']) for c in json.loads((repo/'tests/data/a02_cases.json').read_text(encoding='utf-8')) if c['name'].startswith('array_syntax_')})
 for n,(text,expected) in positive.items():case(n,text,expected)
 for n,text in errors.items():case(n,text)
 for n,(text,ec) in negative.items():case(n,text,error=ec)
@@ -168,6 +170,10 @@ bad_cases={
 'unknown_binding':[(1,0,0,'missing','',[],[]),(22,0,0,'','',[],[])],
 'unknown_struct':[(19,0,0,'Missing','',[],[]),(22,0,0,'','',[],[])],
 'bad_type':[(0,0,0,'','Missing',[],[]),(22,0,0,'','',[],[])],
+'array_size_limit':[(0,0,0,'','[1000001]int',[],[]),(22,0,0,'','',[],[])],
+'array_bad_separator':[(0,0,0,'','[0__2]int',[],[]),(22,0,0,'','',[],[])],
+'void_array':[(0,0,0,'','[1]void',[],[]),(22,0,0,'','',[],[])],
+'void_bind':[(0,0,0,'','',[],[]),(2,0,0,'x','void',[],[False]),(0,0,0,'','',[],[]),(22,0,0,'','',[],[])],
 'bad_call_flags':[(0,0,0,'','',[],[]),(21,0,2,'','',[],[]),(22,0,0,'','',[],[])],
 'bad_propagation':[(0,0,0,'','',[],[]),(37,0,0,'','',[],[]),(22,0,0,'','',[],[])],
 'bad_map':[(32,0,0,'','map<float,int>',[],[]),(22,0,0,'','',[],[])],
@@ -177,6 +183,7 @@ bad_cases={
 'branch_merge':[(0,0,0,'','',[],[]),(7,4,0,'','',[],[]),(9,0,0,'','',[],[]),(6,5,0,'','',[],[]),(0,0,0,'','',[],[]),(22,0,0,'','',[],[])]
 }
 def hx(x):
+    if isinstance(x,bool):return "true" if x else "false"
     if isinstance(x,str):return json.dumps(x,ensure_ascii=False)
     if isinstance(x,list):return '['+','.join(hx(y) for y in x)+']'
     return str(x)
@@ -203,6 +210,10 @@ bad('verification',lambda r:r['verification'].update(max_stack=4097))
 bad('reference',lambda r:next(x for x in r['functions'][0]['code']['instructions'] if x['op']==1).update(text='missing'))
 bad('call_flags',lambda r:next(x for x in r['functions'][0]['code']['instructions'] if x['op']==21).update(contextual=[]))
 bad('empty_array_size',lambda r:r['functions'][0].update(returns=['[___]int']))
+bad('oversized_array',lambda r:r['functions'][0].update(returns=['[1000001]int']))
+bad('array_separator',lambda r:r['functions'][0].update(returns=['[0__2]int']))
+bad('void_array_type',lambda r:r['functions'][0].update(returns=['[1]void']))
+bad('void_parameter',lambda r:r['functions'][0].update(parameters=[{'name':'x','type_name':'void','writable':False,'site':0}]))
 bad('profile',lambda r:r.update(profile='C05-L1'))
 bad('unknown_std',lambda r:next(x for x in r['functions'][0]['code']['instructions'] if x['op']==1).update(text='$core$$std$strings$missing'))
 bad('bool_opcode',lambda r:r['functions'][0]['code']['instructions'][0].update(op=True))
@@ -211,7 +222,7 @@ for label,r in mutations:
     target.write_text('KEEP',encoding='utf-8')
     fake=subprocess.CompletedProcess([],0,json.dumps(r),'')
     with patch.object(runner.subprocess,'run',return_value=fake),redirect_stderr(io.StringIO()) as err:
-        rc=runner.main(['emit',str(src),'-o',str(target),'--hua',str(hua)])
+        rc=guarded_main(runner,['emit',str(src),'-o',str(target),'--hua',str(hua)])
     assert rc==3 and target.read_text()=='KEEP',(label,rc,err.getvalue())
     checks+=2
 
@@ -223,7 +234,7 @@ for label,side_effect,stdout,stderr,expected in [
     target.write_text('KEEP',encoding='utf-8')
     kwargs={'side_effect':side_effect} if side_effect else {'return_value':subprocess.CompletedProcess([],1 if stderr else 0,stdout,stderr)}
     with patch.object(runner.subprocess,'run',**kwargs),redirect_stderr(io.StringIO()):
-        rc=runner.main(['emit',str(src),'-o',str(target),'--hua',str(hua)])
+        rc=guarded_main(runner,['emit',str(src),'-o',str(target),'--hua',str(hua)])
     assert rc==expected and target.read_text()=='KEEP',(label,rc)
     checks+=2
 # Transport source normalization/relocation is deterministic, including BOM+CRLF.

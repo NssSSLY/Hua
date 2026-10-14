@@ -35,7 +35,7 @@ private:
     const Node* current_function_{};
     Symbol& lookup(const std::string& name, const SourceSpan& span);
     void define(const std::string& name, Symbol symbol, const SourceSpan& span);
-    void validate_type(const Node& node);
+    void validate_type(const Node& node,bool allow_void=false);
     void statements(const Node& block, bool scope = true);
     void statement(const Node& node);
     Info expression(const Node& node);

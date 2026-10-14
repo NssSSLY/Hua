@@ -1,3 +1,4 @@
+#include "hua/location.hpp"
 #include <exception>
 #include "hua/vm.hpp"
 #include "hua/runtime.hpp"
@@ -92,6 +93,8 @@ Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Va
     co_return;
 }
 Routine<void> VirtualMachine::finish_return(Value value,const Instruction& op,bool early) {
+    // Save the language value before deferred calls can mutate its source.
+    value=copy_value(std::move(value));
     auto f=frames_.back();
     for(auto env=f.environment;env&&env!=global_;env=env->parent)(co_await drain(env));if(!f.function)(co_await drain(global_));if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),*f.function,f.site,op.flag);
     auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
@@ -166,7 +169,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             if(stack_.size()<=f.base)invalid(s);
             auto where=std::get<Location>(stack_.back());stack_.pop_back();
             if(op.text!="=")value=binary_value(op.text.substr(0,op.text.size()-1),location_read(where,s),value,s,op.flag);
-            value=enforce_type(std::move(value),where.type,s,op.flag||op.text!="=");location_write(where,value);stack_.emplace_back(std::move(value));break;
+            value=enforce_type(std::move(value),where.type,s,op.flag||op.text!="=");location_write(where,value,s);stack_.emplace_back(std::move(value));break;
         }
         case Op::MakeMulti:{auto values=arguments(op.argument,s);for(auto& v:values)v=copy_value(v);stack_.emplace_back(make_multi(std::move(values),op.contextual));break;}
         case Op::BindMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto types=type_arguments(op.type,"multi");if(types.size()!=values.size()||op.names.size()!=values.size())invalid(s);auto data=std::get<MultiValue>(pack.data).data;
@@ -175,7 +178,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::StoreMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto data=std::get<MultiValue>(pack.data).data;std::vector<Location> ls(op.argument);
             for(std::size_t i=op.argument;i>0;--i){if(stack_.size()<=f.base||!std::holds_alternative<Location>(stack_.back()))invalid(s);ls[i-1]=std::get<Location>(stack_.back());stack_.pop_back();}
             for(std::size_t i=0;i<values.size();++i)values[i]=copy_value(enforce_type(std::move(values[i]),ls[i].type,s,i<data->contextual.size()&&data->contextual[i]));
-            for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i]);break;}
+            prepare_map_writes(ls,s);for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i],s);break;}
         case Op::MakeMap:stack_.emplace_back(make_map(op.type,s));break;
         case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);auto m=std::get_if<MapValue>(&std::get<Value>(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
         case Op::Propagate:{auto value=pop(s);auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else (co_await finish_return(propagated_error(value),op,true));break;}

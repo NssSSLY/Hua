@@ -105,6 +105,8 @@ Value aggregate_member(const Value& value, const std::string& name, const Source
 Value propagated_error(const Value& value);
 Value result_payload(const Value& value, bool success, const SourceSpan& span);
 std::string declared_name(const Node& node);
+std::optional<std::uint64_t> fixed_extent(std::string_view text);
+std::string canonical_type(std::string_view type);
 std::string type_name(const Node& node);
 std::string value_type(const Value& value);
 std::string display_type(std::string type);

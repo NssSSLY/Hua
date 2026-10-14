@@ -1,3 +1,4 @@
+from process_guard import run as run_process, guarded_main
 # C07: complete Hua encoding, independent native writer/reader and safe publication.
 from pathlib import Path
 import ast,subprocess,sys,json,struct,shutil,re,importlib.util,io,copy,zlib,time
@@ -8,7 +9,7 @@ smoke=len(sys.argv)>6 and sys.argv[6]=='--smoke'
 out=build/'c07';out.mkdir(exist_ok=True);work=out/'acceptance';work.mkdir(exist_ok=True)
 entry=repo/'selfhost/archive_main.hua';records=[];checks=0;started=time.monotonic()
 def invoke(args,code=0,timeout=600):
- p=subprocess.run(list(map(str,args)),capture_output=True,encoding='utf-8',timeout=timeout)
+ p=run_process(list(map(str,args)),capture_output=True,encoding='utf-8',timeout=timeout)
  assert p.returncode==code,(args,p.returncode,p.stdout[:1500],p.stderr[:4000])
  return p
 spec=importlib.util.spec_from_file_location('runner',repo/'tools/hua_frontend.py');runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
@@ -30,7 +31,7 @@ positive.update({
  'int_limits':('fn main(){print(-9223372036854775808,9223372036854775807,0x7f,0b101,0o17,1_234)}\n',None),
  'float_bits':('fn main(){print(0.0,-0.0,0.1,1.2345678901234567,1e3,-1.5,2.2250738585072014e-308,1.7976931348623157e308)}\n',None),
  'void_gate':('fn f() Result<void>{return ok()}\nfn main(){print(is_ok(f()))}\n','true\n'),
- 'raw_array':('fn f(x [0_2]int) int{return x[1]}\nfn main(){print(f([1,2]))}\n','2\n'),
+ 'fixed_array':('fn f(x [2]int) int{return x[1]}\nfn main(){print(f([1,2]))}\n','2\n'),
  'init_order':('print("init")\nfn main(){print("main")}\n','init\nmain\n')})
 receipts={}
 def case(label,text,expected=None,runtime=False,files=None,filename='input.hua',reject=None):
@@ -57,7 +58,7 @@ def case(label,text,expected=None,runtime=False,files=None,filename='input.hua',
  assert all(p.read_bytes()==artifacts[0].read_bytes() for p in artifacts),label
  assert not list(project.glob('hua-huab-*'))
  if reject:
-  with redirect_stderr(io.StringIO()):assert runner.main(['build',str(source),'--hua',str(hua),'-o',str(artifacts[0])])==1
+  with redirect_stderr(io.StringIO()):assert guarded_main(runner,['build',str(source),'--hua',str(hua),'-o',str(artifacts[0])])==1
   assert artifacts[0].read_bytes()==b'KEEP';checks+=4;records.append({'case':label,'status':'rejected'});return
  baseline=[invoke([hua,a,source],1 if runtime else 0) for a in ('interpret','run')];assert baseline[0].stdout==baseline[1].stdout
  if expected is not None:assert baseline[0].stdout==expected,(label,baseline[0].stdout,expected)
@@ -74,6 +75,7 @@ def case(label,text,expected=None,runtime=False,files=None,filename='input.hua',
    ec=re.search(r'error\[(E\d+)\]',baseline[0].stderr)[1];assert 'error['+ec+']' in p.stderr
    pos=re.search(r':(\d+):(\d+)',baseline[0].stderr);assert f'{filename}:{pos[1]}:{pos[2]}' in p.stderr
  checks+=5+len(paths);records.append({'case':label,'status':'ok','format':results[0]['format'],'bytes':results[0]['file_bytes']})
+negative.update({c['name']:(c['source'],c['want']) for c in json.loads((repo/'tests/data/a02_cases.json').read_text(encoding='utf-8')) if c['name'].startswith('array_syntax_')})
 for label,(text,expected) in positive.items():case(label,text,expected)
 for label,value in errors.items():case(label,value if isinstance(value,str) else value[0],runtime=True)
 for label,(text,ec) in negative.items():case(label,text,reject=ec)
@@ -86,7 +88,7 @@ relocations=[]
 for label,text in [('root-a','\ufeffstruct Z{x int}\r\nstruct A{x int}\r\nfn z()int{return 1}\r\nfn main(){print(z())}\r\n'),('root-b','struct Z{x int}\nstruct A{x int}\nfn z()int{return 1}\nfn main(){print(z())}\n')]:
  project=work/label;project.mkdir(exist_ok=True);source=project/'same.hua';source.write_text(text,encoding='utf-8',newline='')
  target=project/'out.huab'
- with redirect_stdout(io.StringIO()):assert runner.main(['build',str(source),'--hua',str(hua),'-o',str(target)])==0
+ with redirect_stdout(io.StringIO()):assert guarded_main(runner,['build',str(source),'--hua',str(hua),'-o',str(target)])==0
  relocations.append(target.read_bytes())
 assert relocations[0]==relocations[1];checks+=3
 # Float subnormals are tested through the public bytecode image encoder directly,
@@ -116,14 +118,14 @@ for label,data in corruptions.items():
 project=work/'publication';project.mkdir(exist_ok=True);source=project/'input.hua';target=project/'keep.huab';marker=project/'effect.txt';marker.unlink(missing_ok=True)
 source.write_text('import std.fs as fs\nlet done=fs.write_text('+json.dumps(marker.as_posix())+',"touched")\nfn main(){print(unwrap(done))}\n',encoding='utf-8')
 target.write_bytes(b'KEEP')
-with redirect_stdout(io.StringIO()):assert runner.main(['build',str(source),'--hua',str(hua),'-o',str(target)])==0
+with redirect_stdout(io.StringIO()):assert guarded_main(runner,['build',str(source),'--hua',str(hua),'-o',str(target)])==0
 assert not marker.exists();kept=target.read_bytes()
 source.write_text('fn main(){let n int="wrong"}\n',encoding='utf-8')
-with redirect_stderr(io.StringIO()):assert runner.main(['build',str(source),'--hua',str(hua),'-o',str(target)])==1
+with redirect_stderr(io.StringIO()):assert guarded_main(runner,['build',str(source),'--hua',str(hua),'-o',str(target)])==1
 assert target.read_bytes()==kept and not list(project.glob('*.tmp-*')) and not list(project.glob('hua-huab-*'))
 source.write_text('fn main(){print(1)}\n',encoding='utf-8')
 for args in [['build',str(source),'--hua',str(hua)],['build',str(source),'--hua',str(hua),'-o',str(project/'bad.json')],['build',str(source),'--hua',str(hua),'-o',str(target),'--budget','slice']]:
- with redirect_stderr(io.StringIO()):assert runner.main(args)==2
+ with redirect_stderr(io.StringIO()):assert guarded_main(runner,args)==2
  assert target.read_bytes()==kept
 # A real Python command writes UTF-8 JSON even when Windows defaults to ANSI.
 source=project/'中文🙂.hua';source.write_text('fn main(){print(7)}\n',encoding='utf-8')
@@ -152,8 +154,8 @@ for label in ('invalid_envelope','missing_counter','boolean_counter','crc','read
  target.write_bytes(kept)
  with patch.object(runner.subprocess,'run',side_effect=run),redirect_stderr(io.StringIO()),redirect_stdout(io.StringIO()):
   if label=='replacement':
-   with patch.object(runner.os,'replace',side_effect=OSError('replacement denied')):status=runner.main(['build',str(source),'--hua',str(hua),'-o',str(target)])
-  else:status=runner.main(['build',str(source),'--hua',str(hua),'-o',str(target)])
+   with patch.object(runner.os,'replace',side_effect=OSError('replacement denied')):status=guarded_main(runner,['build',str(source),'--hua',str(hua),'-o',str(target)])
+  else:status=guarded_main(runner,['build',str(source),'--hua',str(hua),'-o',str(target)])
  assert status==(1 if label=='timeout' else 2 if label=='replacement' else 3),(label,status)
  assert target.read_bytes()==kept and not list(project.glob('*.tmp-*'))
  checks+=2

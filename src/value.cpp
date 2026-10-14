@@ -1,3 +1,6 @@
+#include <set>
+#include <unordered_map>
+#include "hua/location.hpp"
 #include "hua/value.hpp"
 #include "hua/tasks.hpp"
 #include <algorithm>
@@ -20,12 +23,43 @@ std::vector<std::pair<std::string,std::vector<std::string>>> enum_cases(const No
     throw Diagnostic(std::move(code), span, std::move(message));
 }
 std::string declared_name(const Node& n) { return n.text.substr(0, n.text.find(' ')); }
+std::optional<std::uint64_t> fixed_extent(std::string_view text) {
+    unsigned base=10;
+    if(text.starts_with("0x")){base=16;text.remove_prefix(2);}
+    else if(text.starts_with("0o")){base=8;text.remove_prefix(2);}
+    else if(text.starts_with("0b")){base=2;text.remove_prefix(2);}
+    if(text.empty())return {};
+    std::uint64_t count=0;bool digit=false;
+    for(std::size_t i=0;i<text.size();++i){auto c=text[i];
+        if(c=='_'){if(!digit||i+1==text.size())return {};digit=false;continue;}
+        unsigned value=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:base;
+        if(value>=base||count>(UINT64_MAX-value)/base)return {};
+        count=count*base+value;digit=true;
+    }
+    return count;
+}
+std::string canonical_type(std::string_view type) {
+    if(type.find('[')==std::string_view::npos)return std::string(type);
+    if(type.ends_with('?'))return canonical_type(type.substr(0,type.size()-1))+"?";
+    if(type.starts_with('[')){
+        auto close=type.find(']');if(close==std::string_view::npos)return std::string(type);
+        auto count=fixed_extent(type.substr(1,close-1));
+        return "["+(count?std::to_string(*count):std::string(type.substr(1,close-1)))+"]"+canonical_type(type.substr(close+1));
+    }
+    for(auto name:{"map","Result","multi","List","Task","ref","ptr"}){
+        auto parts=type_arguments(type,name);if(parts.empty())continue;
+        std::string result=std::string(name)+"<";
+        for(std::size_t i=0;i<parts.size();++i){if(i)result+=',';result+=canonical_type(parts[i]);}
+        return result+">";
+    }
+    return std::string(type); // Nominal names retain their declared identity.
+}
 std::string type_name(const Node& n) {
     switch (n.kind) {
-    case NodeKind::TypeName: return n.text;
+    case NodeKind::TypeName: return canonical_type(n.text);
     case NodeKind::MutableType: return type_name(*n.children[0]);
     case NodeKind::SliceType: return "[]" + type_name(*n.children[0]);
-    case NodeKind::ArrayType: return "[" + n.text + "]" + type_name(*n.children[0]);
+    case NodeKind::ArrayType: return canonical_type("[" + n.text + "]" + type_name(*n.children[0]));
     case NodeKind::OptionalType: return type_name(*n.children[0]) + "?";
     case NodeKind::GenericType: {
         std::string result = n.text + "<";
@@ -64,6 +98,10 @@ std::string value_type(const Value& v) {
     }
 }
 bool compatible(std::string_view expected, std::string_view actual) {
+    if(expected.find('[')!=std::string_view::npos||actual.find('[')!=std::string_view::npos){
+        auto e=canonical_type(expected),a=canonical_type(actual);
+        if(e!=expected||a!=actual)return compatible(e,a);
+    }
     if(expected.empty() || actual.empty() || expected==actual || (expected=="void" && actual=="nil")) return true;
     if(numeric_widening(expected,actual))return true;
     if(current_relations){auto found=current_relations->find(std::string(expected));if(found!=current_relations->end()&&found->second.contains(std::string(actual)))return true;}
@@ -318,6 +356,7 @@ Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
     return std::move(v);
 }
 Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bool contextual) {
+    if(expected.find('[')!=std::string::npos){auto type=canonical_type(expected);if(type!=expected)return enforce_type(std::move(v),type,span,contextual);}
     if(std::holds_alternative<VoidValue>(v.data)&&expected!="void")runtime_error(span,"void has no usable value","E4003");
     if(expected.empty()) return v;
 
@@ -393,7 +432,7 @@ std::vector<std::string> type_arguments(std::string_view t,std::string_view name
 }
 Value make_multi(std::vector<Value> values,std::vector<bool> contextual) {auto m=managed<MultiData>();m->values=std::move(values);m->contextual=std::move(contextual);return Value(MultiValue{m});}
 std::vector<Value> unpack_multi(const Value& v,std::size_t count,const SourceSpan& s) {auto p=std::get_if<MultiValue>(&v.data);if(!p||p->data->values.size()!=count)runtime_error(s,"multiple value count mismatch","E4003");return p->data->values;}
-Value make_map(const std::string& type,const SourceSpan& s) {auto ts=type_arguments(type,"map");if(ts.size()!=2||(ts[0]!="bool"&&ts[0]!="int"&&ts[0]!="string"))runtime_error(s,"map keys require bool/int/string","E4003");auto data=managed<MapData>();data->key_type=ts[0];data->item_type=ts[1];return Value(MapValue{data,true});}
+Value make_map(const std::string& type,const SourceSpan& s) {auto ts=type_arguments(canonical_type(type),"map");if(ts.size()!=2||(ts[0]!="bool"&&ts[0]!="int"&&ts[0]!="string"))runtime_error(s,"map keys require bool/int/string","E4003");auto data=managed<MapData>();data->key_type=ts[0];data->item_type=ts[1];return Value(MapValue{data,true});}
 MapKey map_key(const MapValue& map,const Value& key,const SourceSpan& s) {auto value=enforce_type(key,map.data->key_type,s);if(auto p=std::get_if<bool>(&value.data))return *p;if(auto p=std::get_if<I>(&value.data))return *p;if(auto p=std::get_if<std::string>(&value.data))return *p;runtime_error(s,"map keys require bool/int/string","E4003");}
 void map_put(MapValue& m,const Value& key,Value value,const SourceSpan& s,bool contextual) {if(!m.writable)runtime_error(s,"cannot mutate a read-only map","E4007");auto k=map_key(m,key,s);auto v=enforce_type(std::move(value),m.data->item_type,s,contextual);if(m.data->entries.size()>=1000000&&!m.data->entries.contains(k))runtime_error(s,"map entry limit exceeded","E4099");m.data->entries.insert_or_assign(k,copy_value(v));}
 Value index_value(const Value& base,const Value& key,const SourceSpan& s) {
@@ -405,8 +444,22 @@ ValueLocation index_location(Value base,Value key,const SourceSpan& s) {
     auto p=std::get_if<SliceValue>(&base.data);if(!p)runtime_error(s,"index assignment requires a slice or map","E4003");auto i=as_int(key,s);if(i<0||static_cast<std::size_t>(i)>=p->length)runtime_error(s,"index out of bounds","E4006");if(p->packed){ValueLocation where;where.type=p->element_type;where.writable=p->writable;where.owner=p->packed;where.sequence=*p;where.index=static_cast<std::size_t>(i);return where;}return {&(*p->storage)[p->start+static_cast<std::size_t>(i)],p->element_type,p->writable,p->storage,{},{}};
 }
 const Value& location_read(const ValueLocation& l,const SourceSpan& s) {if(l.sequence){l.scratch=sequence_read(*l.sequence,l.index);return l.scratch;}if(l.map){auto it=l.map->entries.find(*l.key);if(it==l.map->entries.end())runtime_error(s,"compound assignment requires an existing map key","E4006");return it->second;}return *l.value;}
-void location_write(const ValueLocation& l,const Value& value) {if(l.sequence)sequence_write(*l.sequence,l.index,value);else if(l.map)l.map->entries.insert_or_assign(*l.key,copy_value(value));else *l.value=copy_value(value);}
-Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span){if(type.starts_with('[')){auto sequence=std::get_if<SliceValue>(&value.data);auto close=type.find(']');if(!sequence||sequence->element_type!=type.substr(close+1)||(close>1&&!sequence->fixed))runtime_error(span,"mut array/slice borrow requires identical element type and existing fixed layout","E4003");}return enforce_type(std::move(value),type,span);}
+void prepare_map_writes(std::span<const ValueLocation> locations,const SourceSpan& span) {
+    std::unordered_map<MapData*,std::set<MapKey>> additions;
+    for(const auto& l:locations)if(l.map && !l.map->entries.contains(*l.key))additions[l.map.get()].insert(*l.key);
+    for(const auto& [map,keys]:additions)
+        if(map->entries.size()>1000000 || keys.size()>1000000-map->entries.size())
+            runtime_error(span,"map entry limit exceeded","E4099");
+}
+void location_write(const ValueLocation& l,const Value& value,const SourceSpan& span) {
+    if(l.sequence)sequence_write(*l.sequence,l.index,value);
+    else if(l.map){
+        if(l.map->entries.size()>=1000000 && !l.map->entries.contains(*l.key))runtime_error(span,"map entry limit exceeded","E4099");
+        l.map->entries.insert_or_assign(*l.key,copy_value(value));
+    }else *l.value=copy_value(value);
+}
+void location_write(const ValueLocation& l,const Value& value) {location_write(l,value,{});}
+Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span){if(type.find('[')!=std::string::npos){auto normalized=canonical_type(type);if(normalized!=type)return enforce_borrow(std::move(value),normalized,span);}if(type.starts_with('[')){auto sequence=std::get_if<SliceValue>(&value.data);auto close=type.find(']');if(!sequence||sequence->element_type!=type.substr(close+1)||(close>1&&!sequence->fixed))runtime_error(span,"mut array/slice borrow requires identical element type and existing fixed layout","E4003");}return enforce_type(std::move(value),type,span);}
 Value enforce_return(Value value,const Node& fn,const SourceSpan& s,bool contextual) {
     for(const auto& c:fn.children)if(c->kind==NodeKind::ReturnTypes){if(c->children.size()==1)value=enforce_type(std::move(value),type_name(*c->children[0]),s,contextual);else {auto values=unpack_multi(value,c->children.size(),s);auto data=std::get<MultiValue>(value.data).data;for(std::size_t i=0;i<values.size();++i)values[i]=enforce_type(std::move(values[i]),type_name(*c->children[i]),s,i<data->contextual.size()&&data->contextual[i]);value=make_multi(std::move(values));}}
     if(auto p=std::get_if<MultiValue>(&value.data))p->data->contextual.clear();if(auto p=std::get_if<ResultValue>(&value.data))p->contextual=false;
