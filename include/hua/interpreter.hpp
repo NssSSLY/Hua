@@ -26,6 +26,7 @@ private:
         Binding& lookup(const std::string& name, const SourceSpan& span);
     };
     using Location = ValueLocation;
+    std::unordered_map<std::string,std::shared_ptr<const EnumLayout>> enum_layouts_;
     const SemanticModel& model_;
     std::ostream& output_;
     RuntimeContext* context_{};

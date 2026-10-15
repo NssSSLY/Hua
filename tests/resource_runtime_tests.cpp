@@ -37,6 +37,15 @@ void finish(CpuSimulator& sim, const Handle& h, TaskId owner = 1) {
     check(ticket.observe().has_value(), "close not completed");
     check(ticket.observe()->released, "release unknown");
 }
+void empty_pump_then_first_resource() {
+    auto l=ledger();CpuSimulator sim(l,true);check(!sim.pump(),"empty owner pump failed");
+    Failure wrong;std::thread worker([&]{wrong=sim.pump();});worker.join();
+    check(wrong.code==Code::wrong_executor,"empty fast path bypassed executor ownership");
+    unsigned closed=0;auto handle=take(sim.create(1,[&]{++closed;return CloseResult{};}));
+    auto ticket=take(sim.close(handle,1));check(!ticket.observe(),"close ran outside pump");
+    check(!sim.pump() && closed==1 && ticket.observe() && ticket.observe()->released,"first close skipped after empty fast path");
+    check(!sim.pump() && closed==1,"closed callback repeated");conserved(l);
+}
 void quota_transactions() {
     auto cap = limits(); cap[static_cast<std::size_t>(Metric::storage_bytes)] = 8;
     auto root = QuotaLedger::root(cap); auto child = root->child(limits()); auto grandchild = child->child(limits());
@@ -365,6 +374,7 @@ void runtime_shutdown() {
 }
 int main() {
     const std::pair<const char*, void(*)()> cases[]{
+        {"empty_pump_then_first_resource", empty_pump_then_first_resource},
         {"quota_transactions", quota_transactions}, {"accounting_overflow", accounting_overflow},
         {"creation_rollback", creation_rollback}, {"admission_rollback", admission_rollback}, {"alias_leases", alias_leases},
         {"one_close_and_error_record", one_close_and_error_record}, {"close_pending_lifetime", close_pending_lifetime},

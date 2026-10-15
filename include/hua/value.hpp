@@ -18,6 +18,7 @@ struct VoidValue {};
 struct TaskState;
 struct TaskValue {std::shared_ptr<TaskState> data;};
 struct StructData;
+struct EnumLayout;struct EnumVariant;
 struct MapData;
 struct MultiData;
 struct JsonData;
@@ -73,7 +74,11 @@ struct ErrorData {
 };
 struct IOFailureData {ErrorValue error;std::optional<std::int64_t> transferred;std::optional<BytesValue> partial;};
 struct ListData { std::string element_type; std::vector<Value> values; };
-struct StructData { std::string name; std::map<std::string, Value> fields; };
+struct StructData {
+    std::string name; std::map<std::string, Value> fields;
+    std::shared_ptr<const EnumLayout> enumeration;
+    const EnumVariant* variant{}; // Owned by enumeration, never points into an AST/model.
+};
 struct MapData { std::string key_type, item_type; std::map<MapKey, Value> entries; };
 struct MultiData { std::vector<Value> values; std::vector<bool> contextual; };
 struct ValueLocation {
@@ -101,6 +106,7 @@ const Value& location_read(const ValueLocation& where, const SourceSpan& span);
 void location_write(const ValueLocation& where, const Value& value);
 Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span);
 Value enforce_return(Value value, const Node& function, const SourceSpan& span, bool contextual = false);
+Value enforce_return(Value value, const std::vector<std::string>& types, const SourceSpan& span, bool contextual = false);
 Value aggregate_member(const Value& value, const std::string& name, const SourceSpan& span);
 Value record_failure_source(Value,const SourceSpan&,std::string message="Result error created here");
 Value propagated_error(const Value& value,const SourceSpan& span={});

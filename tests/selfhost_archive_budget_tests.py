@@ -1,7 +1,7 @@
 # Manual isolated C07 full own-source workload; no C++ archive encoder in this path.
 from pathlib import Path
 import subprocess,json,time,ctypes,hashlib,re,shutil,sys,os,atexit
-hua,repo,build=map(lambda p:Path(p).resolve(),sys.argv[1:4]);options=set(sys.argv[4:]);assert options <= {'--bootstrap-huab','--diagnostic-phases'};bootstrap='--bootstrap-huab' in options;diagnostic='--diagnostic-phases' in options
+hua,repo,build=map(lambda p:Path(p).resolve(),sys.argv[1:4]);options=set(sys.argv[4:]);assert options <= {'--bootstrap-huab','--diagnostic-phases','--diagnostic-helpers'};bootstrap='--bootstrap-huab' in options;diagnostic='--diagnostic-phases' in options;helpers='--diagnostic-helpers' in options;assert not helpers or diagnostic
 o=build/('c07-budget-bootstrap' if bootstrap else 'c07-budget');o.mkdir(exist_ok=True)
 # Windows Modern Standby suspends both compiler and supervisor and invalidates wall-time measurements.
 # This is a thread-scoped idle-sleep request, not a change to the power plan or the 600-second limit.
@@ -42,9 +42,40 @@ if diagnostic:
  for marker,label in [('    let graph = modules.analyze_compiler(entry)?','resolved'),('    infer(m,units)?','inferred')]:
   assert text.count(marker)==1;text=text.replace(marker,marker+'\n    mark("'+label+'")',1)
  text=text.replace('    infer(m,units)?','    mark("signatures")\n    infer(m,units)?',1)
+ marker='    let capabilities=flow.analyze(graph,m.refs,m.declarations,m.fields,flow_functions,flow_variants)?';assert text.count(marker)==1
+ text=text.replace(marker,'    mark("members-start")\n'+marker+'\n    mark("members-finished")',1)
+ marker='        m.capability_passes += 1';assert text.count(marker)==1
+ text=text.replace(marker,marker+'\n        mark("return-pass:"+str(m.capability_passes))',1)
  marker='    for name in list.snapshot(graph.order) {'
  assert text.count(marker)==2
  parts=text.rsplit(marker,1);text=parts[0]+'    mark("globals")\n'+marker+'\n        mark("types:"+name)'+parts[1]
+ p.write_text(text,encoding='utf-8',newline='\n')
+ p=compiler/'capabilities.hua';text=instrument(p.read_text(encoding='utf-8'),True)
+ if helpers:
+  marker='pub struct View {';assert text.count(marker)==1
+  observer='var _profile_on=false\nvar _profile_ns=map[string]int{}\nvar _profile_calls=map[string]int{}\nfn _profile_record(name string,elapsed int){_profile_ns[name]=unwrap_or(_profile_ns[name],0)+elapsed\n_profile_calls[name]=unwrap_or(_profile_calls[name],0)+1}\nfn _profile_dump(target string){for name,elapsed in _profile_ns{mark("helper:"+target+":"+name+":ns:"+str(elapsed)+":calls:"+str(unwrap(_profile_calls[name])))}}\n'
+  text=text.replace(marker,observer+marker,1)
+  wrappers=[('select','input Value, path string, type string','input,path,type','Value'),('select_cached','e mut Environment, input Value, path string, type string, owner string, version int','e,input,path,type,owner,version','Value'),('merge','a Value, b Value','a,b','Value'),('same_value','a Value, b Value','a,b','bool'),('instantiate','caller string, module string, node int, source Value, actual map[string]Value','caller,module,node,source,actual','Value'),('assign','refs map[string]string, e mut Environment, left ast.Node, input Value','refs,e,left,input','Result<void>'),('put','e mut Environment, path string, input Value, weak bool, copy bool','e,path,input,weak,copy',''),('field_defaults','s mut State, base View, level int','s,base,level','map[string]View'),('seeded','s mut State, type string, writable bool, owner string','s,type,writable,owner','Value'),('snapshot','values map[string]Value','values','map[string]Value'),('invoke','s mut State, e mut Environment, n ast.Node, f Function, args []Value','s,e,n,f,args','Result<Value>')]
+  for name,parameters,arguments,result in wrappers:
+   marker='fn '+name+'(';assert text.count(marker)==1
+   raw='_profile_raw_'+name;signature='fn '+name+'('+parameters+')'+(' '+result if result else '')+' {'
+   call=raw+'('+arguments+')'
+   inactive=('return '+call) if result else (call+'\nreturn')
+   active=('var result='+call) if result else call
+   wrapper=signature+'\nif !_profile_on{'+inactive+'}\nlet start=time.monotonic_ns()\n'+active+'\n_profile_record("'+name+'",time.monotonic_ns()-start)\n'+('return result\n' if result else '')+'}\n'
+   text=text.replace(marker,wrapper+'fn '+raw+'(',1)
+  marker='            statement(s,e,n.children[1])?';assert text.count(marker)>=1
+  before='            let _profile_this=passes==1 && (f.target=="capabilities.hua#expression_body" || f.target=="types.hua#statement")\n            if _profile_this{_profile_ns=map[string]int{}\n_profile_calls=map[string]int{}\n_profile_on=true}\n'
+  after='\n            if _profile_this{_profile_on=false\n_profile_dump(f.target)}'
+  text=text.replace(marker,before+marker+after,1)
+ marker='    while changed && passes<32 { passes+=1';assert text.count(marker)==1
+ text=text.replace(marker,marker+'\n        mark("member-pass:"+str(passes)+":work:"+str(s.work))',1)
+ marker='            var e=environment(unwrap(s.units[f.module]),name,globals)';assert text.count(marker)>=1
+ text=text.replace(marker,'            mark("member-function:"+str(passes)+":"+name+":work:"+str(s.work))\n'+marker,1)
+ marker='        while changed && passes<32 {\n            passes+=1';assert text.count(marker)==1
+ text=text.replace(marker,marker+'\n            if e.function=="capabilities.hua#expression_body" || e.function=="types.hua#statement" { mark("flow-loop:"+e.function+":"+str(n.span.line)+":"+str(passes)+":work:"+str(s.work)) }',1)
+ marker='    s.probing=false';assert text.count(marker)==1
+ text=text.replace(marker,'    mark("member-validation:work:"+str(s.work))\n'+marker,1)
  p.write_text(text,encoding='utf-8',newline='\n')
  p=compiler/'modules.hua';text=instrument(p.read_text(encoding='utf-8'))
  for marker,prefix,label in [('    var parsed Result<parser.Tree> = err("uninitialized")',True,'parse:'),('    let unit = Unit{id:id,path:normalized,key:key,tree:unwrap(parsed)}',True,'parsed:'),('    for id in list.snapshot(g.order) {',False,'names:')]:
@@ -56,7 +87,7 @@ if diagnostic:
  p.write_text(text,encoding='utf-8',newline='\n')
 artifact=o/'self.huab';artifact.unlink(missing_ok=True)
 component=compiler/('_timed_archive.hua' if diagnostic else entry.name);bootstrap_report=None
-compiler_hashes={name:hashlib.sha256((compiler/name).read_bytes()).hexdigest() for name in sorted(seen)}
+compiler_hashes={path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(compiler.glob('*.hua'))}
 if not diagnostic:assert compiler_hashes==hashes,'budget acceptance must execute unmodified compiler sources'
 if bootstrap:
  target=o/'bootstrap-component.huab';t=time.monotonic()
@@ -88,7 +119,7 @@ while True:
  if remaining<=0:p.kill();stdout,stderr=p.communicate();timeout=True;break
  try:stdout,stderr=p.communicate(timeout=min(2,remaining));break
  except subprocess.TimeoutExpired:pass
-result={'returncode':p.returncode,'supervisor_timeout':timeout,'seconds':round(time.monotonic()-start,3),'peak_working_bytes':peak,'cpu_seconds':round(last_cpu,3) if last_cpu is not None else None,'report_bytes':len(stdout),'modules':len(seen),'input_bytes':sum((snapshot/name).stat().st_size for name in seen),'source_hashes':hashes,'emitter':'Hua instructions and complete HUAB encoding; existing native reader only','execution':'VM compiler profile; '+('C0 bootstrap persisted Hua compiler; ' if bootstrap else 'source Hua compiler; ')+'isolated full own-source pipeline; '+sys.platform,'bootstrap_component':bootstrap_report,'observations':observations,'runtime_sha256':hashlib.sha256(hua.read_bytes()).hexdigest(),'temporary_idle_sleep_prevention':awake,'diagnostic_phases':diagnostic,'compiler_sources_identical':compiler_hashes==hashes,'compiler_source_hashes':compiler_hashes}
+result={'returncode':p.returncode,'supervisor_timeout':timeout,'seconds':round(time.monotonic()-start,3),'peak_working_bytes':peak,'cpu_seconds':round(last_cpu,3) if last_cpu is not None else None,'report_bytes':len(stdout),'modules':len(seen),'input_bytes':sum((snapshot/name).stat().st_size for name in seen),'source_hashes':hashes,'emitter':'Hua instructions and complete HUAB encoding; existing native reader only','execution':'VM compiler profile; '+('C0 bootstrap persisted Hua compiler; ' if bootstrap else 'source Hua compiler; ')+'isolated full own-source pipeline; '+sys.platform,'bootstrap_component':bootstrap_report,'observations':observations,'runtime_sha256':hashlib.sha256(hua.read_bytes()).hexdigest(),'temporary_idle_sleep_prevention':awake,'diagnostic_phases':diagnostic,'diagnostic_helpers':helpers,'compiler_sources_identical':compiler_hashes==hashes,'compiler_source_hashes':compiler_hashes}
 measured_cpu=cpu_seconds()
 if measured_cpu is not None:result['cpu_seconds']=round(measured_cpu,3)
 (o/'self-receipt.json').write_bytes(stdout);(o/'self-budget.json').write_bytes(stderr)

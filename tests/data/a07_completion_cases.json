@@ -569,5 +569,105 @@
     "source": "struct Box{xs []int}\nvar global=Box{xs:[1]}\nfn f00(){global.xs=[3]\nf01()}\nfn f01(){f02()}\nfn f02(){f03()}\nfn f03(){f04()}\nfn f04(){f05()}\nfn f05(){f06()}\nfn f06(){f07()}\nfn f07(){f08()}\nfn f08(){f09()}\nfn f09(){f10()}\nfn f10(){f11()}\nfn f11(){f12()}\nfn f12(){f13()}\nfn f13(){f14()}\nfn f14(){f15()}\nfn f15(){f16()}\nfn f16(){f17()}\nfn f17(){f18()}\nfn f18(){f19()}\nfn f19(){f20()}\nfn f20(){f21()}\nfn f21(){f22()}\nfn f22(){f23()}\nfn f23(){f24()}\nfn f24(){f25()}\nfn f25(){f26()}\nfn f26(){f27()}\nfn f27(){f28()}\nfn f28(){f29()}\nfn f29(){f30()}\nfn f30(){f31()}\nfn f31(){f32()}\nfn f32(){f33()}\nfn f33(){f34()}\nfn f34(){f35()}\nfn f35(){f36()}\nfn f36(){f37()}\nfn f37(){f38()}\nfn f38(){f39()}\nfn f39(){f40()}\nfn f40(){let ro=[2]\nglobal.xs=ro}\nprint(\"BAD\")\nfn main(){f00()\nglobal.xs[0]=9}\n",
     "expected": "E3003",
     "stdout": ""
+  },
+  {
+    "name": "copied_nested_record_write",
+    "expected": "ok",
+    "stdout": "1\n",
+    "source": "struct Counter{count int}\nstruct State{counter Counter}\nfn step(s mut State){s.counter.count+=1}\nfn run(input Counter) Counter{var s=State{counter:input}\nstep(s)\nreturn s.counter}\nfn main(){let c=Counter{count:0}\nprint(run(c).count)}\n"
+  },
+  {
+    "name": "copied_nested_shared_stays_readonly",
+    "expected": "E3003",
+    "source": "struct Counter{xs []int}\nstruct State{counter Counter}\nfn step(s mut State){s.counter.xs[0]=1}\nfn run(input Counter){var s=State{counter:input}\nstep(s)}\nfn main(){let c=Counter{xs:[0]}\nrun(c)}\n"
+  },
+  {
+    "name": "snapshot_return_keeps_old_member",
+    "expected": "ok",
+    "stdout": "9 2\n",
+    "source": "struct Box{xs []int}\nfn replace(b mut Box,ro []int) []int{var old=b.xs\nb.xs=ro\nreturn old}\nfn main(){var b=Box{xs:[1]}\nlet ro=[2]\nvar old=replace(b,ro)\nold[0]=9\nprint(old[0],b.xs[0])}\n"
+  },
+  {
+    "name": "snapshot_return_keeps_readonly_member",
+    "expected": "E3003",
+    "source": "struct Box{xs []int}\nfn replace(b mut Box) []int{var old=b.xs\nb.xs=[3]\nreturn old}\nfn main(){let ro=[1]\nvar b=Box{xs:ro}\nvar old=replace(b)\nold[0]=9}\n"
+  },
+  {
+    "name": "branch_equal_write_counts_readonly",
+    "expected": "E3003",
+    "source": "struct Box{xs []int}\nfn choose(flag bool) Box{var b=Box{xs:[1]}\nlet ro=[2]\nif flag{b.xs=ro}else{b.xs=[3]}\nreturn b}\nprint(\"BAD\")\nfn main(){var b=choose(true)\nb.xs[0]=9}\n"
+  },
+  {
+    "name": "match_equal_write_counts_readonly",
+    "expected": "E3003",
+    "source": "enum Flag{A,B}\nstruct Box{xs []int}\nfn choose(flag Flag) Box{var b=Box{xs:[1]}\nlet ro=[2]\nmatch flag{A=>{b.xs=ro}\nB=>{b.xs=[3]}}\nreturn b}\nprint(\"BAD\")\nfn main(){var b=choose(Flag.A())\nb.xs[0]=9}\n"
+  },
+  {
+    "name": "projection_index_rebind_keeps_old_base",
+    "expected": "ok",
+    "source": "struct Box{xs []int}\nvar items=[Box{xs:[1]}]\nfn reset()int{let ro=Box{xs:[2]}\nitems=[ro]\nreturn 0}\nfn main(){var before=items[reset()]\nbefore.xs[0]=9\nprint(before.xs[0])}\n",
+    "stdout": "9\n"
+  },
+  {
+    "name": "projection_index_rebind_new_base_readonly",
+    "expected": "E3003",
+    "source": "struct Box{xs []int}\nvar items=[Box{xs:[1]}]\nfn reset()int{let ro=Box{xs:[2]}\nitems=[ro]\nreturn 0}\nprint(\"BAD\")\nfn main(){var before=items[reset()]\nbefore.xs[0]=9\nvar after=items[0]\nafter.xs[0]=9}\n"
+  },
+  {
+    "name": "literal_array_record_keeps_readonly_children",
+    "expected": "E3003",
+    "source": "struct Box{xs []int\ntag int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],tag:1}\nvar items=[ro]\nvar b=items[0]\nb.xs[0]=9}\n"
+  },
+  {
+    "name": "literal_map_record_keeps_readonly_children",
+    "expected": "E3003",
+    "source": "struct Box{xs []int\ntag int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1],tag:1}\nvar items=map[string]Box{\"x\":ro}\nvar b=unwrap(items[\"x\"])\nb.xs[0]=9}\n"
+  },
+  {
+    "name": "literal_container_record_scalar_copies",
+    "expected": "ok",
+    "source": "struct Box{xs []int\ntag int}\nfn main(){let ro=Box{xs:[1],tag:1}\nvar items=[ro]\nvar table=map[string]Box{\"x\":ro}\nvar a=items[0]\nvar b=unwrap(table[\"x\"])\na.tag=2\nb.tag=3\nprint(a.tag,b.tag,ro.tag)}\n",
+    "stdout": "2 3 1\n"
+  },
+  {
+    "name": "noop_shared_write_still_requires_member",
+    "expected": "E3003",
+    "source": "struct Box{xs []int}\nfn touch(b mut Box){b.xs[0]=b.xs[0]}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1]}\nvar b=ro\ntouch(b)}\n"
+  },
+  {
+    "name": "alias_cache_new_binding",
+    "source": "struct Cell{xs []int\ntag int}\nfn touch(cells mut []Cell){cells[0].tag=1}\nfn poison(cells mut []Cell,ro []int){cells[0].xs=ro}\nprint(\"BAD\")\nfn main(){var cells=[Cell{xs:[1],tag:0}]\ntouch(cells)\nvar alias=cells\npoison(cells,[2])\nalias[0].xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "alias_cache_root_replacement",
+    "source": "struct Cell{xs []int\ntag int}\nfn touch(cells mut []Cell){cells[0].tag=1}\nfn poison(cells mut []Cell,ro []int){cells[0].xs=ro}\nprint(\"BAD\")\nfn main(){var cells=[Cell{xs:[1],tag:0}]\nvar alias=[Cell{xs:[3],tag:0}]\ntouch(cells)\nalias=cells\npoison(cells,[2])\nalias[0].xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "alias_cache_branch_restore",
+    "source": "struct Cell{xs []int\ntag int}\nfn touch(cells mut []Cell){cells[0].tag=1}\nfn poison(cells mut []Cell,ro []int){cells[0].xs=ro}\nfn choose(flag bool){var cells=[Cell{xs:[1],tag:0}]\nvar other=[Cell{xs:[3],tag:0}]\nvar alias=cells\nif flag{alias=other\ntouch(cells)}else{poison(cells,[2])}\nalias[0].xs[0]=9}\nprint(\"BAD\")\nfn main(){choose(false)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "alias_cache_shared_field_replacement",
+    "source": "struct Cell{xs []int\ntag int}\nfn touch(cells mut []Cell){cells[0].tag=1}\nfn poison(cells mut []Cell,ro []int){cells[0].xs=ro}\nprint(\"BAD\")\nfn main(){var cells=[Cell{xs:[1],tag:0}]\nvar alias=cells\ntouch(cells)\npoison(cells,[2])\ntouch(cells)\nalias[0].xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "alias_cache_scalar_updates",
+    "source": "struct Cell{xs []int\ntag int}\nfn touch(cells mut []Cell){cells[0].tag=1}\nfn poison(cells mut []Cell,ro []int){cells[0].xs=ro}\nfn main(){var cells=[Cell{xs:[1],tag:0}]\nvar alias=cells\ntouch(cells)\ntouch(alias)\nalias[0].xs[0]=9\nprint(cells[0].xs[0],cells[0].tag)}\n",
+    "expected": "ok",
+    "stdout": "9 1\n"
+  },
+  {
+    "name": "cached_diagnostic_statement_order",
+    "source": "struct Box{xs []int}\nfn touch(b mut Box){b.xs[0]=9}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1]}\nvar b=ro\ntouch(b)\ntouch(b)}\n",
+    "expected": "E3003",
+    "stdout": ""
   }
 ]

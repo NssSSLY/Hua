@@ -1,3 +1,4 @@
+#include "hua/enum_value.hpp"
 #include "hua/location.hpp"
 #include <exception>
 #include "hua/interpreter.hpp"
@@ -41,7 +42,7 @@ EntryResult Interpreter::run(const Node& program){
 }
 Routine<void> Interpreter::run_body(const Node& program,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
-    steps_=0;calls_=0;global_.bindings.clear();builtins_.bindings.clear();builtins_.parent=nullptr;global_.parent=&builtins_;environment_=&global_;
+    steps_=0;calls_=0;enum_layouts_.clear();global_.bindings.clear();builtins_.bindings.clear();builtins_.parent=nullptr;global_.parent=&builtins_;environment_=&global_;
     for(const auto& name:builtin_names()){builtins_.bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),"builtin:"+name,false});builtins_.bindings.emplace("$core$"+name,Binding{Value(Callable{nullptr,name,{}}),"builtin:"+name,false});}
     for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))global_.bindings.insert_or_assign(name,Binding{Value(Callable{fn,"",{}}),"fn:"+name,false});
     std::exception_ptr error;Value returned;SourceSpan entry_span;
@@ -156,6 +157,7 @@ Routine<Interpreter::Location> Interpreter::locate(const Node& n) {
     if(n.kind==N::Member) {
         auto base=(co_await evaluate(*n.children[0]));auto object=std::get_if<StructValue>(&base.data);
         if(!object)runtime_error(n.span,"field assignment requires a struct","E4003");
+        if(object->data->enumeration)runtime_error(n.span,"enum fields are private","E4003");
         auto field=object->data->fields.find(n.text);if(field==object->data->fields.end())runtime_error(n.span,"unknown struct field","E4003");
         auto declaration=model_.structures.at(object->data->name);std::string type;
         for(const auto& f:declaration->children)if(f->text==n.text)type=type_name(*f->children[0]);
@@ -217,11 +219,15 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
         if(n.text=="std.error.Value")runtime_error(n.span,"standard Error must be constructed through std.error","E4003");
         if(n.text=="std.file.File"||n.text=="std.file.IOFailure")runtime_error(n.span,"opaque File/IOFailure must be constructed through std.file","E4003");
         auto object=managed<StructData>();object->name=n.text;auto definition=model_.structures.at(n.text);
+        auto [layout,inserted]=enum_layouts_.try_emplace(n.text);
+        if(inserted)layout->second=enum_layout(*definition);
+        object->enumeration=layout->second;
         for(const auto& init:n.children) {
             std::string type;for(const auto& field:definition->children)if(field->text==init->text)type=type_name(*field->children[0]);
             auto value=enforce_type((co_await evaluate(*init->children[0])),type,init->span,contextual_literal(*init->children[0]));
-            object->fields.emplace(init->text,copy_value(std::move(value)));
+            initialize_field(*object,init->text,std::move(value),init->span);
         }
+        require_complete_enum(*object,n.span);
         co_return Value(StructValue{object,true});
     }
     case N::Member: {

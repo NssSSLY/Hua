@@ -1,3 +1,4 @@
+#include "hua/performance.hpp"
 #include "hua/file.hpp"
 #include "hua/tasks.hpp"
 #include <algorithm>
@@ -188,7 +189,7 @@ void prepare_file_scope(RuntimeContext& c,const std::shared_ptr<R::QuotaLedger>&
     if(!c.task_id)c.task_id=next_file_task_id();
     if(!c.files)c.files=std::make_shared<FileScope>(c.task_id,root);
 }
-void file_checkpoint(RuntimeContext* c){if(c&&c->files)c->files->pump();}
+void file_checkpoint(RuntimeContext* c){HUA_PROFILE_COUNT(file_checkpoints);if(c&&c->files)c->files->pump();}
 void finish_file_scope(RuntimeContext* c){if(c&&c->files)c->files->finish();}
 namespace {
 R::Outcome<R::Handle> admit(FileScope& scope,const std::shared_ptr<FileNativeState>& native){

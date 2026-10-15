@@ -1,3 +1,5 @@
+#include "hua/enum_value.hpp"
+#include "hua/performance.hpp"
 #include "hua/location.hpp"
 #include <exception>
 #include "hua/vm.hpp"
@@ -10,19 +12,39 @@ namespace {
 using N=NodeKind;using I=std::int64_t;
 [[noreturn]] void invalid(const SourceSpan& s){runtime_error(s,"invalid VM instruction/stack state","E6001");}
 bool writable(const Value& v){if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
-std::string field_type(const SemanticModel& model,const std::string& owner,const std::string& field,const SourceSpan& span) {
-    auto s=model.structures.find(owner);if(s==model.structures.end())invalid(span);
-    for(const auto& f:s->second->children)if(f->text==field)return type_name(*f->children[0]);
-    runtime_error(span,"unknown struct field","E4003");
+
 }
+const VirtualMachine::FunctionLayout& VirtualMachine::function_layout(const Node& fn) {
+    auto [entry,inserted]=function_layouts_.try_emplace(&fn);
+    if(inserted){HUA_PROFILE_COUNT(function_metadata_builds);auto& layout=entry->second;layout.name=declared_name(fn);
+        layout.external=fn.text.find(" external")!=std::string::npos;layout.unsafe=fn.text.find(" unsafe")!=std::string::npos;
+        for(const auto& child:fn.children){HUA_PROFILE_COUNT(parameter_scan_nodes);
+            if(child->kind==N::Parameter)layout.parameters.push_back({declared_name(*child),child->children.empty()?"":type_name(*child->children[0]),child->text.find(" mut")!=std::string::npos||(!child->children.empty()&&child->children[0]->kind==N::MutableType)});
+            else if(child->kind==N::ReturnTypes)for(const auto& type:child->children)layout.returns.push_back(type_name(*type));
+        }
+    }
+    return entry->second;
+}
+const std::string& VirtualMachine::field_type(const std::string& owner,const std::string& field,const SourceSpan& span) {
+    HUA_PROFILE_COUNT(field_lookups);auto found=field_types_.find(owner);
+    if(found==field_types_.end()){
+        auto structure=model_.structures.find(owner);if(structure==model_.structures.end())invalid(span);
+        std::unordered_map<std::string,std::string> fields;
+        for(const auto& item:structure->second->children){HUA_PROFILE_COUNT(field_scan_nodes);fields.emplace(item->text,type_name(*item->children[0]));}
+        found=field_types_.emplace(owner,std::move(fields)).first;
+    }
+    auto type=found->second.find(field);if(type==found->second.end())runtime_error(span,"unknown struct field","E4003");return type->second;
 }
 VirtualMachine::Binding& VirtualMachine::Environment::lookup(const std::string& name,const SourceSpan& span) {
-    for(auto env=this;env;env=env->parent.get())if(auto found=env->bindings.find(name);found!=env->bindings.end())return found->second;
+    HUA_PROFILE_COUNT(environment_lookups);
+    for(auto env=this;env;env=env->parent.get()){HUA_PROFILE_COUNT(environment_probes);if(auto found=env->bindings.find(name);found!=env->bindings.end())return found->second;}
     runtime_error(span,"name `"+name+"` is not initialized","E4001");
 }
 Value VirtualMachine::pop(const SourceSpan& span) {
     if(stack_.empty() || (!frames_.empty() && stack_.size()<=frames_.back().base) || !std::holds_alternative<Value>(stack_.back()))invalid(span);
-    auto value=std::move(std::get<Value>(stack_.back()));stack_.pop_back();return value;
+    auto value=std::move(std::get<Value>(stack_.back()));stack_.pop_back();
+    if(auto object=std::get_if<StructValue>(&value.data))require_complete_enum(*object->data,span);
+    return value;
 }
 std::vector<Value> VirtualMachine::arguments(std::size_t count,const SourceSpan& span) {
     if(count>stack_.size() || (!frames_.empty() && count>stack_.size()-frames_.back().base))invalid(span);std::vector<Value> args(count);
@@ -41,7 +63,7 @@ EntryResult VirtualMachine::run(const Bytecode& bytecode){
 }
 Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
-    bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();
+    bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();function_layouts_.clear();field_types_.clear();enum_layouts_.clear();
     auto builtins=managed<Environment>();global_=managed<Environment>();global_->parent=builtins;
     for(const auto& name:builtin_names()){
         builtins->bindings.emplace(name,Binding{Value(Callable{nullptr,name,{}}),std::string("builtin:")+name,false});
@@ -66,15 +88,16 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
 Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
     if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));co_return;}
     if(callable.builtin=="parallel_map"){stack_.emplace_back(co_await parallel(args,site));co_return;}
-    if(!callable.builtin.empty()){stack_.emplace_back(co_await invoke_resumable(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));co_return;}
+    if(!callable.builtin.empty()){HUA_PROFILE_COUNT(builtin_calls);stack_.emplace_back(co_await invoke_resumable(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));co_return;}
     if(!callable.function)invalid(site.span);
-    const auto& fn=*callable.function;auto key=declared_name(fn);
-    if(fn.text.find(" external")!=std::string::npos){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));co_return;}
-    if(fn.text.find(" unsafe")!=std::string::npos)runtime_error(site.span,"unsafe function execution/FFI is not implemented","E4008");
+    HUA_PROFILE_COUNT(user_calls);
+    const auto& fn=*callable.function;const auto& layout=function_layout(fn);const auto& key=layout.name;
+    if(layout.external){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));co_return;}
+    if(layout.unsafe)runtime_error(site.span,"unsafe function execution/FFI is not implemented","E4008");
     const auto user_calls=frames_.size()-(!frames_.empty() && !frames_.front().function?1:0);
     if(user_calls>=context_->execution_limits.calls)runtime_error(site.span,"function call depth limit exceeded ("+std::to_string(context_->execution_limits.calls)+")","E4099");
     if(context_->execution_metrics)context_->execution_metrics->call(static_cast<unsigned>(user_calls+1));
-    std::vector<const Node*> ps;for(const auto& c:fn.children)if(c->kind==N::Parameter)ps.push_back(c.get());
+    const auto& ps=layout.parameters;
     if(ps.size()!=args.size())runtime_error(site.span,"function argument count mismatch","E4003");
     if(context_&&context_->in_task&&callable.closure)std::static_pointer_cast<Environment>(callable.closure)->parent=global_;
     auto local=managed<Environment>();local->parent=callable.closure?std::static_pointer_cast<Environment>(callable.closure):global_;
@@ -84,11 +107,10 @@ Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Va
         local->bindings.emplace("self",Binding{Value(*callable.receiver),callable.receiver->data->name,false});
     }
     for(std::size_t i=0;i<ps.size();++i) {
-        const auto& p=*ps[i];auto type=p.children.empty()?"":type_name(*p.children[0]);
-        bool mut=p.text.find(" mut")!=std::string::npos || (!p.children.empty() && p.children[0]->kind==N::MutableType);
+        const auto& p=ps[i];const auto& type=p.type;bool mut=p.mutable_view;
         if(mut && !writable(args[i]))runtime_error(site.span,"mut parameter requires mutable argument","E4007");
         auto v=mut?enforce_borrow(args[i],type,site.span):enforce_type(copy_value(args[i]),type,site.span,i<site.contextual.size()&&site.contextual[i]);
-        if(!mut)v=read_only(std::move(v));local->bindings.emplace(declared_name(p),Binding{std::move(v),type,false});
+        if(!mut)v=read_only(std::move(v));local->bindings.emplace(p.name,Binding{std::move(v),type,false});
     }
     auto code=bytecode_->functions.find(&fn);if(code==bytecode_->functions.end())invalid(site.span);
     frames_.push_back({&code->second,&fn,0,stack_.size(),site.span,std::move(local),{}});
@@ -98,7 +120,7 @@ Routine<void> VirtualMachine::finish_return(Value value,const Instruction& op,bo
     // Save the language value before deferred calls can mutate its source.
     value=copy_value(std::move(value));
     auto f=frames_.back();
-    for(auto env=f.environment;env&&env!=global_;env=env->parent)(co_await drain(env));if(!f.function)(co_await drain(global_));if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),*f.function,f.site,op.flag);
+    for(auto env=f.environment;env&&env!=global_;env=env->parent)(co_await drain(env));if(!f.function)(co_await drain(global_));if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),function_layout(*f.function).returns,f.site,op.flag);
     auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
     if(!f.function)value=copy_value(value);
     if(!frames_.empty())stack_.emplace_back(std::move(value));else completed_=std::move(value);
@@ -130,7 +152,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
     while(frames_.size()>stop_depth) {
         auto& f=frames_.back();if(f.pc>=f.code->instructions.size())invalid(f.site);
         const auto& op=f.code->instructions[f.pc++];const auto& s=op.span;
-        co_await Yield{};task_checkpoint(context_,s);if(context_->execution_metrics)++context_->execution_metrics->steps;if(++steps_>context_->execution_limits.steps)runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");
+        HUA_PROFILE_COUNT(vm_steps);co_await Yield{};task_checkpoint(context_,s);if(context_->execution_metrics)++context_->execution_metrics->steps;if(++steps_>context_->execution_limits.steps)runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");
         try{
         switch(op.op) {
         case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)for(const auto& [name,binding]:env->bindings)if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});Callable callable{fn->second,"",{},captured};std::weak_ptr<Environment> weak=captured;callable.resource_guard=[weak](unsigned d){if(auto env=weak.lock())for(const auto& [_,b]:env->bindings)if(contains_file(b.value,d+1))return true;return false;};stack_.emplace_back(Value(std::move(callable)));break;}
@@ -160,9 +182,10 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::LocateField: {
             auto value=pop(s);auto object=std::get_if<StructValue>(&value.data);
             if(!object)runtime_error(s,"field assignment requires a struct","E4003");
+            if(object->data->enumeration)runtime_error(s,"enum fields are private","E4003");
             auto field=object->data->fields.find(op.text);if(field==object->data->fields.end())runtime_error(s,"unknown struct field","E4003");
             if(!object->writable)runtime_error(s,"cannot mutate immutable binding or read-only view","E4007");
-            stack_.emplace_back(Location{&field->second,field_type(model_,object->data->name,op.text,s),true,object->data,{},{}});break;
+            stack_.emplace_back(Location{&field->second,field_type(object->data->name,op.text,s),true,object->data,{},{}});break;
         }
         case Op::LocateIndex:case Op::Index: {
             auto index=pop(s),value=pop(s);if(op.op==Op::Index)stack_.emplace_back(index_value(value,index,s));else {auto l=index_location(std::move(value),std::move(index),s);if(!l.writable)runtime_error(s,"cannot mutate immutable binding or read-only view","E4007");stack_.emplace_back(std::move(l));}break;
@@ -211,13 +234,17 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::MakeStruct: {
             if(op.text=="std.error.Value")runtime_error(s,"standard Error must be constructed through std.error","E4003");
         if(op.text=="std.file.File"||op.text=="std.file.IOFailure")runtime_error(s,"opaque File/IOFailure must be constructed through std.file","E4003");
-            auto object=managed<StructData>();object->name=op.text;stack_.emplace_back(Value(StructValue{object,true}));break;
+            auto object=managed<StructData>();object->name=op.text;
+            auto [layout,inserted]=enum_layouts_.try_emplace(op.text);
+            if(inserted)layout->second=enum_layout(*model_.structures.at(op.text));
+            object->enumeration=layout->second;
+            stack_.emplace_back(Value(StructValue{object,true}));break;
         }
         case Op::InitField: {
             auto item=pop(s);if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
             auto object=std::get_if<StructValue>(&std::get<Value>(stack_.back()).data);if(!object)invalid(s);
-            auto value=enforce_type(std::move(item),field_type(model_,object->data->name,op.text,s),s,op.flag);
-            object->data->fields.emplace(op.text,copy_value(std::move(value)));break;
+            auto value=enforce_type(std::move(item),field_type(object->data->name,op.text,s),s,op.flag);
+            initialize_field(*object->data,op.text,std::move(value),s);break;
         }
         case Op::Member: {
             auto value=pop(s);

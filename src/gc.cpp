@@ -1,3 +1,4 @@
+#include "hua/performance.hpp"
 #include "hua/value.hpp"
 #include "hua/gc.hpp"
 #include <unordered_map>
@@ -9,11 +10,19 @@ HeapScope::HeapScope(ManagedHeap& heap):previous(active){active=&heap;}
 HeapScope::~HeapScope(){active=previous;}
 std::size_t ManagedHeap::live() const {return std::count_if(records_.begin(),records_.end(),[](const auto& x){return !x.pointer.expired();});}
 std::size_t ManagedHeap::collect(){
+#ifdef HUA_INTERNAL_PROFILE
+    performance::CollectionTimer collection_timer;
+#endif
+    HUA_PROFILE_COUNT(gc_collections);HUA_PROFILE_ADD(gc_records,records_.size());
     std::erase_if(records_,[](const auto& x){return x.pointer.expired();});
+    HUA_PROFILE_ADD(gc_live_records,records_.size());
     std::vector<std::shared_ptr<const void>> objects;std::unordered_map<const void*,std::size_t> index;
     for(const auto& r:records_){auto p=r.pointer.lock();index.emplace(p.get(),objects.size());objects.push_back(std::move(p));}
     std::vector<std::vector<std::size_t>> edges(objects.size());std::vector<std::size_t> incoming(objects.size());
     for(std::size_t i=0;i<objects.size();++i)if(records_[i].edges)records_[i].edges(objects[i].get(),[&](const void* p){if(auto f=index.find(p);f!=index.end()){edges[i].push_back(f->second);++incoming[f->second];}});
+#ifdef HUA_INTERNAL_PROFILE
+    for(const auto& links:edges){HUA_PROFILE_ADD(gc_edges,links.size());}
+#endif
     std::vector<bool> marked(objects.size());std::vector<std::size_t> work;
     for(std::size_t i=0;i<objects.size();++i)if(objects[i].use_count()>static_cast<long>(incoming[i]+1)){marked[i]=true;work.push_back(i);}
     while(!work.empty()){auto i=work.back();work.pop_back();for(auto j:edges[i])if(!marked[j]){marked[j]=true;work.push_back(j);}}

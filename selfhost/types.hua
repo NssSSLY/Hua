@@ -31,7 +31,7 @@ pub struct Model { graph modules.Graph
     functions map[string]Function
     variants map[string]Function
     facts map[string]Info
-    capabilities map[string]flow.Value
+    capabilities map[string]flow.Fact
     work int
     capability_passes int }
 struct Environment { unit modules.Unit
@@ -985,7 +985,7 @@ pub fn analyze(entry string) Result<Model> {
     let graph = modules.analyze_compiler(entry)?
     var units = map[string]modules.Unit{}
     for u in list.snapshot(graph.units) { units[u.id] = u }
-    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},capabilities:map[string]flow.Value{},work:0,capability_passes:0}
+    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},capabilities:map[string]flow.Fact{},work:0,capability_passes:0}
     for ref in list.snapshot(graph.references) { m.refs[key(ref.module,ref.node)] = ref.target }
     for symbol in list.snapshot(graph.symbols) { m.declarations[key(symbol.module,symbol.node)] = symbol.target }
     for symbol in list.snapshot(graph.symbols) {

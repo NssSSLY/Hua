@@ -40,6 +40,13 @@ private:
         std::shared_ptr<Environment> environment;
         std::vector<Iterator> iterators;
     };
+    struct ParameterLayout { std::string name,type;bool mutable_view{}; };
+    struct FunctionLayout { std::string name;std::vector<ParameterLayout> parameters;std::vector<std::string> returns;bool external{},unsafe{}; };
+    std::unordered_map<const Node*,FunctionLayout> function_layouts_;
+    std::unordered_map<std::string,std::unordered_map<std::string,std::string>> field_types_;
+    const FunctionLayout& function_layout(const Node&);
+    const std::string& field_type(const std::string&,const std::string&,const SourceSpan&);
+    std::unordered_map<std::string,std::shared_ptr<const EnumLayout>> enum_layouts_;
     const SemanticModel& model_;
     std::ostream& output_;
     RuntimeContext* context_{};

@@ -1,3 +1,5 @@
+#include "hua/enum_value.hpp"
+#include "hua/performance.hpp"
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -56,6 +58,7 @@ std::string canonical_type(std::string_view type) {
     return std::string(type); // Nominal names retain their declared identity.
 }
 std::string type_name(const Node& n) {
+    HUA_PROFILE_COUNT(type_name_calls);
     switch (n.kind) {
     case NodeKind::TypeName: return canonical_type(n.text);
     case NodeKind::MutableType: return type_name(*n.children[0]);
@@ -336,6 +339,13 @@ bool contains_file(const Value& v,unsigned depth){
     return scan_file(v,depth,scan);
 }
 Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
+    HUA_PROFILE_COUNT(copy_const);
+#ifdef HUA_INTERNAL_PROFILE
+    if(deep){HUA_PROFILE_COUNT(deep_clone_nodes);if(depth==0)HUA_PROFILE_COUNT(deep_clone_roots);}
+#endif
+    if(std::holds_alternative<StructValue>(v.data))HUA_PROFILE_COUNT(copy_struct);
+    if(std::holds_alternative<ResultValue>(v.data))HUA_PROFILE_COUNT(copy_result);
+    if(auto p=std::get_if<SliceValue>(&v.data);p&&p->fixed)HUA_PROFILE_COUNT(copy_fixed_array);
     if(deep&&!resource_alias&&depth==0&&contains_file(v))runtime_error({},"File cannot be cloned, including inside containers or closures","E4007");
     if(deep)if(auto p=std::get_if<IOFailureValue>(&v.data)){
         auto d=*p->data;d.error=std::get<ErrorValue>(copy_value(Value(d.error),true,depth+1,resource_alias).data);
@@ -345,7 +355,13 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     if(depth>128) runtime_error({},"value nesting limit exceeded","E4099");
     if(deep)if(auto p=std::get_if<ErrorValue>(&v.data)){auto data=*p->data;if(data.cause)data.cause=std::get<ErrorValue>(copy_value(Value(ErrorValue{data.cause}),true,depth+1,resource_alias).data).data;return Value(ErrorValue{managed<const ErrorData>(std::move(data))});}
     if(auto p=std::get_if<StructValue>(&v.data)) {
+        require_complete_enum(*p->data);
+        HUA_PROFILE_ADD(copy_struct_fields,p->data->fields.size());
+#ifdef HUA_INTERNAL_PROFILE
+        performance::record_struct_copy(p->data->name,p->data->fields.size());
+#endif
         auto data=managed<StructData>(); data->name=p->data->name;
+        data->enumeration=p->data->enumeration;data->variant=p->data->variant;
         for(const auto& [k,x]:p->data->fields) data->fields.emplace_hint(data->fields.end(),k,copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1,resource_alias));
         return Value(StructValue{data,true});
     }
@@ -364,10 +380,12 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
 // A consumed, uniquely owned value needs no second backing allocation. Shared values
 // retain the ordinary snapshot copy; writable/read-only descendants follow the same rule.
 Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
+    HUA_PROFILE_COUNT(copy_move);
     if(deep)return copy_value(static_cast<const Value&>(v),deep,depth,resource_alias);
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
     if(auto p=std::get_if<StructValue>(&v.data)) {
+        require_complete_enum(*p->data);
         if(p->data.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
         for(auto& [_,x]:p->data->fields) {
             if(!p->writable)x=read_only(std::move(x));
@@ -393,6 +411,7 @@ Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
     return std::move(v);
 }
 Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bool contextual) {
+    HUA_PROFILE_COUNT(enforce_type_calls);
     if(expected.find('[')!=std::string::npos){auto type=canonical_type(expected);if(type!=expected)return enforce_type(std::move(v),type,span,contextual);}
     if(std::holds_alternative<VoidValue>(v.data)&&expected!="void")runtime_error(span,"void has no usable value","E4003");
     if(expected.empty()) return v;
@@ -462,6 +481,7 @@ std::string show(const Value& v) {
     return "<function>";
 }
 std::vector<std::string> type_arguments(std::string_view t,std::string_view name) {
+    HUA_PROFILE_COUNT(type_argument_parses);
     if(!t.starts_with(std::string(name)+"<")||!t.ends_with('>'))return {};
     std::vector<std::string> out;std::size_t start=name.size()+1;unsigned depth=0;
     for(std::size_t i=start;i<t.size()-1;++i){if(t[i]=='<')++depth;else if(t[i]=='>'){if(!depth)return {};--depth;}else if(t[i]==','&&!depth){out.emplace_back(t.substr(start,i-start));start=i+1;}}
@@ -497,11 +517,22 @@ void location_write(const ValueLocation& l,const Value& value,const SourceSpan& 
 }
 void location_write(const ValueLocation& l,const Value& value) {location_write(l,value,{});}
 Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span){if(type.find('[')!=std::string::npos){auto normalized=canonical_type(type);if(normalized!=type)return enforce_borrow(std::move(value),normalized,span);}if(type.starts_with('[')){auto sequence=std::get_if<SliceValue>(&value.data);auto close=type.find(']');if(!sequence||sequence->element_type!=type.substr(close+1)||(close>1&&!sequence->fixed))runtime_error(span,"mut array/slice borrow requires identical element type and existing fixed layout","E4003");}return enforce_type(std::move(value),type,span);}
-Value enforce_return(Value value,const Node& fn,const SourceSpan& s,bool contextual) {
-    for(const auto& c:fn.children)if(c->kind==NodeKind::ReturnTypes){if(c->children.size()==1)value=enforce_type(std::move(value),type_name(*c->children[0]),s,contextual);else {auto values=unpack_multi(value,c->children.size(),s);auto data=std::get<MultiValue>(value.data).data;for(std::size_t i=0;i<values.size();++i)values[i]=enforce_type(std::move(values[i]),type_name(*c->children[i]),s,i<data->contextual.size()&&data->contextual[i]);value=make_multi(std::move(values));}}
+namespace {
+template<class Type> Value return_value(Value value,std::size_t count,Type type,const SourceSpan& s,bool contextual){
+    if(count==1)value=enforce_type(std::move(value),type(0),s,contextual);
+    else if(count>1){auto values=unpack_multi(value,count,s);auto data=std::get<MultiValue>(value.data).data;for(std::size_t i=0;i<values.size();++i)values[i]=enforce_type(std::move(values[i]),type(i),s,i<data->contextual.size()&&data->contextual[i]);value=make_multi(std::move(values));}
     if(auto p=std::get_if<MultiValue>(&value.data))p->data->contextual.clear();if(auto p=std::get_if<ResultValue>(&value.data))p->contextual=false;
     return copy_value(std::move(value));
 }
+}
+Value enforce_return(Value value,const Node& fn,const SourceSpan& s,bool contextual) {
+    for(const auto& c:fn.children)if(c->kind==NodeKind::ReturnTypes)return return_value(std::move(value),c->children.size(),[&](std::size_t i){return type_name(*c->children[i]);},s,contextual);
+    return return_value(std::move(value),0,[](std::size_t){return std::string{};},s,contextual);
+}
+Value enforce_return(Value value,const std::vector<std::string>& types,const SourceSpan& s,bool contextual) {
+    return return_value(std::move(value),types.size(),[&](std::size_t i)->const std::string&{return types[i];},s,contextual);
+}
+
 Value record_failure_source(Value value,const SourceSpan& span,std::string message){
     auto result=std::get_if<ResultValue>(&value.data);
     if(!result||result->ok||span.file_id.empty())return value;

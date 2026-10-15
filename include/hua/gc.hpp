@@ -1,4 +1,5 @@
 #pragma once
+#include "hua/performance.hpp"
 #include <functional>
 #include <memory>
 #include <vector>
@@ -43,6 +44,7 @@ struct HeapScope {ManagedHeap* previous;explicit HeapScope(ManagedHeap&);~HeapSc
 template<class T,class... Args> std::shared_ptr<T> managed(Args&&... args){
     auto& heap=managed_heap();
     if(heap.allocated()%heap.collection_interval()==heap.collection_interval()-1)heap.collect();
+    HUA_PROFILE_COUNT(managed_allocations);HUA_PROFILE_ADD(tracked_object_bytes,sizeof(T));
     auto object=std::make_shared<T>(std::forward<Args>(args)...);heap.track(object);return object;
 }
 }

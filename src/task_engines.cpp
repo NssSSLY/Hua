@@ -1,3 +1,4 @@
+#include "hua/enum_value.hpp"
 #include "hua/interpreter.hpp"
 #include "hua/vm.hpp"
 #include "hua/tasks.hpp"
@@ -15,7 +16,7 @@ Value snapshot(const Value& input,const std::function<Callable(const Callable&,u
     }
     if(file)runtime_error({},"task snapshots cannot contain File","E4104");
     if(auto f=std::get_if<Callable>(&input.data))return Value(copy(*f,depth+1));
-    if(auto p=std::get_if<StructValue>(&input.data)){auto d=managed<StructData>();d->name=p->data->name;for(const auto& [k,v]:p->data->fields)d->fields.emplace(k,snapshot(v,copy,depth+1));return Value(StructValue{d,false});}
+    if(auto p=std::get_if<StructValue>(&input.data)){require_complete_enum(*p->data);auto d=managed<StructData>();d->name=p->data->name;d->enumeration=p->data->enumeration;d->variant=p->data->variant;for(const auto& [k,v]:p->data->fields)d->fields.emplace(k,snapshot(v,copy,depth+1));return Value(StructValue{d,false});}
     if(auto p=std::get_if<MapValue>(&input.data)){auto d=managed<MapData>();d->key_type=p->data->key_type;d->item_type=p->data->item_type;for(const auto& [k,v]:p->data->entries)d->entries.emplace(k,snapshot(v,copy,depth+1));return Value(MapValue{d,false});}
     if(auto p=std::get_if<ListValue>(&input.data)){auto d=managed<ListData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(ListValue{d,false});}
     if(auto p=std::get_if<ResultValue>(&input.data)){auto r=*p;if(p->payload)r.payload=managed<Value>(snapshot(*p->payload,copy,depth+1));r.writable=false;return Value(r);}

@@ -4,17 +4,20 @@ options=argparse.ArgumentParser(description='Single-pass compiler diagnostic; st
 options.add_argument('--hua',type=Path,required=True)
 options.add_argument('--output',type=Path,required=True)
 options.add_argument('--sizes',type=int,nargs='+',default=[10,100,500,1000])
+options.add_argument('--unbounded',action='store_true',help='Disable the 30s test stop; preserve the 600s single compiler budget')
 args=options.parse_args()
 if any(n<1 or n>1000 for n in args.sizes):options.error('sizes must be in 1..1000')
 root=Path(__file__).resolve().parents[1];out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
 if (out/'results.json').exists():options.error('output already contains evidence; choose a new directory')
 hua=args.hua.resolve()
+options_unbounded=args.unbounded
 rows=[];started=time.monotonic();stopped=False
 class Memory(ctypes.Structure):
  _fields_=[('cb',w.DWORD),('PageFaultCount',w.DWORD)]+[(n,ctypes.c_size_t) for n in ('PeakWorkingSetSize','WorkingSetSize','QuotaPeakPagedPoolUsage','QuotaPagedPoolUsage','QuotaPeakNonPagedPoolUsage','QuotaNonPagedPoolUsage','PagefileUsage','PeakPagefileUsage')]
 def record(label,args,limit=30):
  global stopped
  if stopped:return None
+ if options_unbounded:limit=600
  args=list(map(str,args));t=time.monotonic();p=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**({'start_new_session':True} if os.name!='nt' else {}));timed=False
  try:stdout,stderr=p.communicate(timeout=limit)
  except subprocess.TimeoutExpired:
@@ -43,7 +46,7 @@ def record(label,args,limit=30):
  if (p.returncode or row.get('report_status')=='error') and not timed:stopped=True;save()
  return row
 def save():
- (out/'results.json').write_text(json.dumps({'status':'stopped' if stopped else 'running','rows':rows,'seconds':round(time.monotonic()-started,3),'retry':False,'runtime_sha256':hashlib.sha256(hua.read_bytes()).hexdigest(),'input_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in out.glob('workload*.hua')}},ensure_ascii=False,indent=2),encoding='utf-8')
+ (out/'results.json').write_text(json.dumps({'status':'stopped' if stopped else 'running','rows':rows,'seconds':round(time.monotonic()-started,3),'retry':False,'unbounded_tests':options_unbounded,'compiler_wall_limit_seconds':600,'runtime_sha256':hashlib.sha256(hua.read_bytes()).hexdigest(),'compiler_source_hashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (root/'selfhost').glob('*.hua')},'input_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in out.glob('workload*.hua')}},ensure_ascii=False,indent=2),encoding='utf-8')
 # Cheap mechanism probes; allocated is counted inside the Hua process (not inferred).
 for n in (100,1000):
  source=out/f'workload-value-{n}.hua'

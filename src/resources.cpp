@@ -1,3 +1,4 @@
+#include "hua/performance.hpp"
 #include "hua/resources.hpp"
 #include <algorithm>
 #include <atomic>
@@ -257,6 +258,8 @@ struct ResourceDomain::Impl {
     std::shared_ptr<const int> domain{std::make_shared<const int>(0)};
     std::thread::id executor{std::this_thread::get_id()};
     bool affine{}, stopped{}, cpu_stop_proof{};
+    // One-way publication: no resource or close work can exist before this is set.
+    std::atomic<bool> has_created_resource{false};
     std::unordered_set<TaskId> exited;
     std::vector<std::shared_ptr<Control>> resources;
     std::vector<std::shared_ptr<Operation>> operations;
@@ -304,6 +307,7 @@ Outcome<Handle> ResourceDomain::create(TaskId owner, std::function<CloseResult()
         c->state.id = id; c->state.generation = 1; c->state.owner_epoch = 1; c->state.owner = owner;
         c->domain = impl_->domain; c->handle = std::move(*permit.value); c->physical_close = std::move(close);
         impl_->resources.push_back(c);
+        impl_->has_created_resource.store(true,std::memory_order_release);
         return {Handle(std::move(c), 1), {}};
     } catch (const std::bad_alloc&) { return rejected<Handle>(Code::allocation, "resource allocation failed"); }
 }
@@ -433,9 +437,12 @@ Outcome<CloseTicket> ResourceDomain::close(const Handle& h, TaskId actor) {
     return {CloseTicket(std::move(record)), {}};
 }
 Failure ResourceDomain::pump() {
+    HUA_PROFILE_COUNT(resource_pumps);
     if (impl_->affine && std::this_thread::get_id() != impl_->executor) return fail(Code::wrong_executor, "wrong close executor");
+    if (!impl_->has_created_resource.load(std::memory_order_acquire)) { HUA_PROFILE_COUNT(resource_fast_returns);return {}; }
     std::vector<std::shared_ptr<Control>> resources;
     { std::lock_guard lock(impl_->mutex); resources = impl_->resources; }
+    HUA_PROFILE_ADD(resource_candidates,resources.size());
     for (const auto& c : resources) {
         {
             std::lock_guard lock(c->mutex);

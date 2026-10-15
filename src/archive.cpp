@@ -1,3 +1,4 @@
+#include "hua/enum_value.hpp"
 #include "hua/archive.hpp"
 #include "hua/stdlib.hpp"
 #include <algorithm>
@@ -197,6 +198,13 @@ void verify(const Code& c,const SemanticModel& model) {
 }
 const Source* BytecodeImage::source(const std::string& id) const {for(const auto& s:sources)if(s->filename()==id)return s.get();return nullptr;}
 void verify_bytecode(const Bytecode& b,const SemanticModel& model) {
+    for(const auto& [_,declaration]:model.structures){
+        std::shared_ptr<const EnumLayout> layout;
+        try{layout=enum_layout(*declaration);}
+        catch(const Diagnostic&){bad(declaration->span,"invalid enum layout");}
+        if(layout)for(const auto& [_,field]:layout->fields)
+            type_string(field.type,declaration->span,field.type=="void");
+    }
     verify(b.initializer,model);std::size_t total=b.initializer.instructions.size();
     for(const auto& [fn,c]:b.functions){if(!fn||declared_name(*fn)!=c.name||!model.functions.contains(c.name)||model.functions.at(c.name)!=fn)bad(c.instructions.empty()?SourceSpan{}:c.instructions[0].span,"function metadata mismatch");verify(c,model);total+=c.instructions.size();}
     if(total>max_instructions)bad({},"instruction count limit exceeded");

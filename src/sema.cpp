@@ -393,6 +393,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         Info item;Views views;bool first=true;
         for(std::size_t i=1;i<n.children.size();++i){const auto& e=*n.children[i];require(ts[0],expression(*e.children[0]),*e.children[0]);auto value=expression(*e.children[1]);require(ts[1],value,*e.children[1]);
             auto children=node_views_.contains(e.children[1].get())?node_views_.at(e.children[1].get()):fields(value);if(!value.writable)for(auto& [path,view]:children){view.writable=false;view.readonly_children=true;if(record(view.type))view=copied(view);}
+            for(auto& [_,view]:children){if(!value.writable){view.writable=false;view.readonly_children=true;}if(record(value.type)&&record(view.type))view=copied(view);}
             value=copied(value);value.type=ts[1];if(first){item=value;views=children;first=false;}else{views=meet(std::move(views),children,item,value);item=meet(item,value);}}
         if(!first){node_views_[&n]["[]"]=item;for(auto [path,view]:views)node_views_[&n]["[]"+path]=std::move(view);}out={type,true};break;
     }
@@ -406,7 +407,10 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         std::string element;
         for(const auto& c:n.children){auto x=expression(*c);if(x.type=="void")error(*c,"void cannot be an array element","E3004");if(element.empty())element=x.type;else require(element,x,*c);}
         out={"[]"+element,true};Info item;Views item_views;bool first=true;
-        for(const auto& child:n.children){auto value=copied(infos_.at(child.get()));auto views=node_views_.contains(child.get())?node_views_.at(child.get()):fields(value);
+        for(const auto& child:n.children){const auto& source=infos_.at(child.get());auto value=copied(source);auto views=node_views_.contains(child.get())?node_views_.at(child.get()):fields(source);
+            // Record copies own their scalar/record fields, but inherit shared
+            // descendants from the original element before it becomes writable.
+            for(auto& [_,view]:views){if(!source.writable){view.writable=false;view.readonly_children=true;}if(record(source.type)&&record(view.type))view=copied(view);}
             if(first){item=value;item_views=views;first=false;}else{item_views=meet(std::move(item_views),views,item,value);item=meet(std::move(item),value);}}
         if(!first){node_views_[&n]["[]"]=item;for(auto [path,view]:item_views)node_views_[&n]["[]"+path]=std::move(view);}
         out.origins={{&n,"",false,false}};
@@ -766,7 +770,7 @@ void SemanticAnalyzer::apply_effects(const Effects& effects,const Node& site){
     for(const auto& required:effects.required){auto found=actual_origins_.find(required.owner);if(found==actual_origins_.end())continue;
         Info fact=found->second;if(!required.path.empty()){auto views=actual_views_.find(required.owner);if(views!=actual_views_.end()&&views->second.contains(required.path))fact=views->second.at(required.path);else fact=projected(fact,required.path);}
         if((required.readonly||!fact.writable)&&!probing_)error(site,"callee writes through a read-only member/view","E3003");
-        if(probing_&&!(fact.record_copy&&required.path.empty()))for(const auto& origin:fact.origins)pending_effects_.required.insert(origin);
+        if(probing_&&!fact.record_copy)for(const auto& origin:fact.origins)pending_effects_.required.insert(origin);
     }
     const Node* function=nullptr;auto type=infos_.at(site.children[0].get()).type;if(type.starts_with("fn:"))function=model_.functions.at(type.substr(3));if(!function)return;auto params=parameters(*function);
     for(const auto& [owner,writes]:effects.writes){std::size_t index=0;while(index<params.size()&&params[index]!=owner)++index;
