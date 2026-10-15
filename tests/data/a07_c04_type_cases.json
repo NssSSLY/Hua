@@ -1,0 +1,302 @@
+[
+  {
+    "name": "type_array_identity",
+    "source": "fn f(x [2]int) int{return x[1]}\nfn main(){let a [2]int=[1,2]\nprint(f(a))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_array_parameters",
+    "source": "fn f(x [2]int) int{return x[1]}\nfn g(x [2]int) int{return x[1]}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_map_array",
+    "source": "fn main(){let a map[string][2]int=map[string][2]int{\"x\":[1,2]}\nprint(type(a),type(unwrap(a[\"x\"])),unwrap(a[\"x\"])[1])}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_scalars",
+    "source": "fn main(){var x int=2\nx+=1\nlet y=x/2\nprint(y)}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_sizes",
+    "source": "fn f(x i16,y u8) i32{return i32(x)+i32(y)}\nfn main(){let x i8=3\nlet a [2]int=[1,2]\nprint(f(x,byte(1)),sizeof(a))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_struct",
+    "source": "struct A{x int}\nfn f(a A) int{return a.x}\nfn main(){var a=A{x:1}\na.x=2\nprint(f(a))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_container",
+    "source": "import std.list as l\nfn main(){var x []int=[]\nvar a=l.from_slice(x)\nl.append(a,1)\nlet y=l.snapshot(a)\nprint(y[0])}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_map",
+    "source": "fn main(){var m=map[string]int{\"a\":1}\nm[\"b\"]=2\nlet x=unwrap_or(m[\"a\"],0)\nprint(x,has(m,\"b\"),delete(m,\"b\"))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_enum",
+    "source": "enum E{A(int),B}\nfn f(x E) int{match x{A(v)=>{return v}\nB=>{return 0}}}\nfn main(){print(f(E.A(2)))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_multi",
+    "source": "fn f()(int,string){return 1,\"a\"}\nfn main(){var a,b=f()\na,_=2,\"b\"\nprint(a,b)}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_result",
+    "source": "fn g() Result<int>{return ok(2)}\nfn f() Result<void>{let x=g()?\ndefer print(x)\nreturn ok()}\nfn main(){unwrap(f())}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_optional",
+    "source": "fn f(x int?) int{if x==nil{return 0}\nreturn x+1}\nfn main(){print(f(nil))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_and",
+    "source": "fn f(x int?) bool{return is_some(x)&&x>0}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_capchain",
+    "source": "fn a() []int{return b()}\nfn b() []int{return [1]}\nfn change(x mut []int){x[0]=2}\nfn main(){var x=a()\nchange(x)}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_capmut",
+    "source": "fn borrow(x mut []int) []int{return x}\nfn main(){var x=[1]\nvar y=borrow(x)\ny[0]=2}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_clone",
+    "source": "fn f(x []int) []int{return clone(x)}\nfn main(){let x=[1]\nvar y=f(x)\ny[0]=2}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_array_context",
+    "source": "fn f() [2]f32{return [1,2]}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_loop",
+    "source": "fn f(x []int) int{var sum=0\nfor i,v in x{sum+=v}\nreturn sum}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_slice",
+    "source": "fn main(){var x=[1,2]\nvar y=x[:]\ny[0]=3}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_json",
+    "source": "import std.json as j\nfn f(x j.Value) Result<string>{return j.encode(x)}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_buffer",
+    "source": "import std.buffer as b\nfn main(){var x=b.new()\nb.write_text(x,\"a\")\nprint(b.len(x))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_branch_stop",
+    "source": "fn f(x int?) int{if is_none(x){return 0}else{return x}}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_optional_match",
+    "source": "fn f(x int?) int{match x{nil=>{return 0}\n_=>{return x}}}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_while_guard",
+    "source": "fn f(x int?) int{var y int?=x\nwhile y==nil{y=1}\nreturn y}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_loop_narrow",
+    "source": "fn f(x int?) int{if x!=nil{for i in 0..2{print(x+1)}\nreturn x}\nreturn 0}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_bool_match",
+    "source": "fn f(x bool) int{match x{true=>{return 1}\nfalse=>{return 0}}}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_global_function_alias",
+    "source": "fn base(x int) int{return x+1}\nlet alias=base\nfn main(){print(alias(2),base(3))}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_global_enum_alias",
+    "source": "enum E{A(int),B}\nlet factory=E.A\nfn f() E{return factory(2)}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_for_discard",
+    "source": "fn main(){let data=map[string]bool{\"a\":true}\nfor key,_ in data{print(key)}}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_global_data_branches",
+    "source": "var data=[1]\nfn f(flag bool){if flag{data[0]=2}else{data[0]=3}\nfor i in 0..1{data[i]=4}}\n",
+    "expected": "ok"
+  },
+  {
+    "name": "type_badmain",
+    "source": "fn main(x int){}\n",
+    "expected": "E3005"
+  },
+  {
+    "name": "type_capread",
+    "source": "fn a(x []int) []int{return x}\nfn main(){let z=[1]\nvar x=a(z)\nx[0]=2}\n",
+    "expected": "E3003"
+  },
+  {
+    "name": "type_capbranch",
+    "source": "fn main(){let ro=[1]\nvar x=[2]\nif true{x=ro}\nx[0]=3}\n",
+    "expected": "E3003"
+  },
+  {
+    "name": "type_caploop",
+    "source": "fn main(){let ro=[1]\nvar x=[2]\nwhile false{x=ro}\nx[0]=3}\n",
+    "expected": "E3003"
+  },
+  {
+    "name": "type_let",
+    "source": "fn main(){let x=1\nx=2}\n",
+    "expected": "E3003"
+  },
+  {
+    "name": "type_badfield",
+    "source": "struct A{x int}\nlet a=A{x:\"bad\"}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_unknownfield",
+    "source": "struct A{x int}\nlet a=A{y:1}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_badarg",
+    "source": "fn f(x int) int{return x}\nlet a=f(\"x\")\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_arity",
+    "source": "fn f(x int) int{return x}\nlet a=f()\n",
+    "expected": "E3005"
+  },
+  {
+    "name": "type_badreturn",
+    "source": "fn f() int{return \"bad\"}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_missingreturn",
+    "source": "fn f(x bool) int{if x{return 1}}\n",
+    "expected": "E3006"
+  },
+  {
+    "name": "type_badlist",
+    "source": "import std.list as l\nfn main(){var a=l.from_slice([1])\nl.append(a,\"bad\")}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_void",
+    "source": "let x=print(1)\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_nonexhaustive",
+    "source": "enum E{A,B}\nfn f(x E){match x{A=>{print(1)}}}\n",
+    "expected": "E3011"
+  },
+  {
+    "name": "type_badmut",
+    "source": "fn f(x mut []int){}\nfn main(){let x=[1]\nf(x)}\n",
+    "expected": "E3003"
+  },
+  {
+    "name": "type_badmath",
+    "source": "import std.math as m\nlet x=m.sin(1)\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_double_optional",
+    "source": "let x Result<int>?=nil\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_badpropagate",
+    "source": "fn f() int{let r Result<int>=ok(1)\nreturn r?}\n",
+    "expected": "E3006"
+  },
+  {
+    "name": "type_badcondition",
+    "source": "fn main(){if 1{print(1)}}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_float_integerop",
+    "source": "let x=1.0//2.0\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_result_void_value",
+    "source": "fn f() Result<int>{return ok()}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_stdreadonly",
+    "source": "import std.list as l\nfn main(){let a=l.from_slice([1])\nl.append(a,2)}\n",
+    "expected": "E3003"
+  },
+  {
+    "name": "type_compound_division",
+    "source": "fn main(){var x=1\nx/=2}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_multi_arity",
+    "source": "fn f()(int,string){return 1}\n",
+    "expected": "E3006"
+  },
+  {
+    "name": "type_match_numeric_duplicate",
+    "source": "fn f(x int){match x{1=>{print(1)}\n01=>{print(2)}\n_=>{print(0)}}}\n",
+    "expected": "E3011"
+  },
+  {
+    "name": "type_match_duplicate",
+    "source": "fn f(x bool) int{match x{true=>{return 1}\ntrue=>{return 2}\n_=>{return 0}}}\n",
+    "expected": "E3011"
+  },
+  {
+    "name": "type_mut_argument_wrong_element",
+    "source": "fn f(x mut []int){}\nfn main(){let x=[\"bad\"]\nf(x)}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_defer_missing_mut_argument",
+    "source": "struct Box{xs []int}\nfn f(b mut Box){b.xs=[2]}\nfn main(){defer f()}\n",
+    "expected": "E3005"
+  },
+  {
+    "name": "type_std_readonly_wrong_container",
+    "source": "import std.list as l\nfn main(){let x=[1]\nl.append(x,2)}\n",
+    "expected": "E3004"
+  },
+  {
+    "name": "type_constructor_before_capability",
+    "source": "struct Box{xs []int}\nfn main(){var b=Box{xs:1}\nb.xs[0]=9}\n",
+    "expected": "E3004"
+  }
+]

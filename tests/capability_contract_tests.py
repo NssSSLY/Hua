@@ -1,17 +1,21 @@
 """A07 native capability contracts. No compiler bootstrap/generation runs."""
 from pathlib import Path
-import hashlib,json,os,sys,time
-from process_guard import run,TestProcessTimeout
+import hashlib,json,os,subprocess,sys,time
+from process_guard import run
 exe,root,build=(Path(x).resolve() for x in sys.argv[1:4]);work=build/'a07-completion';work.mkdir(exist_ok=True)
 os.environ['HUA_TEST_SUITE_TIMEOUT_SECONDS']='180'
 cases=json.loads((root/'tests/data/a07_completion_cases.json').read_text(encoding='utf-8'))
+unbounded='--unbounded' in sys.argv[4:]
 checks=0;rows=[];commands=[];started=time.monotonic()
 def require(ok,detail):
     global checks
     checks+=1
     if not ok:raise AssertionError(detail)
 def call(args,code=0,out=None):
-    p=run([str(exe),*map(str,args)],capture_output=True,encoding='utf-8',timeout=10)
+    try:p=(subprocess.run if unbounded else run)([str(exe),*map(str,args)],capture_output=True,encoding='utf-8',timeout=None if unbounded else 10)
+    except BaseException as error:
+        commands.append(dict(args=list(map(str,args)),status='failed',error=str(error)))
+        raise
     commands.append(dict(args=list(map(str,args)),code=p.returncode,stdout=p.stdout,stderr=p.stderr))
     require(p.returncode==code,commands[-1])
     if out is not None:require(p.stdout==out,commands[-1])
@@ -37,9 +41,14 @@ try:
     for c in cases:
         try:matrix(c)
         except AssertionError as error:rows.append(dict(case=c['name'],status='failed',error=str(error)));failures.append(c['name'])
-except TestProcessTimeout:raise
+except BaseException as error:
+    failures.append('runner: '+str(error))
+    raise
 finally:
-    result=dict(status='failed' if failures else 'passed',cases=len(rows),checks=checks,commands=len(commands),seconds=round(time.monotonic()-started,3),hua_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),rows=rows)
+    result=dict(status='failed' if failures else 'passed',unbounded=unbounded,cases=len(rows),checks=checks,commands=len(commands),seconds=round(time.monotonic()-started,3),hua_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),failures=failures,rows=rows)
+    stamp=str(time.time_ns())
+    (work/('results-'+stamp+'.json')).write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
+    (work/('commands-'+stamp+'.json')).write_text(json.dumps(commands,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
     (work/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
     (work/'commands.json').write_text(json.dumps(commands,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
     print(json.dumps({k:v for k,v in result.items() if k!='rows'}),flush=True)

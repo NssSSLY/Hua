@@ -565,3 +565,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(capability_contract PROPERTIES TIMEOUT 180 LABELS "capability-contract")
 endif()
+
+# Small C04 capability parity only; compiler own-source/generation pipelines stay separate.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME capability_c04 COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_c04_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+        --subset-probe $<TARGET_FILE:hua_subset_probe>
+        --type-oracle $<TARGET_FILE:hua_parser_oracle>)
+    set_tests_properties(capability_c04 PROPERTIES TIMEOUT 900 LABELS "capability-contract;c04-small-inputs")
+endif()

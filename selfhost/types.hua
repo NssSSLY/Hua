@@ -1019,7 +1019,9 @@ pub fn analyze(entry string) Result<Model> {
         for p in f.parameters { list.append(parameters,flow.Parameter{target:p.target,type_name:p.type_name,writable:p.writable})? }
         flow_functions[name]=flow.Function{target:f.target,module:f.module,node:f.node,parameters:list.snapshot(parameters),result:f.result}
     }
-    let capabilities=flow.analyze(graph,m.refs,m.declarations,m.fields,flow_functions)?
+    var flow_variants=map[string]string{}
+    for name, f in m.variants { flow_variants[name]=f.result }
+    let capabilities=flow.analyze(graph,m.refs,m.declarations,m.fields,flow_functions,flow_variants)?
     m.capabilities=capabilities.facts
     m.capability_passes+=capabilities.passes
     m.work+=capabilities.work
@@ -1055,5 +1057,6 @@ pub fn analyze(entry string) Result<Model> {
             if f.result != "void" && !strings.ends_with(f.result,"?") && !returns(e,get(e,n.children[1])) { return err(fail(e,n,"E3006","typed function may reach end")) }
         }
     }
+    if capabilities.error!="" { return err(capabilities.error) }
     return ok(m)
 }

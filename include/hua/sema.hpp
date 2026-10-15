@@ -43,14 +43,17 @@ private:
     static Info meet(Info,const Info&);
     static Views meet(Views,const Views&,const Info&,const Info&);
     Effects pending_effects_;
+    std::unordered_set<const Node*> effect_roots_;
+    void select_effect_roots();
     std::vector<std::unordered_map<const Node*,Views>> exit_views_;
     void capture_effect_exit();
     void finish_effects();
-    std::unordered_map<std::string,std::unordered_set<const Node*>> local_nodes_;
     std::unordered_map<const Node*,Info> actual_origins_;
     void bound(Views&,Info&) const;
     Info projected(Info,const std::string&) const;
     Views fields(Info,unsigned depth=0) const;
+    Views field_shape(Info,unsigned) const;
+    mutable std::unordered_map<std::string,Views> field_shapes_;
     void infer_field_capabilities(const Node&);
     void note_write(const Node&);
     void update_aliases(const Info&,const std::string&,Info,const Views&);

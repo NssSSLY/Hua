@@ -418,5 +418,156 @@
     "source": "struct Box{xs []int}\nstruct Group{cells []Box}\nfn poison(g mut Group,ro Box){g.cells[0]=ro}\nprint(\"BAD\")\nfn main(){var xs=[Box{xs:[1]}]\nvar g=Group{cells:xs}\npoison(g,Box{xs:[2]})\nvar b=xs[0]\nb.xs[0]=9}\n",
     "expected": "E3003",
     "stdout": ""
+  },
+  {
+    "name": "forward_multi_fresh",
+    "source": "fn pair(ro []int) ([]int,[]int){return ro,[2]}\nfn forward(ro []int) ([]int,[]int){return pair(ro)}\nfn main(){var ro,fresh=forward([1])\nfresh[0]=9\nprint(fresh)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "forward_multi_readonly",
+    "source": "fn pair(ro []int) ([]int,[]int){return ro,[2]}\nfn forward(ro []int) ([]int,[]int){return pair(ro)}\nprint(\"BAD\")\nfn main(){var ro,fresh=forward([1])\nro[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "reassign_multi_fresh",
+    "source": "fn pair(ro []int) ([]int,[]int){return ro,[2]}\nfn main(){var ro=[0]\nvar fresh=[0]\nro,fresh=pair([1])\nfresh[0]=9\nprint(fresh)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "reassign_multi_readonly",
+    "source": "fn pair(ro []int) ([]int,[]int){return ro,[2]}\nprint(\"BAD\")\nfn main(){var ro=[0]\nvar fresh=[0]\nro,fresh=pair([1])\nro[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "reassign_multi_record_readonly",
+    "source": "struct Box{xs []int}\nfn pair(ro Box) (Box,Box){return ro,Box{xs:[2]}}\nprint(\"BAD\")\nfn main(){var a=Box{xs:[0]}\nvar b=Box{xs:[0]}\na,b=pair(Box{xs:[1]})\na.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "reassign_multi_record_fresh",
+    "source": "struct Box{xs []int}\nfn pair(ro Box) (Box,Box){return ro,Box{xs:[2]}}\nfn main(){var a=Box{xs:[0]}\nvar b=Box{xs:[0]}\na,b=pair(Box{xs:[1]})\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "temporary_container_argument_alias",
+    "source": "struct Box{xs []int}\nfn identity(xs mut []Box) []Box{return xs}\nfn poison(xs mut []Box,ro Box){xs[0]=ro}\nprint(\"BAD\")\nfn main(){var xs=[Box{xs:[1]}]\npoison(identity(xs),Box{xs:[2]})\nvar b=xs[0]\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "standard_helper_list_readonly",
+    "source": "import std.list as l\nstruct Box{xs List<int>}\nfn append(b mut Box){unwrap(l.append(b.xs,2))}\nprint(\"BAD\")\nfn main(){let ro=l.from_slice([1])\nvar b=Box{xs:ro}\nappend(b)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "standard_helper_list_fresh",
+    "source": "import std.list as l\nstruct Box{xs List<int>}\nfn append(b mut Box){unwrap(l.append(b.xs,2))}\nfn main(){var b=Box{xs:l.from_slice([1])}\nappend(b)\nprint(l.snapshot(b.xs))}\n",
+    "expected": "ok",
+    "stdout": "[1, 2]\n"
+  },
+  {
+    "name": "builtin_helper_map_readonly",
+    "source": "struct Box{xs map[string]int}\nfn erase(b mut Box){delete(b.xs,\"x\")}\nprint(\"BAD\")\nfn main(){let ro=map[string]int{\"x\":1}\nvar b=Box{xs:ro}\nerase(b)}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "private_record_field_replacement",
+    "source": "struct Box{xs []int}\nfn poison(b mut Box,ro []int){b.xs=ro}\nfn main(){var a=Box{xs:[1]}\nvar b=a\npoison(a,[2])\nb.xs[0]=9\nprint(b.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "nested_function_outer_exit",
+    "source": "struct Box{xs []int}\nfn poison(b mut Box,flag bool){if flag{let ro=[2]\nb.xs=ro\nreturn}\nfn nested() int{return 1}\nb.xs=[3]}\nprint(\"BAD\")\nfn main(){var b=Box{xs:[1]}\npoison(b,true)\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": "",
+    "c04_excluded": "T1 excludes local functions"
+  },
+  {
+    "name": "fresh_call_instances_independent",
+    "source": "struct Box{xs []int}\nfn base() []Box{return [Box{xs:[1]}]}\nfn make() []Box{return base()}\nfn main(){var a=make()\nvar b=make()\nlet ro=Box{xs:[2]}\na[0]=ro\nvar c=b[0]\nc.xs[0]=9\nprint(c.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "fresh_call_alias_still_shared",
+    "source": "struct Box{xs []int}\nfn base() []Box{return [Box{xs:[1]}]}\nfn make() []Box{return base()}\nprint(\"BAD\")\nfn main(){var a=make()\nvar b=a\nlet ro=Box{xs:[2]}\na[0]=ro\nvar c=b[0]\nc.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "loop_later_iteration_readonly",
+    "source": "struct Box{xs []int}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1]}\nvar b=Box{xs:[2]}\nvar next=Box{xs:[3]}\nwhile false{b.xs[0]=9\nb=next\nnext=ro}}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "loop_refresh_before_write",
+    "source": "struct Box{xs []int}\nfn main(){let ro=Box{xs:[1]}\nvar b=Box{xs:[2]}\nwhile false{b.xs=[3]\nb.xs[0]=9\nb=ro}\nprint(\"OK\")}\n",
+    "expected": "ok",
+    "stdout": "OK\n"
+  },
+  {
+    "name": "recursive_field_effect_convergence",
+    "source": "struct Node{children []Node}\nfn visit(n mut Node,k int){if k>0{var next=Node{children:[]}\nvisit(next,k-1)\nn.children=[next]}}\nfn main(){var n=Node{children:[]}\nvisit(n,3)\nn.children[0]=Node{children:[]}\nprint(len(n.children))}\n",
+    "expected": "ok",
+    "stdout": "1\n"
+  },
+  {
+    "name": "deep_effect_invalidates_clone_child",
+    "source": "struct Link{child []Link\nxs []int\ntag int}\nfn poison(root mut Link,ro []int){root.child[0].child[0].child[0].child[0].xs=ro}\nprint(\"BAD\")\nfn main(){var a=Link{child:[],xs:[0],tag:0}\nvar b=Link{child:[a],xs:[0],tag:0}\nvar c=Link{child:[b],xs:[0],tag:0}\nvar d=Link{child:[c],xs:[0],tag:0}\nvar root=clone(Link{child:[d],xs:[0],tag:0})\npoison(root,[2])\nroot.child[0].child[0].child[0].child[0].xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "deep_effect_keeps_outer_scalar",
+    "source": "struct Link{child []Link\nxs []int\ntag int}\nfn poison(root mut Link,ro []int){root.child[0].child[0].child[0].child[0].xs=ro}\nfn main(){var a=Link{child:[],xs:[0],tag:0}\nvar b=Link{child:[a],xs:[0],tag:0}\nvar c=Link{child:[b],xs:[0],tag:0}\nvar d=Link{child:[c],xs:[0],tag:0}\nvar root=clone(Link{child:[d],xs:[0],tag:0})\npoison(root,[2])\nroot.child[0].child[0].child[0].child[0].tag=9\nprint(root.child[0].child[0].child[0].child[0].tag)}\n",
+    "expected": "ok",
+    "stdout": "9\n"
+  },
+  {
+    "name": "member_array_descendant_readonly",
+    "source": "struct Box{xs []int}\nstruct Group{cells []Box}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar g=Group{cells:[Box{xs:ro}]}\ng.cells[0].xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_array_descendant_readonly",
+    "source": "print(\"BAD\")\nfn main(){let ro=[1]\nvar xs=[[ro]]\nxs[0][0][0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "member_map_descendant_readonly",
+    "source": "struct Box{xs []int}\nstruct Group{cells map[string]Box}\nprint(\"BAD\")\nfn main(){let ro=[1]\nvar g=Group{cells:map[string]Box{\"x\":Box{xs:ro}}}\nvar b=unwrap(g.cells[\"x\"])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "fixed_point_limit_global_safety",
+    "source": "struct Box{xs []int}\nvar global=Box{xs:[1]}\nfn f00(){f01()}\nfn f01(){f02()}\nfn f02(){f03()}\nfn f03(){f04()}\nfn f04(){f05()}\nfn f05(){f06()}\nfn f06(){f07()}\nfn f07(){f08()}\nfn f08(){f09()}\nfn f09(){f10()}\nfn f10(){f11()}\nfn f11(){f12()}\nfn f12(){f13()}\nfn f13(){f14()}\nfn f14(){f15()}\nfn f15(){f16()}\nfn f16(){f17()}\nfn f17(){f18()}\nfn f18(){f19()}\nfn f19(){f20()}\nfn f20(){f21()}\nfn f21(){f22()}\nfn f22(){f23()}\nfn f23(){f24()}\nfn f24(){f25()}\nfn f25(){f26()}\nfn f26(){f27()}\nfn f27(){f28()}\nfn f28(){f29()}\nfn f29(){f30()}\nfn f30(){f31()}\nfn f31(){f32()}\nfn f32(){f33()}\nfn f33(){f34()}\nfn f34(){f35()}\nfn f35(){f36()}\nfn f36(){f37()}\nfn f37(){f38()}\nfn f38(){f39()}\nfn f39(){f40()}\nfn f40(){let ro=[2]\nglobal.xs=ro}\nprint(\"BAD\")\nfn main(){f00()\nglobal.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "fixed_point_limit_parameter_safety",
+    "source": "struct Box{xs []int}\nfn f00(b mut Box,ro []int){f01(b,ro)}\nfn f01(b mut Box,ro []int){f02(b,ro)}\nfn f02(b mut Box,ro []int){f03(b,ro)}\nfn f03(b mut Box,ro []int){f04(b,ro)}\nfn f04(b mut Box,ro []int){f05(b,ro)}\nfn f05(b mut Box,ro []int){f06(b,ro)}\nfn f06(b mut Box,ro []int){f07(b,ro)}\nfn f07(b mut Box,ro []int){f08(b,ro)}\nfn f08(b mut Box,ro []int){f09(b,ro)}\nfn f09(b mut Box,ro []int){f10(b,ro)}\nfn f10(b mut Box,ro []int){f11(b,ro)}\nfn f11(b mut Box,ro []int){f12(b,ro)}\nfn f12(b mut Box,ro []int){f13(b,ro)}\nfn f13(b mut Box,ro []int){f14(b,ro)}\nfn f14(b mut Box,ro []int){f15(b,ro)}\nfn f15(b mut Box,ro []int){f16(b,ro)}\nfn f16(b mut Box,ro []int){f17(b,ro)}\nfn f17(b mut Box,ro []int){f18(b,ro)}\nfn f18(b mut Box,ro []int){f19(b,ro)}\nfn f19(b mut Box,ro []int){f20(b,ro)}\nfn f20(b mut Box,ro []int){f21(b,ro)}\nfn f21(b mut Box,ro []int){f22(b,ro)}\nfn f22(b mut Box,ro []int){f23(b,ro)}\nfn f23(b mut Box,ro []int){f24(b,ro)}\nfn f24(b mut Box,ro []int){f25(b,ro)}\nfn f25(b mut Box,ro []int){f26(b,ro)}\nfn f26(b mut Box,ro []int){f27(b,ro)}\nfn f27(b mut Box,ro []int){f28(b,ro)}\nfn f28(b mut Box,ro []int){f29(b,ro)}\nfn f29(b mut Box,ro []int){f30(b,ro)}\nfn f30(b mut Box,ro []int){f31(b,ro)}\nfn f31(b mut Box,ro []int){f32(b,ro)}\nfn f32(b mut Box,ro []int){f33(b,ro)}\nfn f33(b mut Box,ro []int){f34(b,ro)}\nfn f34(b mut Box,ro []int){f35(b,ro)}\nfn f35(b mut Box,ro []int){f36(b,ro)}\nfn f36(b mut Box,ro []int){f37(b,ro)}\nfn f37(b mut Box,ro []int){f38(b,ro)}\nfn f38(b mut Box,ro []int){f39(b,ro)}\nfn f39(b mut Box,ro []int){f40(b,ro)}\nfn f40(b mut Box,ro []int){b.xs=ro}\nprint(\"BAD\")\nfn main(){var b=Box{xs:[1]}\nf00(b,[2])\nb.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "fixed_point_limit_prefix_write",
+    "source": "struct Box{xs []int}\nvar global=Box{xs:[1]}\nfn f00(){global.xs=[3]\nf01()}\nfn f01(){f02()}\nfn f02(){f03()}\nfn f03(){f04()}\nfn f04(){f05()}\nfn f05(){f06()}\nfn f06(){f07()}\nfn f07(){f08()}\nfn f08(){f09()}\nfn f09(){f10()}\nfn f10(){f11()}\nfn f11(){f12()}\nfn f12(){f13()}\nfn f13(){f14()}\nfn f14(){f15()}\nfn f15(){f16()}\nfn f16(){f17()}\nfn f17(){f18()}\nfn f18(){f19()}\nfn f19(){f20()}\nfn f20(){f21()}\nfn f21(){f22()}\nfn f22(){f23()}\nfn f23(){f24()}\nfn f24(){f25()}\nfn f25(){f26()}\nfn f26(){f27()}\nfn f27(){f28()}\nfn f28(){f29()}\nfn f29(){f30()}\nfn f30(){f31()}\nfn f31(){f32()}\nfn f32(){f33()}\nfn f33(){f34()}\nfn f34(){f35()}\nfn f35(){f36()}\nfn f36(){f37()}\nfn f37(){f38()}\nfn f38(){f39()}\nfn f39(){f40()}\nfn f40(){let ro=[2]\nglobal.xs=ro}\nprint(\"BAD\")\nfn main(){f00()\nglobal.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
   }
 ]
