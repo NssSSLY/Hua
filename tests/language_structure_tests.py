@@ -152,6 +152,8 @@ fn main(){
     triple('var a [0]u8=[]\nvar b [2]bool=[true,false]\nb[1]=true\nprint(a,b,sizeof(a),sizeof(b),alignof(b))\n',"[] [true, true] 0 2 1\n")
     triple('fn copy(a [2]int) [2]int{return a}\nvar a [2]int=[1,2]\nlet b=copy(a)\na[0]=9\nprint(a,b)\n',"[9, 2] [1, 2]\n")
     triple('var a [2][2]u8=[[1,2],[3,4]]\nvar view=a[0][:]\nvar copy=a[0]\nview[1]=5\ncopy[0]=9\nprint(a,view,copy)\n',"[[1, 5], [3, 4]] [1, 5] [9, 2]\n")
+    triple('var a [1][2]u8=[[1,2]]\nvar value=a[0][0]\nprint(type(value),value)\n',"u8 1\n")
+    runtime_failure('var a [1][2]u8=[[1,2]]\nvar view=a[0][:]\nview[0]=256\n',"E4002")
     triple('var a=[i16(1),i8(2)]\nprint(type(a[1]),sizeof(a[1]))\nprint(i8(127.9),u8(255.9))\n',"i16 2\n127 255\n")
     triple('import std.json as j\nenum E{A}\nprint(is_err(j.encode(E.A())),is_err(j.encode(u64("18446744073709551615"))))\n',"true true\n")
     invalid('fn f(v []int) []int{var result=v\n{var result=[1]}\nreturn result}\nfn main(){var a=f([1])\na[0]=3}\n',"E3003")

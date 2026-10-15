@@ -669,5 +669,39 @@
     "source": "struct Box{xs []int}\nfn touch(b mut Box){b.xs[0]=9}\nprint(\"BAD\")\nfn main(){let ro=Box{xs:[1]}\nvar b=ro\ntouch(b)\ntouch(b)}\n",
     "expected": "E3003",
     "stdout": ""
+  },
+  {
+    "name": "typed_nested_slice_preserves_layout",
+    "expected": "ok",
+    "source": "var a [2][2]u8=[[1,2],[3,4]]\nvar view=a[0][:]\nvar copy=a[0]\nview[1]=5\ncopy[0]=9\nprint(a,view,copy)\nprint(type(view),type(copy),type(a[0][0]))\n",
+    "stdout": "[[1, 5], [3, 4]] [1, 5] [9, 2]\n[]u8 [2]u8 u8\n"
+  },
+  {
+    "name": "typed_nested_slice_of_rows",
+    "expected": "ok",
+    "source": "var a [2][2]i16=[[1,2],[3,4]]\nvar rows=a[1:]\nvar view=rows[0][1:]\nview[0]=8\nprint(a,view,type(view))\n",
+    "stdout": "[[1, 2], [3, 8]] [8] []i16\n"
+  },
+  {
+    "name": "typed_nested_projection_after_rebind",
+    "expected": "ok",
+    "source": "var a [1][2]u8=[[1,2]]\na=[[3,4]]\nvar view=a[0][:]\nview[0]=5\nprint(a,view,type(view))\n",
+    "stdout": "[[5, 4]] [5, 4] []u8\n"
+  },
+  {
+    "name": "typed_nested_projection_three_dimensions",
+    "expected": "ok",
+    "source": "var a [1][1][2]i16=[[[1,2]]]\nvar view=a[0][0][:]\nview[1]=7\nprint(a,view,type(view))\n",
+    "stdout": "[[[1, 7]]] [1, 7] []i16\n"
+  },
+  {
+    "name": "typed_nested_readonly_view",
+    "expected": "E3003",
+    "source": "let a [1][2]u8=[[1,2]]\nvar view=a[0][:]\nview[0]=9\n"
+  },
+  {
+    "name": "typed_nested_readonly_parameter",
+    "expected": "E3003",
+    "source": "fn inspect(a [1][2]u8){var view=a[0][:]\nview[0]=9}\n"
   }
 ]

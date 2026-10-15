@@ -41,30 +41,30 @@ fn valid(l Limits) bool {
     let d = defaults()
     return l.source_bytes > 0 && l.source_bytes <= d.source_bytes && l.tokens > 0 && l.tokens <= d.tokens && l.nodes > 0 && l.nodes <= d.nodes && l.nesting > 0 && l.nesting <= d.nesting && l.work > 0 && l.work <= d.work
 }
-fn peek(s State) lexer.Token { return s.data[s.pos] }
+# Read tokens at the use site; local bindings still snapshot tokens before writes.
 fn failure(t lexer.Token, code string, reason string) string {
     return code+"@"+str(t.line)+":"+str(t.column)+" "+reason
 }
 fn tick(s mut State) Result<void> {
-    if s.steps >= s.limits.work { return err(failure(peek(s),"E8202","parser work budget")) }
+    if s.steps >= s.limits.work { return err(failure(s.data[s.pos],"E8202","parser work budget")) }
     s.steps += 1
     return ok()
 }
 fn enter(s mut State) Result<void> {
     tick(s)?
-    if s.depth >= s.limits.nesting { return err(failure(peek(s),"E8202","parser nesting budget")) }
+    if s.depth >= s.limits.nesting { return err(failure(s.data[s.pos],"E8202","parser nesting budget")) }
     s.depth += 1
     return ok()
 }
 fn take(s mut State) Result<lexer.Token> {
     tick(s)?
-    let t = peek(s)
+    let t = s.data[s.pos]
     if t.kind != "end" { s.pos += 1 }
     s.last_end = t.end
     return ok(t)
 }
 fn expect(s mut State, kind string) Result<lexer.Token> {
-    let t = peek(s)
+    let t = s.data[s.pos]
     if s.extended && kind == ">" && (t.kind == ">>" || t.kind == ">=") {
         tick(s)?
         var first = t
@@ -85,20 +85,20 @@ fn expect(s mut State, kind string) Result<lexer.Token> {
     return take(s)
 }
 fn lines(s mut State) Result<void> {
-    while peek(s).kind == "newline" { take(s)? }
+    while s.data[s.pos].kind == "newline" { take(s)? }
     return ok()
 }
 fn finish_statement(s mut State) Result<void> {
-    if peek(s).kind == "newline" { return lines(s) }
-    if peek(s).kind != "end" && peek(s).kind != "}" { return err(failure(peek(s),"E2003","expected newline or end of block")) }
+    if s.data[s.pos].kind == "newline" { return lines(s) }
+    if s.data[s.pos].kind != "end" && s.data[s.pos].kind != "}" { return err(failure(s.data[s.pos],"E2003","expected newline or end of block")) }
     return ok()
 }
 fn node(s mut State, payload ast.Payload, start int, end int, children []ast.NodeId) Result<ast.NodeId> {
     tick(s)?
-    if ast.count(s.pool) >= s.limits.nodes { return err(failure(peek(s),"E8202","AST node budget")) }
+    if ast.count(s.pool) >= s.limits.nodes { return err(failure(s.data[s.pos],"E8202","AST node budget")) }
     let position = ast.span(s.pool,s.source,start,end)?
     let result = ast.add(s.pool,payload,position,children)
-    if is_err(result) { return err(failure(peek(s),"E8203",unwrap_err(result))) }
+    if is_err(result) { return err(failure(s.data[s.pos],"E8203",unwrap_err(result))) }
     return result
 }
 fn leaf(s mut State, payload ast.Payload, t lexer.Token) Result<ast.NodeId> {
@@ -130,12 +130,12 @@ fn excluded(s State, t lexer.Token) bool {
 fn unsupported(t lexer.Token) string { return failure(t,"E8201","frontend profile excludes "+t.kind) }
 fn scalar_type(s mut State) Result<ast.NodeId> {
     if s.extended { return compound_type(s) }
-    let t = peek(s)
+    let t = s.data[s.pos]
     if excluded(s,t) { return err(unsupported(t)) }
     if t.kind != "identifier" { return err(failure(t,"E2001","expected scalar type")) }
     if t.text != "int" && t.text != "float" && t.text != "bool" && t.text != "void" { return err(unsupported(t)) }
     take(s)?
-    let suffix = peek(s)
+    let suffix = s.data[s.pos]
     if suffix.kind == "?" || suffix.kind == "<" || suffix.kind == "[" || suffix.kind == "." { return err(unsupported(suffix)) }
     return leaf(s,ast.Payload.TypeName(t.text),t)
 }
@@ -145,7 +145,7 @@ fn primary(s mut State) Result<ast.NodeId> {
     if t.kind == "float" { return leaf(s,ast.Payload.FloatLiteral(t.text),t) }
     if t.kind == "true" || t.kind == "false" { return leaf(s,ast.Payload.Boolean(t.kind == "true"),t) }
     if t.kind == "identifier" {
-        if s.extended && t.text == "map" && peek(s).kind == "[" { return map_literal(s,t) }
+        if s.extended && t.text == "map" && s.data[s.pos].kind == "[" { return map_literal(s,t) }
         if s.extended && struct_ahead(s) { return struct_literal(s,t.start,t.text) }
         return leaf(s,ast.Payload.Name(t.text),t)
     }
@@ -168,7 +168,7 @@ fn primary(s mut State) Result<ast.NodeId> {
     return err(failure(t,"E2001","expected expression"))
 }
 fn specialization_ahead(s State) bool {
-    if peek(s).kind != "<" { return false }
+    if s.data[s.pos].kind != "<" { return false }
     var depth = 0
     var index = s.pos
     while index < len(s.data) && index < s.pos+192 {
@@ -186,23 +186,23 @@ fn postfix(s mut State, original ast.NodeId, multiline bool) Result<ast.NodeId> 
     var left = original
     while true {
         if multiline { lines(s)? }
-        if specialization_ahead(s) { return err(unsupported(peek(s))) }
-        if s.extended && peek(s).kind != "(" {
+        if specialization_ahead(s) { return err(unsupported(s.data[s.pos])) }
+        if s.extended && s.data[s.pos].kind != "(" {
             let changed = suffix(s,left,multiline)?
             if !ast.same(changed,left) { left = changed
                 continue }
         }
-        if peek(s).kind != "(" { break }
+        if s.data[s.pos].kind != "(" { break }
         take(s)?
         let saved_header = s.header
         s.header = false
         lines(s)?
         var children = list.from_slice([left])
-        if peek(s).kind != ")" {
+        if s.data[s.pos].kind != ")" {
             while true {
                 list.append(children,expression(s,1,true)?)?
                 lines(s)?
-                if peek(s).kind != "," { break }
+                if s.data[s.pos].kind != "," { break }
                 take(s)?
             }
         }
@@ -216,7 +216,7 @@ fn postfix(s mut State, original ast.NodeId, multiline bool) Result<ast.NodeId> 
 fn expression(s mut State, minimum int, multiline bool) Result<ast.NodeId> {
     enter(s)?
     if multiline { lines(s)? }
-    var first = peek(s)
+    var first = s.data[s.pos]
     var left ast.NodeId = ast.NodeId{pool:s.pool.identity,index:0}
     if first.kind == "+" || first.kind == "-" || first.kind == "!" || (s.extended && first.kind == "~") {
         take(s)?
@@ -226,7 +226,7 @@ fn expression(s mut State, minimum int, multiline bool) Result<ast.NodeId> {
     } else { left = postfix(s,primary(s)?,multiline)? }
     while true {
         if multiline { lines(s)? }
-        let op = peek(s)
+        let op = s.data[s.pos]
         if excluded(s,op) { return err(unsupported(op)) }
         let precedence = power(s,op.kind)
         if precedence < minimum { break }
@@ -251,7 +251,7 @@ fn block(s mut State) Result<ast.NodeId> {
     lines(s)?
     var empty []ast.NodeId = []
     var children = list.from_slice(empty)
-    while peek(s).kind != "}" && peek(s).kind != "end" { list.append(children,statement(s)?)? }
+    while s.data[s.pos].kind != "}" && s.data[s.pos].kind != "end" { list.append(children,statement(s)?)? }
     let close = expect(s,"}")?
     s.blocks -= 1
     s.depth -= 1
@@ -269,10 +269,10 @@ fn conditional(s mut State) Result<ast.NodeId> {
     let saved = s.pos
     let saved_end = s.last_end
     lines(s)?
-    if peek(s).kind == "else" {
+    if s.data[s.pos].kind == "else" {
         take(s)?
         var otherwise = body
-        if peek(s).kind == "if" { otherwise = conditional(s)? } else { otherwise = block(s)? }
+        if s.data[s.pos].kind == "if" { otherwise = conditional(s)? } else { otherwise = block(s)? }
         list.append(children,otherwise)?
     } else { s.pos = saved
         s.last_end = saved_end }
@@ -283,12 +283,12 @@ fn function(s mut State) Result<ast.NodeId> {
     let first = expect(s,"fn")?
     if s.blocks != 0 { return err(unsupported(first)) }
     let name = expect(s,"identifier")?
-    if peek(s).kind == "." || peek(s).kind == "<" { return err(unsupported(peek(s))) }
+    if s.data[s.pos].kind == "." || s.data[s.pos].kind == "<" { return err(unsupported(s.data[s.pos])) }
     let open = expect(s,"(")?
     lines(s)?
     var empty []ast.NodeId = []
     var parameters = list.from_slice(empty)
-    if peek(s).kind != ")" {
+    if s.data[s.pos].kind != ")" {
         while true {
             lines(s)?
             var parameter = expect(s,"identifier")?
@@ -299,28 +299,28 @@ fn function(s mut State) Result<ast.NodeId> {
                 mutable_parameter = true
             }
             var annotation []ast.NodeId = []
-            if peek(s).kind == "," || peek(s).kind == ")" || peek(s).kind == "newline" {
-                if !s.extended { return err(failure(peek(s),"E8201","explicit parameter type required")) }
+            if s.data[s.pos].kind == "," || s.data[s.pos].kind == ")" || s.data[s.pos].kind == "newline" {
+                if !s.extended { return err(failure(s.data[s.pos],"E8201","explicit parameter type required")) }
             } else { annotation = [scalar_type(s)?] }
             var parameter_name = parameter.text
             if mutable_parameter { parameter_name += " mut" }
             list.append(parameters,node(s,ast.Payload.Parameter(parameter_name),parameter.start,s.last_end,annotation)?)?
             lines(s)?
-            if peek(s).kind != "," { break }
+            if s.data[s.pos].kind != "," { break }
             take(s)?
         }
     }
     let close = expect(s,")")?
-    if peek(s).kind != "{" {
-        let start = peek(s).start
+    if s.data[s.pos].kind != "{" {
+        let start = s.data[s.pos].start
         var types = list.from_slice(empty)
-        if peek(s).kind == "(" {
-            if !s.extended { return err(unsupported(peek(s))) }
+        if s.data[s.pos].kind == "(" {
+            if !s.extended { return err(unsupported(s.data[s.pos])) }
             take(s)?
             lines(s)?
             list.append(types,scalar_type(s)?)?
             lines(s)?
-            while peek(s).kind == "," { take(s)?
+            while s.data[s.pos].kind == "," { take(s)?
                 lines(s)?
                 list.append(types,scalar_type(s)?)?
                 lines(s)? }
@@ -339,7 +339,7 @@ fn function(s mut State) Result<ast.NodeId> {
 }
 fn statement(s mut State) Result<ast.NodeId> {
     enter(s)?
-    let t = peek(s)
+    let t = s.data[s.pos]
     var result ast.NodeId = ast.NodeId{pool:s.pool.identity,index:0}
     if excluded(s,t) { return err(unsupported(t)) }
     if s.extended && (t.kind == "let" || t.kind == "var" || t.kind == "const") { result = binding(s)? }
@@ -347,10 +347,10 @@ fn statement(s mut State) Result<ast.NodeId> {
     else if t.kind == "let" || t.kind == "var" || t.kind == "const" {
         take(s)?
         let name = expect(s,"identifier")?
-        if peek(s).kind == "," { return err(unsupported(peek(s))) }
+        if s.data[s.pos].kind == "," { return err(unsupported(s.data[s.pos])) }
         var empty []ast.NodeId = []
         var children = list.from_slice(empty)
-        if peek(s).kind != "=" { list.append(children,scalar_type(s)?)? }
+        if s.data[s.pos].kind != "=" { list.append(children,scalar_type(s)?)? }
         expect(s,"=")?
         list.append(children,expression(s,1,false)?)?
         var payload = ast.Payload.Let(name.text)
@@ -375,9 +375,9 @@ fn statement(s mut State) Result<ast.NodeId> {
         if s.functions == 0 { return err(failure(t,"E2004","return requires function")) }
         var empty []ast.NodeId = []
         var children = list.from_slice(empty)
-        if peek(s).kind != "newline" && peek(s).kind != "}" && peek(s).kind != "end" {
+        if s.data[s.pos].kind != "newline" && s.data[s.pos].kind != "}" && s.data[s.pos].kind != "end" {
             list.append(children,expression(s,1,false)?)?
-            if s.extended { while peek(s).kind == "," { take(s)?
+            if s.extended { while s.data[s.pos].kind == "," { take(s)?
                 list.append(children,expression(s,1,false)?)? } }
         }
         result = node(s,ast.Payload.Return(),t.start,s.last_end,list.snapshot(children))?
@@ -389,10 +389,10 @@ fn statement(s mut State) Result<ast.NodeId> {
         result = leaf(s,payload,t)?
     } else {
         let child = expression(s,1,false)?
-        if s.extended && peek(s).kind == "," { result = multi_assignment(s,t,child)? }
+        if s.extended && s.data[s.pos].kind == "," { result = multi_assignment(s,t,child)? }
         else { result = node(s,ast.Payload.ExpressionStatement(),t.start,s.last_end,[child])? }
     }
-    if peek(s).kind == "," { return err(unsupported(peek(s))) }
+    if s.data[s.pos].kind == "," { return err(unsupported(s.data[s.pos])) }
     finish_statement(s)?
     s.depth -= 1
     return ok(result)
@@ -408,12 +408,12 @@ fn parse_impl(source string, name string, limits Limits, extended bool) Result<T
     # State helpers may split tokens; keep their mutable data contract explicit.
     var data = clone(tokens)
     var s = State{pool:pool,source:id,data:data,pos:0,last_end:0,depth:0,blocks:0,functions:0,loops:0,steps:0,limits:limits,extended:extended,header:false}
-    let first = peek(s)
+    let first = s.data[s.pos]
     lines(s)?
     var empty []ast.NodeId = []
     var children = list.from_slice(empty)
-    while peek(s).kind != "end" { list.append(children,statement(s)?)? }
-    let root = node(s,ast.Payload.Program(),first.start,peek(s).end,list.snapshot(children))?
+    while s.data[s.pos].kind != "end" { list.append(children,statement(s)?)? }
+    let root = node(s,ast.Payload.Program(),first.start,s.data[s.pos].end,list.snapshot(children))?
     ast.verify(s.pool)?
     var profile = "C02-P1"
     if extended { profile = "C02-P2" }
@@ -437,7 +437,7 @@ fn assignable(s State, n ast.Node) bool {
 }
 fn compound_type(s mut State) Result<ast.NodeId> {
     enter(s)?
-    let t = peek(s)
+    let t = s.data[s.pos]
     var result = ast.NodeId{pool:s.pool.identity,index:0}
     if t.kind == "identifier" && t.text == "mut" {
         take(s)?
@@ -446,7 +446,7 @@ fn compound_type(s mut State) Result<ast.NodeId> {
     } else if t.kind == "[" {
         take(s)?
         var payload = ast.Payload.SliceType()
-        if peek(s).kind == "integer" {
+        if s.data[s.pos].kind == "integer" {
             let count = take(s)?
             let digits = unwrap(bytes.to_ints(bytes.from_text(count.text)))
             var valid_count = !(len(digits) > 1 && digits[0] == 48)
@@ -469,13 +469,13 @@ fn compound_type(s mut State) Result<ast.NodeId> {
             expect(s,"]")?
             list.append(types,compound_type(s)?)?
         } else {
-            while peek(s).kind == "." { take(s)?
+            while s.data[s.pos].kind == "." { take(s)?
                 text += "."+expect(s,"identifier")?.text }
-            if peek(s).kind == "<" {
-                if text != "Result" && text != "List" { return err(unsupported(peek(s))) }
+            if s.data[s.pos].kind == "<" {
+                if text != "Result" && text != "List" { return err(unsupported(s.data[s.pos])) }
                 take(s)?
                 list.append(types,compound_type(s)?)?
-                while peek(s).kind == "," { take(s)?
+                while s.data[s.pos].kind == "," { take(s)?
                     list.append(types,compound_type(s)?)? }
                 expect(s,">")?
                 if (text == "Result" && list.len(types) > 2) || (text == "List" && list.len(types) != 1) { return err(failure(name,"E2006","incorrect type argument count")) }
@@ -489,16 +489,16 @@ fn compound_type(s mut State) Result<ast.NodeId> {
         if list.len(types) > 0 { payload = ast.Payload.GenericType(text) }
         result = node(s,payload,t.start,s.last_end,list.snapshot(types))?
     }
-    if peek(s).kind == "?" {
+    if s.data[s.pos].kind == "?" {
         take(s)?
         result = node(s,ast.Payload.OptionalType(),t.start,s.last_end,[result])?
-        if peek(s).kind == "?" { return err(failure(peek(s),"E2006","duplicate optional suffix")) }
+        if s.data[s.pos].kind == "?" { return err(failure(s.data[s.pos],"E2006","duplicate optional suffix")) }
     }
     s.depth -= 1
     return ok(result)
 }
 fn struct_ahead(s State) bool {
-    if peek(s).kind != "{" { return false }
+    if s.data[s.pos].kind != "{" { return false }
     var i = s.pos+1
     while i < len(s.data) && s.data[i].kind == "newline" { i += 1 }
     if i >= len(s.data) { return false }
@@ -511,10 +511,10 @@ fn array_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
     var empty []ast.NodeId = []
     var children = list.from_slice(empty)
     lines(s)?
-    if peek(s).kind != "]" {
+    if s.data[s.pos].kind != "]" {
         while true { list.append(children,expression(s,1,true)?)?
             lines(s)?
-            if peek(s).kind != "," { break }
+            if s.data[s.pos].kind != "," { break }
             take(s)? }
     }
     let close = expect(s,"]")?
@@ -528,7 +528,7 @@ fn struct_literal(s mut State, start int, name string) Result<ast.NodeId> {
     lines(s)?
     var empty []ast.NodeId = []
     var fields = list.from_slice(empty)
-    if peek(s).kind != "}" {
+    if s.data[s.pos].kind != "}" {
         while true {
             lines(s)?
             let field = expect(s,"identifier")?
@@ -536,7 +536,7 @@ fn struct_literal(s mut State, start int, name string) Result<ast.NodeId> {
             let value = expression(s,1,true)?
             list.append(fields,node(s,ast.Payload.FieldInit(field.text),field.start,s.last_end,[value])?)?
             lines(s)?
-            if peek(s).kind != "," { break }
+            if s.data[s.pos].kind != "," { break }
             take(s)?
         }
     }
@@ -555,15 +555,15 @@ fn map_literal(s mut State, t lexer.Token) Result<ast.NodeId> {
     s.header = false
     expect(s,"{")?
     lines(s)?
-    if peek(s).kind != "}" {
+    if s.data[s.pos].kind != "}" {
         while true {
-            let start = peek(s).start
+            let start = s.data[s.pos].start
             let key_expr = expression(s,2,true)?
             expect(s,":")?
             let value_expr = expression(s,1,true)?
             list.append(children,node(s,ast.Payload.MapEntry(),start,s.last_end,[key_expr,value_expr])?)?
             lines(s)?
-            if peek(s).kind != "," { break }
+            if s.data[s.pos].kind != "," { break }
             take(s)?
         }
     }
@@ -581,7 +581,9 @@ fn dotted(s State, id ast.NodeId) string {
     return ""
 }
 fn suffix(s mut State, left ast.NodeId, multiline bool) Result<ast.NodeId> {
-    let t = peek(s)
+    let t = s.data[s.pos]
+    # left is already a validated parser node. Ordinary lookahead needs no Node/Span copy.
+    if t.kind != "." && t.kind != "[" && t.kind != "++" && t.kind != "--" && t.kind != "?" && t.kind != "{" { return ok(left) }
     let old = ast.get(s.pool,left)?
     if t.kind == "." {
         take(s)?
@@ -597,18 +599,18 @@ fn suffix(s mut State, left ast.NodeId, multiline bool) Result<ast.NodeId> {
         take(s)?
         let saved = s.header
         s.header = false
-        let start = peek(s)
+        let start = s.data[s.pos]
         lines(s)?
         var first = ast.NodeId{pool:s.pool.identity,index:0}
-        var missing = peek(s).kind == ":"
+        var missing = s.data[s.pos].kind == ":"
         if !missing { first = expression(s,1,true)? }
         lines(s)?
-        if peek(s).kind == ":" {
+        if s.data[s.pos].kind == ":" {
             take(s)?
             if missing { first = leaf(s,ast.Payload.Omitted(),start)? }
             lines(s)?
             var last = first
-            if peek(s).kind == "]" { last = leaf(s,ast.Payload.Omitted(),peek(s))? }
+            if s.data[s.pos].kind == "]" { last = leaf(s,ast.Payload.Omitted(),s.data[s.pos])? }
             else { last = expression(s,1,true)? }
             lines(s)?
             let close = expect(s,"]")?
@@ -632,10 +634,10 @@ fn suffix(s mut State, left ast.NodeId, multiline bool) Result<ast.NodeId> {
     return ok(left)
 }
 fn pack(s mut State, first ast.NodeId) Result<ast.NodeId> {
-    if peek(s).kind != "," { return ok(first) }
+    if s.data[s.pos].kind != "," { return ok(first) }
     let n = ast.get(s.pool,first)?
     var values = list.from_slice([first])
-    while peek(s).kind == "," { take(s)?
+    while s.data[s.pos].kind == "," { take(s)?
         list.append(values,expression(s,1,false)?)? }
     return node(s,ast.Payload.Pack(),n.span.start,s.last_end,list.snapshot(values))
 }
@@ -644,16 +646,16 @@ fn binding(s mut State) Result<ast.NodeId> {
     let name = expect(s,"identifier")?
     var empty []ast.NodeId = []
     var annotation = empty
-    if peek(s).kind != "=" && peek(s).kind != "," { annotation = [compound_type(s)?] }
-    if peek(s).kind == "," {
+    if s.data[s.pos].kind != "=" && s.data[s.pos].kind != "," { annotation = [compound_type(s)?] }
+    if s.data[s.pos].kind == "," {
         if t.kind == "const" { return err(failure(t,"E2002","multiple const bindings unsupported")) }
         let first = node(s,ast.Payload.Parameter(name.text),name.start,s.last_end,annotation)?
         var parameters = list.from_slice([first])
-        while peek(s).kind == "," {
+        while s.data[s.pos].kind == "," {
             take(s)?
             let next = expect(s,"identifier")?
             annotation = empty
-            if peek(s).kind != "=" && peek(s).kind != "," { annotation = [compound_type(s)?] }
+            if s.data[s.pos].kind != "=" && s.data[s.pos].kind != "," { annotation = [compound_type(s)?] }
             list.append(parameters,node(s,ast.Payload.Parameter(next.text),next.start,s.last_end,annotation)?)?
         }
         let names = node(s,ast.Payload.BindingList(),name.start,s.last_end,list.snapshot(parameters))?
@@ -673,10 +675,10 @@ fn binding(s mut State) Result<ast.NodeId> {
 fn multi_assignment(s mut State, t lexer.Token, first ast.NodeId) Result<ast.NodeId> {
     let first_node = ast.get(s.pool,first)?
     var targets = list.from_slice([first])
-    while peek(s).kind == "," { take(s)?
+    while s.data[s.pos].kind == "," { take(s)?
         list.append(targets,expression(s,2,false)?)? }
     for target in list.snapshot(targets) {
-        if !assignable(s,ast.get(s.pool,target)?) { return err(failure(peek(s),"E2007","invalid assignment target")) }
+        if !assignable(s,ast.get(s.pool,target)?) { return err(failure(s.data[s.pos],"E2007","invalid assignment target")) }
     }
     let names = node(s,ast.Payload.BindingList(),first_node.span.start,s.last_end,list.snapshot(targets))?
     expect(s,"=")?
@@ -687,12 +689,12 @@ fn structure(s mut State, public bool) Result<ast.NodeId> {
     let t = take(s)?
     if s.blocks != 0 { return err(unsupported(t)) }
     let name = expect(s,"identifier")?
-    if peek(s).kind == "<" { return err(unsupported(peek(s))) }
+    if s.data[s.pos].kind == "<" { return err(unsupported(s.data[s.pos])) }
     expect(s,"{")?
     lines(s)?
     var empty []ast.NodeId = []
     var fields = list.from_slice(empty)
-    while peek(s).kind != "}" && peek(s).kind != "end" {
+    while s.data[s.pos].kind != "}" && s.data[s.pos].kind != "end" {
         let field = expect(s,"identifier")?
         let typ = compound_type(s)?
         list.append(fields,node(s,ast.Payload.Field(field.text),field.start,s.last_end,[typ])?)?
@@ -711,22 +713,22 @@ fn enumeration(s mut State, public bool) Result<ast.NodeId> {
     lines(s)?
     var empty []ast.NodeId = []
     var variants = list.from_slice(empty)
-    while peek(s).kind != "}" && peek(s).kind != "end" {
+    while s.data[s.pos].kind != "}" && s.data[s.pos].kind != "end" {
         let variant = expect(s,"identifier")?
         var types = list.from_slice(empty)
-        if peek(s).kind == "(" {
+        if s.data[s.pos].kind == "(" {
             take(s)?
             lines(s)?
-            if peek(s).kind != ")" {
+            if s.data[s.pos].kind != ")" {
                 while true { list.append(types,compound_type(s)?)?
                     lines(s)?
-                    if peek(s).kind != "," { break }
+                    if s.data[s.pos].kind != "," { break }
                     take(s)? }
             }
             expect(s,")")?
         }
         list.append(variants,node(s,ast.Payload.Variant(variant.text),variant.start,s.last_end,list.snapshot(types))?)?
-        if peek(s).kind == "," { take(s)? } else { finish_statement(s)? }
+        if s.data[s.pos].kind == "," { take(s)? } else { finish_statement(s)? }
         lines(s)?
     }
     let close = expect(s,"}")?
@@ -737,7 +739,7 @@ fn enumeration(s mut State, public bool) Result<ast.NodeId> {
 fn for_loop(s mut State) Result<ast.NodeId> {
     let t = take(s)?
     var names = list.from_slice([leaf(s,ast.Payload.Name(expect(s,"identifier")?.text),s.data[s.pos-1])?])
-    if peek(s).kind == "," {
+    if s.data[s.pos].kind == "," {
         take(s)?
         let second = expect(s,"identifier")?
         list.append(names,leaf(s,ast.Payload.Name(second.text),second)?)?
@@ -746,14 +748,14 @@ fn for_loop(s mut State) Result<ast.NodeId> {
     let saved = s.header
     s.header = true
     var iterable = expression(s,2,false)?
-    if peek(s).kind == ".." || peek(s).kind == "..=" {
+    if s.data[s.pos].kind == ".." || s.data[s.pos].kind == "..=" {
         let op = take(s)?
         let start = ast.get(s.pool,iterable)?.span.start
         var range = list.from_slice([iterable,expression(s,2,false)?])
-        if peek(s).kind == "identifier" && peek(s).text == "by" { take(s)?
+        if s.data[s.pos].kind == "identifier" && s.data[s.pos].text == "by" { take(s)?
             list.append(range,expression(s,2,false)?)? }
         iterable = node(s,ast.Payload.Range(op.kind),start,s.last_end,list.snapshot(range))?
-    } else if peek(s).kind == "identifier" && peek(s).text == "by" { return err(failure(peek(s),"E2005","by requires range")) }
+    } else if s.data[s.pos].kind == "identifier" && s.data[s.pos].text == "by" { return err(failure(s.data[s.pos],"E2005","by requires range")) }
     s.header = saved
     list.append(names,iterable)?
     s.loops += 1
@@ -770,12 +772,12 @@ fn match_statement(s mut State) Result<ast.NodeId> {
     var arms = list.from_slice([value])
     expect(s,"{")?
     lines(s)?
-    while peek(s).kind != "}" && peek(s).kind != "end" {
+    while s.data[s.pos].kind != "}" && s.data[s.pos].kind != "end" {
         let first = take(s)?
         var pattern = ast.NodeId{pool:s.pool.identity,index:0}
         if first.kind == "identifier" {
             var name = first.text
-            while peek(s).kind == "." { take(s)?
+            while s.data[s.pos].kind == "." { take(s)?
                 name += "."+expect(s,"identifier")?.text }
             pattern = node(s,ast.Payload.Name(name),first.start,first.end,[])?
         } else if first.kind == "integer" { pattern = leaf(s,ast.Payload.IntegerLiteral(first.text),first)? }
@@ -783,16 +785,16 @@ fn match_statement(s mut State) Result<ast.NodeId> {
         else if first.kind == "true" || first.kind == "false" { pattern = leaf(s,ast.Payload.Boolean(first.kind == "true"),first)? }
         else if first.kind == "nil" { pattern = leaf(s,ast.Payload.Nil(),first)? }
         else { return err(failure(first,"E2002","match requires literal, variant or wildcard")) }
-        let start = peek(s)
+        let start = s.data[s.pos]
         var empty []ast.NodeId = []
         var bindings = list.from_slice(empty)
-        if peek(s).kind == "(" {
+        if s.data[s.pos].kind == "(" {
             take(s)?
-            if peek(s).kind != ")" {
+            if s.data[s.pos].kind != ")" {
                 while true {
                     let parameter = expect(s,"identifier")?
                     list.append(bindings,leaf(s,ast.Payload.Parameter(parameter.text),parameter)?)?
-                    if peek(s).kind != "," { break }
+                    if s.data[s.pos].kind != "," { break }
                     take(s)?
                 }
             }
@@ -802,32 +804,32 @@ fn match_statement(s mut State) Result<ast.NodeId> {
         let binding_list = node(s,ast.Payload.BindingList(),start.start,start.end,list.snapshot(bindings))?
         expect(s,"=>")?
         var body = binding_list
-        if peek(s).kind == "{" { body = block(s)? }
+        if s.data[s.pos].kind == "{" { body = block(s)? }
         else {
-            let point = peek(s)
+            let point = s.data[s.pos]
             let expr = expression(s,1,false)?
             let statement = node(s,ast.Payload.ExpressionStatement(),point.start,point.end,[expr])?
             body = node(s,ast.Payload.Block(),point.start,point.end,[statement])?
         }
         list.append(arms,node(s,ast.Payload.MatchArm(),first.start,s.last_end,[pattern,binding_list,body])?)?
-        if peek(s).kind == "," { take(s)? } else { finish_statement(s)? }
+        if s.data[s.pos].kind == "," { take(s)? } else { finish_statement(s)? }
         lines(s)?
     }
     let close = expect(s,"}")?
     return node(s,ast.Payload.Match(),t.start,close.end,list.snapshot(arms))
 }
 fn extended_statement(s mut State) Result<ast.NodeId> {
-    let t = peek(s)
+    let t = s.data[s.pos]
     if t.kind == "pub" {
         take(s)?
         var result = ast.NodeId{pool:s.pool.identity,index:0}
-        if peek(s).kind == "struct" { result = structure(s,true)? }
-        else if peek(s).kind == "enum" { result = enumeration(s,true)? }
-        else if peek(s).kind == "fn" {
+        if s.data[s.pos].kind == "struct" { result = structure(s,true)? }
+        else if s.data[s.pos].kind == "enum" { result = enumeration(s,true)? }
+        else if s.data[s.pos].kind == "fn" {
             result = function(s)?
             let old = ast.get(s.pool,result)?
             ast.replace(s.pool,result,ast.Payload.Function(ast.payload_text(old.payload)+" pub"),old.span,old.children)?
-        } else { return err(failure(peek(s),"E2002","pub requires function/struct/enum")) }
+        } else { return err(failure(s.data[s.pos],"E2002","pub requires function/struct/enum")) }
         let old = ast.get(s.pool,result)?
         ast.replace(s.pool,result,old.payload,ast.span(s.pool,s.source,t.start,old.span.end)?,old.children)?
         return ok(result)
@@ -845,11 +847,11 @@ fn extended_statement(s mut State) Result<ast.NodeId> {
     }
     take(s)?
     var name = expect(s,"identifier")?.text
-    while peek(s).kind == "." { take(s)?
+    while s.data[s.pos].kind == "." { take(s)?
         name += "."+expect(s,"identifier")?.text }
     var empty []ast.NodeId = []
     var children = empty
-    if peek(s).kind == "as" { take(s)?
+    if s.data[s.pos].kind == "as" { take(s)?
         let alias = expect(s,"identifier")?
         children = [leaf(s,ast.Payload.Name(alias.text),alias)?] }
     return node(s,ast.Payload.Import(name),t.start,s.last_end,children)

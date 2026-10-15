@@ -471,7 +471,9 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         for(std::size_t i=1;i<n.children.size();++i)if(n.children[i]->kind!=N::Omitted)require("int",expression(*n.children[i]),*n.children[i]);
         out={n.kind==N::Slice ? "[]"+element:element,base.writable&&!base.readonly_children,base.readonly_children};
         auto views=node_views_.contains(n.children[0].get())?node_views_.at(n.children[0].get()):fields(base);
-        if(n.kind==N::Index){if(base.writable)if(auto it=views.find("[]");it!=views.end())out=it->second;out.record_copy=false;
+        // Capability views can retain the literal's pre-conversion type. The container
+        // type determines the element layout; reuse only the view's capabilities.
+        if(n.kind==N::Index){if(base.writable)if(auto it=views.find("[]");it!=views.end())out=it->second;out.type=element;out.record_copy=false;
             for(auto [path,view]:views)if(path.starts_with("[].")||path.starts_with("[][]"))node_views_[&n][path.substr(2)]=std::move(view);
             if(out.origins.empty())out.origins=projected(base,"[]").origins;
         }else {out.origins=base.origins;node_views_[&n]=views;}break;
