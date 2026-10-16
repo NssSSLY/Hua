@@ -109,6 +109,7 @@ Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Va
     for(std::size_t i=0;i<ps.size();++i) {
         const auto& p=ps[i];const auto& type=p.type;bool mut=p.mutable_view;
         if(mut && !writable(args[i]))runtime_error(site.span,"mut parameter requires mutable argument","E4007");
+        HUA_PROFILE_CONSTRAINT_SOURCE(argument);
         auto v=mut?enforce_borrow(args[i],type,site.span):enforce_type(copy_value(args[i]),type,site.span,i<site.contextual.size()&&site.contextual[i]);
         if(!mut)v=read_only(std::move(v));local->bindings.emplace(p.name,Binding{std::move(v),type,false});
     }
@@ -160,7 +161,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::ExternalInit:if(context_&&context_->in_task)runtime_error(s,"Native/WASM initialization cannot run in tasks","E4104");model_.external->initialize(op.text,s);break;
         case Op::Constant:stack_.emplace_back(op.constant);break;
         case Op::Load:stack_.emplace_back(f.environment->lookup(op.text,s).value);break;
-        case Op::Bind:{auto v=enforce_type(pop(s),op.type,s,!op.contextual.empty()&&op.contextual[0]);bind(op,std::move(v));break;}
+        case Op::Bind:{HUA_PROFILE_CONSTRAINT_SOURCE(binding);auto v=enforce_type(pop(s),op.type,s,!op.contextual.empty()&&op.contextual[0]);bind(op,std::move(v));break;}
         case Op::Pop:pop(s);break;
         case Op::Unary:stack_.emplace_back(unary_value(op.text,pop(s),s));break;
         case Op::Binary:{auto right=pop(s),left=pop(s);stack_.emplace_back(binary_value(op.text,left,right,s,op.flag));break;}

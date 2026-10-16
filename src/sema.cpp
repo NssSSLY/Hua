@@ -125,6 +125,7 @@ void SemanticAnalyzer::infer_mutating_methods() {
     for(const auto& [name,fn]:model_.functions)if(fn->text.find(" mutreceiver")!=std::string::npos)model_.mutating[name]=true;
     bool changed=true;
     while(changed) {
+        HUA_SEMA_COUNT(mutating_passes);
         changed=false;
         for(const auto& [name,fn]:model_.functions)if(auto dot=name.find('.');dot!=std::string::npos)
             if(!model_.mutating[name] && direct(*fn->children.back(),name.substr(0,dot))){model_.mutating[name]=true;changed=true;}
@@ -133,7 +134,7 @@ void SemanticAnalyzer::infer_mutating_methods() {
 void SemanticAnalyzer::infer_return_capabilities(){
     for(const auto& [name,fn]:model_.functions)model_.return_writable[name]=fn->text.find(" abstract")==std::string::npos&&fn->text.find(" external")==std::string::npos;
     bool changed=true;std::size_t passes=0;
-    while(changed&&passes++<=model_.functions.size()+1){changed=false;for(const auto& [name,fn]:model_.functions){
+    while(changed&&passes++<=model_.functions.size()+1){HUA_SEMA_COUNT(return_passes);changed=false;for(const auto& [name,fn]:model_.functions){
         std::map<std::string,bool> values;std::map<std::string,std::string> value_types;for(const auto* p:parameters(*fn)){values[declared_name(*p)]=mutable_parameter(*p);value_types[declared_name(*p)]=p->children.empty()?"":type_name(*p->children[0]);}values["self"]=model_.mutating[name];if(auto dot=name.find('.');dot!=std::string::npos)value_types["self"]=name.substr(0,dot);
         bool has_return=false,all=true;
         std::function<bool(const Node&)> capability=[&](const Node& n)->bool{
@@ -167,6 +168,13 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
             error(n,"safe reference/raw pointer execution is not implemented","E3008");
         for(const auto& c:n.children)executable(*c);
     };executable(program);
+#ifdef HUA_SEMA_PROFILE
+    struct OriginLayout {const Node* owner;std::string path;bool readonly,copied;};
+    struct InfoLayout {std::string type;bool writable,readonly_children;std::set<Origin> origins;bool deep_owned,record_copy;};
+    static_assert(sizeof(Origin)==sizeof(OriginLayout)&&sizeof(Info)==sizeof(InfoLayout));
+    static_assert(std::is_nothrow_move_constructible_v<Info>&&std::is_nothrow_move_constructible_v<Symbol>);
+    if(sema_profile::active)sema_profile::active->layouts={sizeof(Origin),sizeof(Info),sizeof(Symbol)};
+#endif
     infos_.clear();model_={};model_.external=std::move(external);scopes_.clear();scopes_.emplace_back();current_function_=nullptr;
     for(const auto& name:builtin_names()){define(name,{"builtin:"+name,false,false,{}},program.span);define("$core$"+name,{"builtin:"+name,false,false,{}},program.span);}
     scopes_.emplace_back();
@@ -191,10 +199,12 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
     for(const auto& n:program.children)if(n->kind!=N::Function && n->kind!=N::Struct)statement(*n);
     infer_field_capabilities(program);
     // Function bodies see all module-level bindings; local bindings remain declaration-ordered.
-    auto functions=model_.functions;auto globals=scopes_;
+    HUA_SEMA_PHASE(checking);
+    auto functions=model_.functions;auto globals=HUA_SEMA_SNAPSHOT(scopes_,global_snapshot);
     for(const auto& [name,fn]:functions) {
         if(model_.nested.contains(fn))continue;
-        scopes_=globals;scopes_.emplace_back();current_function_=fn;
+        HUA_SEMA_FUNCTION(name,0,false);
+        HUA_SEMA_RESTORE(scopes_,globals,function_reset);scopes_.emplace_back();current_function_=fn;
         if(auto dot=name.find('.');dot!=std::string::npos)define("self",{name.substr(0,dot),false,model_.mutating[name],{}},fn->span);
         auto params=parameters(*fn);
         if(name.find('.')!=std::string::npos)seed("self",fn,!model_.mutating[name]);
@@ -315,28 +325,28 @@ void SemanticAnalyzer::statement(const Node& n) {
     case N::ExpressionStatement:expression(*n.children[0]);break;
     case N::Match:{
         auto info=expression(*n.children[0]);auto structure=model_.structures.find(info.type);bool enumeration=structure!=model_.structures.end()&&structure->second->text.find(" enum")!=std::string::npos;
-        auto match_before=scopes_;std::vector<std::vector<std::unordered_map<std::string,Symbol>>> match_exits;
+        auto match_before=HUA_SEMA_SNAPSHOT(scopes_,branch_snapshot);std::vector<std::vector<std::unordered_map<std::string,Symbol>>> match_exits;
         auto cases=enumeration?enum_cases(*structure->second):std::vector<std::pair<std::string,std::vector<std::string>>>{};std::set<std::string> seen;bool wildcard=false;
         if(n.children.size()<2)error(n,"match requires at least one arm","E3011");
-        for(std::size_t i=1;i<n.children.size();++i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];auto name=pattern.text;bool any=pattern.kind==N::Name&&display_type(name)=="_";if(wildcard)error(arm,"unreachable match arm after _","E3011");scopes_=match_before;scopes_.emplace_back();
+        for(std::size_t i=1;i<n.children.size();++i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];auto name=pattern.text;bool any=pattern.kind==N::Name&&display_type(name)=="_";if(wildcard)error(arm,"unreachable match arm after _","E3011");HUA_SEMA_RESTORE(scopes_,match_before,scope_restore);scopes_.emplace_back();
             if(any){wildcard=true;if(!arm.children[1]->children.empty())error(arm,"wildcard cannot bind payloads","E3011");}
             else if(enumeration){auto dot=name.rfind('.');if(dot!=std::string::npos){if(name.substr(0,dot)!=info.type)error(pattern,"variant belongs to another enum","E3011");name=name.substr(dot+1);}name=display_type(name);auto found=std::find_if(cases.begin(),cases.end(),[&](const auto& c){return c.first==name;});if(found==cases.end())error(pattern,"unknown enum variant","E3011");if(!seen.insert(name).second)error(arm,"duplicate match variant","E3011");if(found->second.size()!=arm.children[1]->children.size())error(arm,"enum payload binding count mismatch","E3011");model_.constants[&pattern]=Value(name);for(std::size_t j=0;j<found->second.size();++j){const auto& binding=*arm.children[1]->children[j];model_.types[&binding]=found->second[j];if(binding.text!="_")define(binding.text,{found->second[j],false,false,{}},binding.span);}}
             else {if(pattern.kind==N::Name||!arm.children[1]->children.empty())error(pattern,"scalar match requires literal patterns","E3011");auto value=constant(pattern);require(info.type,{value_type(value),false},pattern);auto key=value_type(value)+":"+show(value);if(!seen.insert(key).second)error(arm,"duplicate match literal","E3011");model_.constants[&pattern]=value;}
             if(info.type.ends_with('?')&&n.children[0]->kind==N::Name&&(pattern.kind==N::Nil||(any&&seen.contains("nil:nil")))){auto& symbol=lookup(n.children[0]->text,n.span);bool local=false;for(std::size_t scope=2;scope<scopes_.size();++scope)for(auto& [_,candidate]:scopes_[scope])if(&candidate==&symbol)local=true;if(local&&symbol.declared.ends_with('?'))symbol.type=pattern.kind==N::Nil?"nil":symbol.declared.substr(0,symbol.declared.size()-1);}
-            statement(*arm.children[2]);scopes_.pop_back();if(!flow_stops(*arm.children[2]))match_exits.push_back(scopes_);
+            statement(*arm.children[2]);scopes_.pop_back();if(!flow_stops(*arm.children[2]))match_exits.push_back(HUA_SEMA_SNAPSHOT(scopes_,branch_snapshot));
         }
-        if(!wildcard&&!(enumeration&&seen.size()==cases.size())&&!(info.type=="bool"&&seen.size()==2))error(n,"non-exhaustive match requires missing variants or _","E3011");if(match_exits.empty())scopes_=match_before;else{scopes_=match_exits.front();for(std::size_t i=1;i<match_exits.size();++i)join_flow(match_exits[i]);}model_.types[&n]=info.type;break;
+        if(!wildcard&&!(enumeration&&seen.size()==cases.size())&&!(info.type=="bool"&&seen.size()==2))error(n,"non-exhaustive match requires missing variants or _","E3011");if(match_exits.empty())HUA_SEMA_RESTORE(scopes_,match_before,scope_restore);else{HUA_SEMA_RESTORE(scopes_,match_exits.front(),scope_restore);for(std::size_t i=1;i<match_exits.size();++i)join_flow(match_exits[i]);}model_.types[&n]=info.type;break;
     }
-    case N::If:{require("bool",expression(*n.children[0]),*n.children[0]);auto before=scopes_;narrow(*n.children[0],true);statement(*n.children[1]);auto yes=scopes_;scopes_=before;narrow(*n.children[0],false);if(n.children.size()==3)statement(*n.children[2]);bool yes_stops=flow_stops(*n.children[1]),no_stops=n.children.size()==3&&flow_stops(*n.children[2]);if(no_stops&&!yes_stops)scopes_=std::move(yes);else if(!yes_stops&&!no_stops)join_flow(yes);break;}
-    case N::While:{invalidate_loop(*n.children[1]);require("bool",expression(*n.children[0]),*n.children[0]);auto before=scopes_;std::size_t flow_budget=1;for(const auto& scope:scopes_)flow_budget+=scope.size();for(std::size_t pass=0;pass<flow_budget;++pass){scopes_=before;narrow(*n.children[0],true);statement(*n.children[1]);auto after=scopes_;scopes_=before;join_flow(after);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=before[i].at(name).type||symbol.writable!=before[i].at(name).writable||symbol.readonly_children!=before[i].at(name).readonly_children||symbol.views!=before[i].at(name).views;before=scopes_;if(!changed)break;}invalidate_loop(*n.children[1]);bool has_break=false;std::function<void(const Node&)> find=[&](const Node& node){if(node.kind==N::Break)has_break=true;if(node.kind==N::Function||node.kind==N::While||node.kind==N::For)return;for(const auto& c:node.children)find(*c);};find(*n.children[1]);if(!has_break)narrow(*n.children[0],false);break;}
+    case N::If:{require("bool",expression(*n.children[0]),*n.children[0]);auto before=HUA_SEMA_SNAPSHOT(scopes_,branch_snapshot);narrow(*n.children[0],true);statement(*n.children[1]);auto yes=HUA_SEMA_SNAPSHOT(scopes_,branch_snapshot);HUA_SEMA_RESTORE(scopes_,before,scope_restore);narrow(*n.children[0],false);if(n.children.size()==3)statement(*n.children[2]);bool yes_stops=flow_stops(*n.children[1]),no_stops=n.children.size()==3&&flow_stops(*n.children[2]);if(no_stops&&!yes_stops)scopes_=std::move(yes);else if(!yes_stops&&!no_stops)join_flow(yes);break;}
+    case N::While:{invalidate_loop(*n.children[1]);require("bool",expression(*n.children[0]),*n.children[0]);auto before=HUA_SEMA_SNAPSHOT(scopes_,branch_snapshot);std::size_t flow_budget=1;for(const auto& scope:scopes_)flow_budget+=scope.size();for(std::size_t pass=0;pass<flow_budget;++pass){HUA_SEMA_COUNT(loop_passes);HUA_SEMA_RESTORE(scopes_,before,scope_restore);narrow(*n.children[0],true);statement(*n.children[1]);auto after=HUA_SEMA_SNAPSHOT(scopes_,loop_snapshot);HUA_SEMA_RESTORE(scopes_,before,scope_restore);join_flow(after);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=before[i].at(name).type||symbol.writable!=before[i].at(name).writable||symbol.readonly_children!=before[i].at(name).readonly_children||symbol.views!=before[i].at(name).views;HUA_SEMA_RESTORE(before,scopes_,loop_snapshot);if(!changed)break;}invalidate_loop(*n.children[1]);bool has_break=false;std::function<void(const Node&)> find=[&](const Node& node){if(node.kind==N::Break)has_break=true;if(node.kind==N::Function||node.kind==N::While||node.kind==N::For)return;for(const auto& c:node.children)find(*c);};find(*n.children[1]);if(!has_break)narrow(*n.children[0],false);break;}
     case N::For: {
-        invalidate_loop(*n.children.back());auto loop_before=scopes_;
+        invalidate_loop(*n.children.back());auto loop_before=HUA_SEMA_SNAPSHOT(scopes_,loop_snapshot);
         auto count=n.children.size()-2;const auto& iterable=*n.children[count];std::string item,key="int";
         if(iterable.kind==N::Range){for(const auto& c:iterable.children)require("int",expression(*c),*c);item="int";}
         else {auto info=expression(iterable);auto map=type_arguments(info.type,"map");if(map.size()==2){key=map[0];item=count==1?key:map[1];}else {item=element_type(info.type);if(!info.type.empty() && !info.type.starts_with('['))error(iterable,"for requires a range, slice or map","E3004");}}
         scopes_.emplace_back();
         for(std::size_t i=0;i<count;++i)define(n.children[i]->text,{count==2 && i==0 ? key:item,false,false,{}},n.children[i]->span);
-        statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_before);auto loop_entry=scopes_;std::size_t budget=1;for(const auto& scope:scopes_)budget+=scope.size();for(std::size_t pass=0;pass<budget;++pass){scopes_=loop_entry;scopes_.emplace_back();for(std::size_t i=0;i<count;++i)define(n.children[i]->text,{count==2&&i==0?key:item,false,false,{}},n.children[i]->span);statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_entry);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=loop_entry[i].at(name).type||symbol.writable!=loop_entry[i].at(name).writable||symbol.readonly_children!=loop_entry[i].at(name).readonly_children||symbol.views!=loop_entry[i].at(name).views;loop_entry=scopes_;if(!changed)break;}invalidate_loop(*n.children.back());break;
+        statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_before);auto loop_entry=HUA_SEMA_SNAPSHOT(scopes_,loop_snapshot);std::size_t budget=1;for(const auto& scope:scopes_)budget+=scope.size();for(std::size_t pass=0;pass<budget;++pass){HUA_SEMA_COUNT(loop_passes);HUA_SEMA_RESTORE(scopes_,loop_entry,scope_restore);scopes_.emplace_back();for(std::size_t i=0;i<count;++i)define(n.children[i]->text,{count==2&&i==0?key:item,false,false,{}},n.children[i]->span);statements(*n.children.back(),false);scopes_.pop_back();join_flow(loop_entry);bool changed=false;for(std::size_t i=0;i<scopes_.size();++i)for(const auto& [name,symbol]:scopes_[i])changed=changed||symbol.type!=loop_entry[i].at(name).type||symbol.writable!=loop_entry[i].at(name).writable||symbol.readonly_children!=loop_entry[i].at(name).readonly_children||symbol.views!=loop_entry[i].at(name).views;HUA_SEMA_RESTORE(loop_entry,scopes_,loop_snapshot);if(!changed)break;}invalidate_loop(*n.children.back());break;
     }
     case N::Return: {
         const Node* returns=nullptr;for(const auto& c:current_function_->children)if(c->kind==N::ReturnTypes)returns=c.get();
@@ -352,7 +362,7 @@ void SemanticAnalyzer::statement(const Node& n) {
     case N::Function: {
         auto name=declared_name(n);model_.functions.emplace(name,&n);model_.nested[&n]=true;
         define(name,{"fn:"+name,false,false,{}},n.span);
-        auto outer=current_function_;auto saved=scopes_;auto previous_return=pending_return_;auto previous_effects=pending_effects_;auto previous_exits=std::move(exit_views_);auto previous_roots=std::move(effect_roots_);bool previous_seen=saw_return_;pending_return_={};pending_effects_={};effect_roots_.clear();exit_views_.clear();saw_return_=false;current_function_=&n;
+        auto outer=current_function_;auto saved=HUA_SEMA_SNAPSHOT(scopes_,closure);auto previous_return=pending_return_;auto previous_effects=pending_effects_;auto previous_exits=std::move(exit_views_);auto previous_roots=std::move(effect_roots_);bool previous_seen=saw_return_;pending_return_={};pending_effects_={};effect_roots_.clear();exit_views_.clear();saw_return_=false;current_function_=&n;
         // Closures capture readonly snapshots at declaration, rather than dangling stack environments.
         for(std::size_t i=2;i<scopes_.size();++i)for(auto& [_,symbol]:scopes_[i]){symbol.mutable_binding=false;symbol.writable=false;}
         scopes_.emplace_back();
@@ -427,7 +437,12 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
         out={x.type,false};break;
     }
     case N::Binary: {
-        auto a=expression(*n.children[0]);auto op=n.text;auto before=scopes_;if(op=="&&"||op=="||")narrow(*n.children[0],op=="&&");auto b=expression(*n.children[1]);if(op=="&&"||op=="||")join_flow(before);
+        auto a=expression(*n.children[0]);auto op=n.text;
+        // Only conditional evaluation needs an alternate flow state. Eager operators
+        // analyze both operands in order and never read a saved scope.
+        decltype(scopes_) before;
+        if(op=="&&"||op=="||"){before=HUA_SEMA_BINARY(scopes_,op);narrow(*n.children[0],op=="&&");}
+        auto b=expression(*n.children[1]);if(op=="&&"||op=="||")join_flow(before);
         if(a.type=="void"||b.type=="void")error(n,"void is not an operand","E3004");
         if(op=="&&" || op=="||"){require("bool",a,n);require("bool",b,n);out={"bool",false};break;}
         if(op=="==" || op=="!=") {
@@ -527,10 +542,13 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                 if(mutable_parameter(*ps[i]) && !args[i].writable&&!probing_)error(*n.children[i+1],"mut parameter requires mutable argument","E3003");
             }
             out={result_type(*fn),model_.return_writable.contains(key)&&model_.return_writable.at(key)};
-            auto previous_origins=actual_origins_;auto previous_views=actual_views_;
+            auto previous_origins=HUA_SEMA_SNAPSHOT(actual_origins_,call_actuals);auto previous_views=HUA_SEMA_SNAPSHOT(actual_views_,call_actuals);
             for(std::size_t layer=0;layer<std::min<std::size_t>(2,scopes_.size());++layer)for(const auto& [name,symbol]:scopes_[layer])if(symbol.declaration){actual_origins_[symbol.declaration]={symbol.type,symbol.writable,symbol.readonly_children,symbol.origins,symbol.deep_owned};actual_views_[symbol.declaration]=symbol.views;}
             for(std::size_t i=0;i<ps.size();++i){actual_origins_[ps[i]]=args[i];actual_views_[ps[i]]=node_views_[n.children[i+1].get()];}
             if(n.children[0]->kind==N::Member){const auto& receiver=*n.children[0]->children[0];actual_origins_[fn]=infos_.at(&receiver);actual_views_[fn]=node_views_[&receiver];}
+#ifdef HUA_SEMA_PROFILE
+            sema_profile::dependency(key);
+#endif
             if(auto facts=return_facts_.find(key);facts!=return_facts_.end()){
                 auto value=instantiate(facts->second.value,n);value.type=out.type;out=std::move(value);node_views_[&n]=instantiate(facts->second.views,n);
                 node_positions_[&n].clear();for(auto position:facts->second.positions)node_positions_[&n].push_back(instantiate(std::move(position),n));
@@ -625,12 +643,13 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     infos_[&n]=out;model_.types[&n]=out.type;model_.writable[&n]=out.writable;return out;
 }
 void SemanticAnalyzer::join_flow(const std::vector<std::unordered_map<std::string,Symbol>>& other) {
+    HUA_SEMA_AREA(join);
     for(std::size_t i=0;i<scopes_.size()&&i<other.size();++i)for(auto& [name,symbol]:scopes_[i]) {
         auto found=other[i].find(name);if(found==other[i].end())continue;
         if(symbol.type!=found->second.type)symbol.type=symbol.declared;
         symbol.writable=symbol.writable&&found->second.writable;
         symbol.readonly_children=symbol.readonly_children||found->second.readonly_children;symbol.origins.insert(found->second.origins.begin(),found->second.origins.end());symbol.deep_owned=symbol.deep_owned&&found->second.deep_owned;
-        auto previous=symbol.views;
+        auto previous=HUA_SEMA_SNAPSHOT(symbol.views,join);
         for(const auto& [path,view]:found->second.views) {
             auto& merged=symbol.views[path];
             if(!previous.contains(path)){merged=projected(Info{found->second.type,found->second.writable,found->second.readonly_children,found->second.origins,found->second.deep_owned,found->second.record_copy},path);merged.type=view.type;}
@@ -679,12 +698,18 @@ SemanticAnalyzer::Info SemanticAnalyzer::projected(Info base,const std::string& 
     for(auto origin:base.origins){origin.path+=path;if(origin.path.size()>512){origin.readonly=true;origin.path.clear();}origin.copied=false;out.origins.insert(std::move(origin));}return out;
 }
 SemanticAnalyzer::Views SemanticAnalyzer::fields(Info base,unsigned depth) const{
+    HUA_SEMA_AREA(fields);
     // Cache only type/capability shapes. Actual source owners stay per analysis
     // and per value, never in the cache or across analyzed trees.
+    HUA_SEMA_COUNT(field_requests);
     auto key=base.type+"|"+std::to_string(depth)+":"+std::to_string(base.writable)+std::to_string(base.readonly_children)+std::to_string(base.deep_owned)+std::to_string(base.record_copy);
     auto prototype=field_shapes_.find(key);
-    if(prototype==field_shapes_.end()){auto shape=base;shape.origins.clear();prototype=field_shapes_.emplace(std::move(key),field_shape(std::move(shape),depth)).first;}
+    if(prototype!=field_shapes_.end())HUA_SEMA_COUNT(field_hits);
+    if(prototype==field_shapes_.end()){HUA_SEMA_COUNT(field_builds);auto shape=base;shape.origins.clear();prototype=field_shapes_.emplace(std::move(key),field_shape(std::move(shape),depth)).first;}
     auto out=prototype->second;
+#ifdef HUA_SEMA_PROFILE
+    sema_profile::dimensions(out.size(),base.origins.size());
+#endif
     for(auto& [path,value]:out){std::set<Origin> origins;
         for(auto origin:base.origins){
             // Match projected() overflow handling at every member/index step.
@@ -715,6 +740,7 @@ void SemanticAnalyzer::seed(const std::string& name,const Node* owner,bool reado
     Info value{symbol.type,symbol.writable,symbol.readonly_children,symbol.origins};symbol.views=fields(value);
 }
 void SemanticAnalyzer::capture_return(const Node& n){
+    HUA_SEMA_AREA(returns);
     ReturnFacts facts;auto result=result_type(*current_function_);auto types=type_arguments(result,"multi");
     for(std::size_t i=0;i<n.children.size();++i){auto value=infos_.at(n.children[i].get());
         if(n.children.size()==1&&!types.empty()&&node_positions_.contains(n.children[i].get())){
@@ -756,7 +782,10 @@ void SemanticAnalyzer::note_write(const Node& n){
     if(n.kind==N::Index||n.kind==N::Member){const auto& base=infos_.at(n.children[0].get());if(n.kind==N::Index||!base.record_copy)for(const auto& origin:base.origins)pending_effects_.required.insert(origin);}
 }
 void SemanticAnalyzer::update_aliases(const Info& container,const std::string& path,Info value,const Views& descendants){
+    HUA_SEMA_AREA(alias);
+    HUA_SEMA_COUNT(alias_scans);
     for(auto& scope:scopes_)for(auto& [name,symbol]:scope){
+        HUA_SEMA_COUNT(alias_symbols);HUA_SEMA_ADD(alias_views,symbol.views.size());
         auto shares=[&](const std::set<Origin>& origins){for(const auto& a:origins)for(const auto& b:container.origins)if(a.owner==b.owner&&a.path==b.path)return true;return false;};
         std::vector<std::string> prefixes;if(shares(symbol.origins))prefixes.push_back("");
         for(const auto& [prefix,view]:symbol.views)if(shares(view.origins)&&view.type==container.type)prefixes.push_back(prefix);
@@ -768,6 +797,7 @@ void SemanticAnalyzer::update_aliases(const Info& container,const std::string& p
     }
 }
 void SemanticAnalyzer::apply_effects(const Effects& effects,const Node& site){
+    HUA_SEMA_AREA(apply);
     if(effects.unknown){if(probing_)pending_effects_.unknown=true;forget_unknown(site);}
     for(const auto& required:effects.required){auto found=actual_origins_.find(required.owner);if(found==actual_origins_.end())continue;
         Info fact=found->second;if(!required.path.empty()){auto views=actual_views_.find(required.owner);if(views!=actual_views_.end()&&views->second.contains(required.path))fact=views->second.at(required.path);else fact=projected(fact,required.path);}
@@ -797,6 +827,7 @@ void SemanticAnalyzer::apply_effects(const Effects& effects,const Node& site){
     }
 }
 void SemanticAnalyzer::forget_unknown(const Node& site){
+    HUA_SEMA_AREA(unknown);
     auto shared=[](const std::string& type){return type.starts_with('[')||type.starts_with("map<")||type.starts_with("List<")||type.starts_with("Result<")||type=="Buffer";};
     auto reset=[&](Symbol& symbol,bool global){
         if(!shared(symbol.type)&&!record(symbol.type))return;
@@ -815,6 +846,8 @@ void SemanticAnalyzer::select_effect_roots(){
     if(current_function_){effect_roots_.insert(current_function_);for(auto parameter:parameters(*current_function_))if(mutable_parameter(*parameter))effect_roots_.insert(parameter);}
 }
 void SemanticAnalyzer::capture_effect_exit(){
+    HUA_SEMA_AREA(exit);
+    HUA_SEMA_COUNT(exits);
     std::unordered_map<const Node*,Views> snapshot;
     for(const auto& scope:scopes_)for(const auto& [name,symbol]:scope)if(effect_roots_.contains(symbol.declaration)){auto& facts=snapshot[symbol.declaration];facts=symbol.views;facts[""]={symbol.type,symbol.writable,symbol.readonly_children,symbol.origins,symbol.deep_owned,symbol.record_copy};}
     exit_views_.push_back(std::move(snapshot));
@@ -840,18 +873,28 @@ void SemanticAnalyzer::finish_effects(){
     }
 }
 void SemanticAnalyzer::infer_field_capabilities(const Node&){
-    auto globals=scopes_;auto functions=model_.functions;
+    HUA_SEMA_PHASE(summaries);
+    auto globals=HUA_SEMA_SNAPSHOT(scopes_,global_snapshot);auto functions=model_.functions;
     for(auto& scope:globals)for(auto& [name,symbol]:scope)if(symbol.declaration){symbol.origins={{symbol.declaration,"",!symbol.writable,false}};for(auto& [path,view]:symbol.views)view.origins={{symbol.declaration,path,!symbol.writable,false}};}
     probing_=true;bool changed=true;unsigned pass=0;
-    while(changed&&pass++<32){auto previous_returns=return_facts_;auto previous_effects=effects_;
+    while(changed&&pass++<32){auto previous_returns=HUA_SEMA_SNAPSHOT(return_facts_,summary_snapshot);auto previous_effects=HUA_SEMA_SNAPSHOT(effects_,summary_snapshot);
         for(const auto& [name,fn]:functions){if(model_.nested.contains(fn)||fn->text.find(" external")!=std::string::npos||fn->text.find(" abstract")!=std::string::npos)continue;
-            scopes_=globals;scopes_.emplace_back();current_function_=fn;pending_return_={};pending_effects_={};effect_roots_.clear();exit_views_.clear();saw_return_=false;
+            HUA_SEMA_FUNCTION(name,pass,true);
+            HUA_SEMA_RESTORE(scopes_,globals,function_reset);scopes_.emplace_back();current_function_=fn;pending_return_={};pending_effects_={};effect_roots_.clear();exit_views_.clear();saw_return_=false;
             if(auto dot=name.find('.');dot!=std::string::npos){define("self",{name.substr(0,dot),false,model_.mutating[name],{}},fn->span);seed("self",fn,!model_.mutating[name]);}
             for(const auto* p:parameters(*fn)){define(declared_name(*p),{p->children.empty()?"":type_name(*p->children[0]),false,mutable_parameter(*p),{}},p->span);seed(declared_name(*p),p,!mutable_parameter(*p));}
-            select_effect_roots();statements(*fn->children.back(),false);capture_effect_exit();finish_effects();return_facts_[name]=pending_return_;effects_[name]=pending_effects_;
+            select_effect_roots();statements(*fn->children.back(),false);capture_effect_exit();finish_effects();
+#ifdef HUA_SEMA_PROFILE
+            if(sema_profile::active)sema_profile::summary_change(name,!return_facts_.contains(name)||return_facts_.at(name)!=pending_return_,!effects_.contains(name)||effects_.at(name)!=pending_effects_);
+#endif
+            {HUA_SEMA_AREA(summary_store);return_facts_[name]=pending_return_;effects_[name]=pending_effects_;}
         }
         changed=previous_returns!=return_facts_||previous_effects!=effects_;
+#ifdef HUA_SEMA_PROFILE
+        sema_profile::finish_pass(pass,changed);
+#endif
     }
+    if(changed)HUA_SEMA_COUNT(summary_fallbacks);
     if(changed)for(auto& [name,facts]:return_facts_){facts.value.writable=false;facts.value.readonly_children=true;facts.views=fields(facts.value);for(auto& value:facts.positions){value.writable=false;value.readonly_children=true;}effects_[name].unknown=true;effects_[name].writes.clear();}
     probing_=false;scopes_=std::move(globals);current_function_=nullptr;pending_effects_={};pending_return_={};saw_return_=false;
 }

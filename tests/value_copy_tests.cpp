@@ -43,5 +43,58 @@ int main(){
  auto cycle=managed<StructData>();cycle->name="Cycle";cycle->fields.emplace("self",Value(StructValue{cycle,true}));Value cyclic(StructValue{cycle,true});
  try{copy_value(std::move(cyclic));throw std::runtime_error("cycle accepted");}catch(const Diagnostic& d){check(d.code()=="E4099");}
  cycle->fields.clear();heap.collect();check(number(original)==2);check(number(child)==3);
+ // Result constraints consume only owned boxes and preserve shared payload snapshots.
+ auto wrap=[](Value value,std::string success="Box",bool writable=true,bool contextual=false){return Value(ResultValue{true,managed<Value>(std::move(value)),std::move(success),"string",writable,contextual});};
+ auto constrained_source=wrap(record(21));auto constrained=enforce_type(constrained_source,"Result<Box,string>",{});
+ auto& normalized=std::get<ResultValue>(constrained.data);auto& preserved=std::get<ResultValue>(constrained_source.data);
+ check(normalized.payload!=preserved.payload);check(normalized.success_type=="Box"&&normalized.error_type=="string");
+ std::get<StructValue>(normalized.payload->data).data->fields.at("n")=Value(std::int64_t(22));check(number(*preserved.payload)==21);
+ auto owned_result=enforce_type(wrap(record(23)),"Result<Box,string>",{});check(number(*std::get<ResultValue>(owned_result.data).payload)==23);
+ // A unique box can still contain a shared root or shared descendants.
+ auto shared_record=record(24);auto own_box=enforce_type(wrap(shared_record),"Result<Box,string>",{});
+ std::get<StructValue>(std::get<ResultValue>(own_box.data).payload->data).data->fields.at("n")=Value(std::int64_t(25));check(number(shared_record)==24);
+ auto shared_child=record(26);auto parent=managed<StructData>();parent->name="Outer";parent->fields.emplace("child",shared_child);
+ auto constrained_parent=enforce_type(wrap(Value(StructValue{std::move(parent),true}),"Outer"),"Result<Outer,string>",{});
+ auto& parent_value=std::get<StructValue>(std::get<ResultValue>(constrained_parent.data).payload->data);
+ std::get<StructValue>(parent_value.data->fields.at("child").data).data->fields.at("n")=Value(std::int64_t(27));check(number(shared_child)==26);
+ for(int layers:{1,2,4}){
+  auto nested_source=wrap(record(28));std::string nested_type="Result<Box,string>";
+  for(int level=1;level<layers;++level){nested_source=wrap(std::move(nested_source),nested_type);nested_type="Result<"+nested_type+",string>";}
+  auto nested_copy=enforce_type(nested_source,nested_type,{});auto input_value=&nested_source;auto output_value=&nested_copy;
+  for(int level=0;level<layers;++level){auto& a=std::get<ResultValue>(input_value->data);auto& b=std::get<ResultValue>(output_value->data);check(a.payload!=b.payload);input_value=a.payload.get();output_value=b.payload.get();}
+  std::get<StructValue>(output_value->data).data->fields.at("n")=Value(std::int64_t(29));check(number(*input_value)==28);
+ }
+ auto ro_list=wrap(Value(ListValue{list,true}),"List<int>",false);
+ auto constrained_ro=enforce_type(std::move(ro_list),"Result<List<int>,string>",{});
+ auto& ro_payload=std::get<ResultValue>(constrained_ro.data);check(!ro_payload.writable);
+ auto list_view=std::get<ListValue>(ro_payload.payload->data);check(!list_view.writable&&list_view.data==list);
+ auto mutable_list=enforce_type(wrap(Value(ListValue{list,true}),"List<int>"),"Result<List<int>,string>",{});
+ check(std::get<ListValue>(std::get<ResultValue>(mutable_list.data).payload->data).writable);
+ // Contextual and widening conversions still execute; equality of type names is no proof.
+ auto converted=enforce_type(wrap(Value(std::int64_t(255)),"int",true,true),"Result<u8,string>",{});
+ auto& converted_result=std::get<ResultValue>(converted.data);check(value_type(*converted_result.payload)=="u8"&&!converted_result.contextual);
+ check(as_int(*converted_result.payload,{})==255);
+ auto exact_float=enforce_type(wrap(Value(std::int64_t(12)),"int",true,true),"Result<float,string>",{});
+ check(std::get<double>(std::get<ResultValue>(exact_float.data).payload->data)==12.0);
+ auto rejected=[&](Value value,const std::string& type,const std::string& code){try{enforce_type(std::move(value),type,{});throw std::runtime_error("Result constraint accepted invalid input");}catch(const Diagnostic& d){check(d.code()==code);}};
+ rejected(wrap(Value(std::int64_t(256)),"int",true,true),"Result<u8,string>","E4002");
+ rejected(wrap(Value(std::int64_t(9007199254740993LL)),"int",true,true),"Result<float,string>","E4002");
+ rejected(wrap(record(30)),"Result<Box,bool>","E4003");
+ rejected(Value(ResultValue{true,nullptr,"Box","string",true,false}),"Result<Box,string>","E4003");
+ rejected(wrap(Value{},"nil"),"Result<void,string>","E4003");
+ auto void_result=enforce_type(Value(ResultValue{true,nullptr,"void","string",false,false}),"Result<void,string>",{});
+ check(!std::get<ResultValue>(void_result.data).payload&&!std::get<ResultValue>(void_result.data).writable);
+ auto nullable=enforce_type(wrap(Value{},"nil"),"Result<Box?,string>",{});check(std::get<ResultValue>(nullable.data).payload->data.index()==0);
+ auto failure=Value(ResultValue{false,managed<Value>(Value(std::string("failure"))),"Box","string",false,false});
+ auto failed=enforce_type(failure,"Result<Box,string>",{});auto& failed_result=std::get<ResultValue>(failed.data);
+ check(!failed_result.ok&&!failed_result.writable&&show(*failed_result.payload)=="failure");
+ // Fixed-array value snapshots and errors leave a shared source usable.
+ auto array_values=managed<std::vector<Value>>();array_values->emplace_back(std::int64_t(31));
+ auto array_source=wrap(Value(fixed_array(SliceValue{array_values,0,1,true,"int"},"int",{},false)),"[1]int");
+ auto array_result=enforce_type(array_source,"Result<[1]int,string>",{});
+ check(std::get<SliceValue>(std::get<ResultValue>(array_source.data).payload->data).packed!=std::get<SliceValue>(std::get<ResultValue>(array_result.data).payload->data).packed);
+ auto shared_bad=wrap(Value(std::int64_t(256)),"int",true,true);rejected(shared_bad,"Result<u8,string>","E4002");
+ check(as_int(*std::get<ResultValue>(shared_bad.data).payload,{})==256);
+ heap.collect();check(number(*preserved.payload)==21);check(number(shared_child)==26);
  std::cout<<checks<<" consumed value ownership/capability/layout/GC checks passed\n";
 }

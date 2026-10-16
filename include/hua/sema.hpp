@@ -1,5 +1,6 @@
 #pragma once
 #include "hua/value.hpp"
+#include "hua/sema_profile.hpp"
 #include "hua/external.hpp"
 #include <unordered_map>
 #include <unordered_set>
@@ -23,10 +24,11 @@ public:
 private:
     struct Origin {
         const Node* owner{};std::string path;bool readonly{},copied{};
+        HUA_SEMA_MEMBER(origin)
         bool operator==(const Origin&) const=default;
         bool operator<(const Origin& x) const{if(owner!=x.owner)return std::less<const Node*>{}(owner,x.owner);return std::tie(path,readonly,copied)<std::tie(x.path,x.readonly,x.copied);}
     };
-    struct Info { std::string type; bool writable{}, readonly_children{}; std::set<Origin> origins{};bool deep_owned{},record_copy{}; bool operator==(const Info&) const = default; };
+    struct Info { std::string type; bool writable{}, readonly_children{}; std::set<Origin> origins{};bool deep_owned{},record_copy{}; HUA_SEMA_MEMBER(info) bool operator==(const Info&) const = default; };
     using Views=std::unordered_map<std::string,Info>;
     struct ReturnFacts {Info value;Views views;std::vector<Info> positions;std::vector<Views> position_views;bool operator==(const ReturnFacts&) const=default;};
     struct Effects {bool unknown{};std::set<Origin> required;std::unordered_map<const Node*,Views> writes;bool operator==(const Effects&) const=default;};
@@ -64,6 +66,7 @@ private:
     struct Symbol { std::string type; bool mutable_binding{}, writable{}; std::optional<Value> constant; std::string declared;
         bool readonly_children{};std::set<Origin> origins{};bool deep_owned{},record_copy{};const Node* declaration{};
         std::unordered_map<std::string,Info> views;
+        HUA_SEMA_MEMBER(symbol)
         Symbol(std::string t={},bool mut=false,bool write=false,std::optional<Value> folded={}):type(std::move(t)),mutable_binding(mut),writable(write),constant(std::move(folded)),declared(type){}
     };
     bool record(std::string type) const;

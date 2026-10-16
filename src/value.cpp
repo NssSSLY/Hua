@@ -429,12 +429,35 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
     auto result_types=type_arguments(expected,"Result");
     if(!result_types.empty()) {
         auto p=std::get_if<ResultValue>(&v.data);if(!p||result_types.size()!=2)runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
-        auto r=*p;auto inactive=r.ok?r.error_type:r.success_type;
+        HUA_PROFILE_COUNT(result_constraints);
+#ifdef HUA_INTERNAL_PROFILE
+        performance::record_result_origin();
+        if(p->ok)HUA_PROFILE_COUNT(result_ok_constraints);else HUA_PROFILE_COUNT(result_err_constraints);
+        if(p->contextual)HUA_PROFILE_COUNT(result_contextual_constraints);
+        if(!p->writable)HUA_PROFILE_COUNT(result_readonly_constraints);
+        if(p->payload){
+            if(p->payload.use_count()==1)HUA_PROFILE_COUNT(result_payload_unique);else HUA_PROFILE_COUNT(result_payload_shared);
+            if(std::holds_alternative<StructValue>(p->payload->data))HUA_PROFILE_COUNT(result_payload_struct);
+            if(std::holds_alternative<ResultValue>(p->payload->data))HUA_PROFILE_COUNT(result_payload_nested);
+            if(auto array=std::get_if<SliceValue>(&p->payload->data);array&&array->fixed)HUA_PROFILE_COUNT(result_payload_fixed_array);
+        }
+#endif
+        auto r=std::move(*p);auto inactive=r.ok?r.error_type:r.success_type;
         if(!compatible(result_types[r.ok?1:0],inactive))runtime_error(span,"incompatible Result type metadata","E4003");
-        if(r.ok&&result_types[0]=="void"){if(r.success_type!="void"||r.payload)runtime_error(span,"void success cannot carry a payload","E4003");r.error_type=result_types[1];return Value(r);}
+        if(r.ok&&result_types[0]=="void"){HUA_PROFILE_COUNT(result_void_constraints);if(r.success_type!="void"||r.payload)runtime_error(span,"void success cannot carry a payload","E4003");r.error_type=result_types[1];return Value(r);}
         if(!r.payload)runtime_error(span,"Result payload is missing","E4003");
-        auto payload=enforce_type(*r.payload,result_types[r.ok?0:1],span,r.contextual);
-        r.payload=managed<Value>(copy_value(r.writable?payload:read_only(payload)));r.success_type=result_types[0];r.error_type=result_types[1];r.contextual=false;return Value(r);
+#ifdef HUA_INTERNAL_PROFILE
+        const auto input_payload_type=value_type(*r.payload);
+#endif
+        // The wrapper is consumed, but a shared payload still belongs to its aliases.
+        // Normalize an owned payload by move; copy_value below checks every descendant.
+        auto input=r.payload.use_count()==1?std::move(*r.payload):*r.payload;
+        auto payload=enforce_type(std::move(input),result_types[r.ok?0:1],span,r.contextual);
+#ifdef HUA_INTERNAL_PROFILE
+        if(value_type(payload)!=input_payload_type)HUA_PROFILE_COUNT(result_payload_type_changes);
+#endif
+        HUA_PROFILE_COUNT(result_materializations);
+        r.payload=managed<Value>(copy_value(r.writable?std::move(payload):read_only(std::move(payload))));r.success_type=result_types[0];r.error_type=result_types[1];r.contextual=false;return Value(r);
     }
     if(!(contextual&&expected.starts_with('[')&&v.data.index()==5)&&!compatible(expected,value_type(v))) runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
     if(expected.starts_with('[') && v.data.index()==5) {
@@ -519,6 +542,7 @@ void location_write(const ValueLocation& l,const Value& value) {location_write(l
 Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span){if(type.find('[')!=std::string::npos){auto normalized=canonical_type(type);if(normalized!=type)return enforce_borrow(std::move(value),normalized,span);}if(type.starts_with('[')){auto sequence=std::get_if<SliceValue>(&value.data);auto close=type.find(']');if(!sequence||sequence->element_type!=type.substr(close+1)||(close>1&&!sequence->fixed))runtime_error(span,"mut array/slice borrow requires identical element type and existing fixed layout","E4003");}return enforce_type(std::move(value),type,span);}
 namespace {
 template<class Type> Value return_value(Value value,std::size_t count,Type type,const SourceSpan& s,bool contextual){
+    HUA_PROFILE_CONSTRAINT_SOURCE(returning);
     if(count==1)value=enforce_type(std::move(value),type(0),s,contextual);
     else if(count>1){auto values=unpack_multi(value,count,s);auto data=std::get<MultiValue>(value.data).data;for(std::size_t i=0;i<values.size();++i)values[i]=enforce_type(std::move(values[i]),type(i),s,i<data->contextual.size()&&data->contextual[i]);value=make_multi(std::move(values));}
     if(auto p=std::get_if<MultiValue>(&value.data))p->data->contextual.clear();if(auto p=std::get_if<ResultValue>(&value.data))p->contextual=false;
