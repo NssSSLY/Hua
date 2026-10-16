@@ -7,6 +7,8 @@
 #include <fstream>
 #include <istream>
 #include <ostream>
+#include <functional>
+#include <unordered_map>
 namespace hua {
 namespace {
 using I=std::int64_t;
@@ -174,7 +176,23 @@ const std::vector<StandardFunction>& standard_functions() {
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
-const StandardFunction* standard_function(std::string_view name){for(const auto& f:standard_functions())if(standard_name(f)==name)return &f;return nullptr;}
+const StandardFunction* standard_function(std::string_view name){
+    // Core builtins are not in this registry. Avoid building/looking up standard
+    // names for every len/ok/unwrap call. The fixed table owns pointer lifetimes.
+    if(!name.starts_with("$std$"))return nullptr;
+    struct NameHash {
+        using is_transparent=void;
+        std::size_t operator()(std::string_view value)const noexcept{return std::hash<std::string_view>{}(value);}
+    };
+    static const auto index=[] {
+        std::unordered_map<std::string,const StandardFunction*,NameHash,std::equal_to<>> result;
+        result.reserve(standard_functions().size());
+        for(const auto& function:standard_functions())result.emplace(standard_name(function),&function);
+        return result;
+    }();
+    const auto found=index.find(name);
+    return found==index.end()?nullptr:found->second;
+}
 bool standard_module(std::string_view name){for(const auto& f:standard_functions())if(name=="std."+f.module)return true;return false;}
 Value standard_result(Value value,bool ok,const std::string& type){return Value(ResultValue{ok,managed<Value>(std::move(value)),type,"string",true,false});}
 std::string text_utf8_error(std::string_view s) {
