@@ -77,12 +77,13 @@ fn scalar(value bc.Scalar) bool {
     }
     return is_ok(json.as_float(unwrap(j)))
 }
-fn metadata(image bc.Image, c Catalog, code bc.Code, returns []string) Result<void> {
+fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, returns []string) Result<void> {
     let size = list.len(code.instructions)
     if size==0 || size>250000 || !small(code.name,false) { return err("E6002@1:1 C06 empty/oversized code") }
     var names = map[string]bool{}
-    for n,_ in c.globals { names[n] = true }
-    for f in list.snapshot(image.functions) { if f.name==code.name { for p in f.parameters { names[p.name] = true } } }
+    # The caller already holds this code's validated parameter metadata. Global
+    # names remain in the immutable catalog instead of being recopied per code.
+    for p in parameters { names[p.name] = true }
     # 逻辑名称核验独立于可达栈；完整定值/可见性证明属于 C04，非数据流类型推断。
     for op in list.snapshot(code.instructions) {
         if op.op==2 { names[op.text] = true }
@@ -118,7 +119,7 @@ fn metadata(image bc.Image, c Catalog, code bc.Code, returns []string) Result<vo
         if op.op==5 && !alg.contains(["+","-","*","/","//","%","**","&","|","^","<<",">>","==","!=","<",">","<=",">=","&&","||"],op.text) { return err(e) }
         if op.op==15 && !alg.contains(["=","+=","-=","*=","/=","//=","%=","**="],op.text) { return err(e) }
         if op.op==19 && !has(c.structures,op.text) { return err(error(image,op,"unknown structure")) }
-        if (op.op==1 || op.op==12) && op.text!="_" && !has(names,op.text) && !(op.op==1 && intrinsic(op.text)) { return err(error(image,op,"unknown binding/function")) }
+        if (op.op==1 || op.op==12) && op.text!="_" && !has(names,op.text) && !has(c.globals,op.text) && !(op.op==1 && intrinsic(op.text)) { return err(error(image,op,"unknown binding/function")) }
         if op.op==27 && (op.type_name!="E4002" || op.text=="") { return err(error(image,op,"invalid literal failure")) }
     }
     return ok()
@@ -210,8 +211,8 @@ fn transition(s mut State, code bc.Code, op bc.Instruction) Result<bool> {
     else { return err("unhandled opcode") }
     return ok(true)
 }
-fn verify_code(image bc.Image, catalog Catalog, code bc.Code, returns []string, result Verification) Result<Verification> {
-    metadata(image,catalog,code,returns)?
+fn verify_code(image bc.Image, catalog Catalog, code bc.Code, parameters []bc.Parameter, returns []string, result Verification) Result<Verification> {
+    metadata(image,catalog,code,parameters,returns)?
     var empty []int = []
     var s = State{seen:map[int]Flow{},queue:list.from_slice(empty),flow:Flow{stack:"",scopes:0,iterators:0},result:result}
     merge(s,code,0)?
@@ -249,10 +250,14 @@ pub fn verify(image bc.Image) Result<Verification> {
         if !small(st.name,false) || has(c.structures,st.name) || st.site<0 || st.site>=list.len(image.sites) || len(st.fields)>4096 { return err("E6002@1:1 C06 invalid structure metadata") }
         c.structures[st.name] = true
     }
+    var initializer_parameters []bc.Parameter = []
     for f in list.snapshot(image.functions) {
         if !small(f.name,false) || has(c.functions,f.name) || has(c.structures,f.name) || f.name!=f.code.name || f.site<0 || f.site>=list.len(image.sites) || len(f.parameters)>4096 || len(f.returns)>4096 { return err("E6002@1:1 C06 invalid function metadata") }
         c.functions[f.name] = true
         c.globals[f.name] = true
+        # Preserve accepted hand-built images whose function has the initializer
+        # name: the old name-based scan supplied those parameters to both codes.
+        if f.name==image.initializer.name { initializer_parameters=f.parameters }
     }
     for st in list.snapshot(image.structures) {
         var names = map[string]bool{}
@@ -275,8 +280,8 @@ pub fn verify(image bc.Image) Result<Verification> {
         if op.op==35 { for n in op.names { c.globals[n] = true } }
     }
     let zero = Verification{instructions:0,reachable:0,slots:0,work:0,max_stack:0,max_scopes:0,max_iterators:0}
-    var result = verify_code(image,c,image.initializer,[],zero)?
-    for f in list.snapshot(image.functions) { result = verify_code(image,c,f.code,f.returns,result)? }
+    var result = verify_code(image,c,image.initializer,initializer_parameters,[],zero)?
+    for f in list.snapshot(image.functions) { result = verify_code(image,c,f.code,f.parameters,f.returns,result)? }
     if result.instructions!=image.instructions { return err("E6002@1:1 C06 instruction count mismatch") }
     return ok(result)
 }

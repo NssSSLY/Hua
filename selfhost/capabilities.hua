@@ -15,7 +15,9 @@ pub struct View { type_name string
     origins map[string]bool }
 pub struct Value { root View
     fields map[string]View
-    prefixes map[string]bool
+    prefixes map[string]map[string]bool
+    prefix string
+    readonly_fields bool
     positions []Value }
 # Node consumers use the root view (including write origins) and positional
 # roots only. Keep full member tables in values/environments/summaries, where
@@ -52,7 +54,7 @@ struct State { units map[string]modules.Unit
     fields map[string]string
     members map[string]map[string]string
     shapes map[string]map[string]View
-    shape_prefixes map[string]map[string]bool
+    shape_prefixes map[string]map[string]map[string]bool
     functions map[string]Function
     variants map[string]string
     summaries map[string]Summary
@@ -69,11 +71,9 @@ struct Environment { unit modules.Unit
     values map[string]Value
     versions map[string]int
     next_version int
-    selected map[string]map[string]View
-    selected_prefixes map[string]map[string]bool
     updating bool
     edited_fields map[string]map[string]View
-    edited_prefixes map[string]map[string]bool
+    edited_prefixes map[string]map[string]map[string]bool
     alias_cache map[string][]string
     returned Value
     saw_return bool
@@ -83,7 +83,7 @@ struct Environment { unit modules.Unit
     exits []map[string]Value
     deferred bool }
 fn view(type string, writable bool) View { return View{type_name:type,writable:writable,readonly_children:false,deep_owned:false,record_copy:false,origins:map[string]bool{}} }
-fn value(type string, writable bool) Value { return Value{root:view(type,writable),fields:map[string]View{},prefixes:map[string]bool{},positions:[]} }
+fn value(type string, writable bool) Value { return Value{root:view(type,writable),fields:map[string]View{},prefixes:map[string]map[string]bool{},prefix:"",readonly_fields:false,positions:[]} }
 fn key(module string, node int) string { return module+":"+str(node) }
 fn get(pool ast.Pool, id ast.NodeId) ast.Node { return unwrap(ast.get(pool,id)) }
 fn target(refs map[string]string, module string, n ast.Node) string { return unwrap_or(refs[key(module,n.id.index)],"") }
@@ -121,18 +121,30 @@ fn child_type(type string) string {
     if len(l)==1 { return l[0] }
     return rules.element(type)
 }
-# A conservative topology index: every actual descendant marks its ancestors.
-# Removed descendants may leave true entries, which only cause an extra scan.
-fn note_prefix(prefixes mut map[string]bool, path string) {
+# Sparse topology index: each proper prefix maps to its descendant field keys.
+# Deleted keys may remain in the index; select() checks the live field table.
+# Index tables are immutable after publication and detach together with fields.
+fn note_prefix(prefixes mut map[string]map[string]bool, path string) {
     let parts=strings.split(path,"#@")
     var prefix=""
     let end=len(parts)-1
     for i in 1..end { prefix+="#@"+parts[i]
-        prefixes[prefix]=true }
+        if !has(prefixes,prefix) { prefixes[prefix]=map[string]bool{} }
+        var descendants=unwrap(prefixes[prefix])
+        descendants[path]=true }
 }
-fn prefix_index(fields map[string]View) map[string]bool {
-    var out=map[string]bool{}
-    for path, unused in fields { note_prefix(out,path) }
+# Type buckets share the immutable topology. Entries may become stale after
+# replacement; alias lookup always checks the live field and its actual type.
+fn note_type(prefixes mut map[string]map[string]bool, path string, type string) {
+    let bucket="@type:"+type
+    if !has(prefixes,bucket) { prefixes[bucket]=map[string]bool{} }
+    var paths=unwrap(prefixes[bucket])
+    paths[path]=true
+}
+fn prefix_index(fields map[string]View) map[string]map[string]bool {
+    var out=map[string]map[string]bool{"@types":map[string]bool{}}
+    for path, fact in fields { note_prefix(out,path)
+        note_type(out,path,fact.type_name) }
     return out
 }
 fn field_shape(members map[string]map[string]string, base View, level int) map[string]View {
@@ -183,7 +195,9 @@ fn seeded(s mut State, type string, writable bool, owner string) Value {
     out.root.origins[owner+"|"]=!writable
     out.fields=field_defaults(s,out.root,0)
     if !has(s.shape_prefixes,type) { s.shape_prefixes[type]=prefix_index(out.fields) }
-    out.prefixes=clone(unwrap(s.shape_prefixes[type]))
+    # Shape topology is immutable. Every later descendant edit detaches the
+    # value in editable()/merge(); literal construction starts with fresh maps.
+    out.prefixes=unwrap(s.shape_prefixes[type])
     return out
 }
 fn copy_view(input View) View { var out=input
@@ -193,12 +207,38 @@ fn copy_view(input View) View { var out=input
         out.record_copy=true }
     return out
 }
+# Projection tables and their index are immutable views. The prefix is relative
+# to that shared table; readonly_fields preserves inherited restrictions even
+# after a record root is copied. Editing first detaches a logical member table.
+fn materialized(input Value) Value {
+    if input.prefix=="" && !input.readonly_fields { return input }
+    var out=input
+    out.fields=map[string]View{}
+    if input.prefix=="" {
+        for path, fact in input.fields { var next=fact
+            if input.readonly_fields { next.writable=false
+                next.readonly_children=true }
+            out.fields[path]=next }
+    } else if has(input.prefixes,input.prefix) {
+        for path, unused in unwrap(input.prefixes[input.prefix]) { if has(input.fields,path) {
+            var next=unwrap(input.fields[path])
+            if input.readonly_fields { next.writable=false
+                next.readonly_children=true }
+            out.fields[unwrap(strings.slice(path,len(input.prefix),len(path)))]=next } }
+    }
+    out.prefixes=prefix_index(out.fields)
+    out.prefix=""
+    out.readonly_fields=false
+    return out
+}
 fn copied(input Value) Value { var out=input
     out.root=copy_view(input.root)
-    # Metadata is immutable. Rebuild only views whose logical copy flags change;
-    # ordinary container metadata and origin maps remain shared snapshots.
-    if record(input.root.type_name) { out.fields=map[string]View{}
-        for path, item in input.fields { var next=item
+    if record(input.root.type_name) { let logical=materialized(input)
+        out.fields=map[string]View{}
+        out.prefixes=logical.prefixes
+        out.prefix=""
+        out.readonly_fields=false
+        for path, item in logical.fields { var next=item
             if !input.root.writable { next.writable=false
                 next.readonly_children=true }
             out.fields[path]=copy_view(next) } }
@@ -215,16 +255,25 @@ fn merge_view(a View, b View) View { var out=clone(a)
 # unwrap_or evaluates both arguments. Construct fallback projections only for
 # missing fields, rather than once for every field in a complete shape.
 fn field_fact(input Value, path string, type string) View {
-    if has(input.fields,path) { return unwrap(input.fields[path]) }
+    let full=input.prefix+path
+    if has(input.fields,full) { var fact=unwrap(input.fields[full])
+        if input.readonly_fields { fact.writable=false
+            fact.readonly_children=true }
+        return fact }
     return projected(input.root,path,type)
 }
-fn merge(a Value, b Value) Value { var out=clone(a)
+fn merge(a Value, b Value) Value { let left=materialized(a)
+    let right=materialized(b)
+    var out=clone(left)
+    if !has(out.prefixes,"@types") { out.prefixes=prefix_index(out.fields) }
     out.root=merge_view(a.root,b.root)
-    for path, item in b.fields {
-        let previous=field_fact(a,path,item.type_name)
-        if !has(a.fields,path) || !same_view(previous,item) { out.fields[path]=merge_view(previous,item)
-            note_prefix(out.prefixes,path) } }
-    for path, item in a.fields { if !has(b.fields,path) { out.fields[path]=merge_view(item,projected(b.root,path,item.type_name)) } }
+    for path, item in right.fields {
+        let previous=field_fact(left,path,item.type_name)
+        if !has(left.fields,path) || !same_view(previous,item) { let combined=merge_view(previous,item)
+            out.fields[path]=combined
+            note_prefix(out.prefixes,path)
+            note_type(out.prefixes,path,combined.type_name) } }
+    for path, item in left.fields { if !has(right.fields,path) { out.fields[path]=merge_view(item,projected(b.root,path,item.type_name)) } }
     for i in 0..len(out.positions) { if i<len(b.positions) { out.positions[i]=merge(out.positions[i],b.positions[i]) } }
     return out
 }
@@ -236,40 +285,38 @@ fn select_root(input Value, path string, type string) Value { var out=value(type
     return out
 }
 fn select(input Value, path string, type string) Value { var out=select_root(input,path,type)
-    if !has(input.prefixes,path) { return out }
-    for name, item in input.fields { if strings.starts_with(name,path+"#@") { var next=item
-        if !input.root.writable { next.writable=false
-            next.readonly_children=true }
-        let suffix=rules.cut(name,len(path),len(name))
-        out.fields[suffix]=next
-        note_prefix(out.prefixes,suffix) } }
+    let prefix=input.prefix+path
+    if !has(input.prefixes,prefix) { return out }
+    out.fields=input.fields
+    out.prefixes=input.prefixes
+    out.prefix=prefix
+    out.readonly_fields=input.readonly_fields || !input.root.writable
     return out
 }
-# Cache only fields selected from a direct immutable binding snapshot. The
-# caller captures its version before evaluating index expressions, which may
-# rebind that name. Monotonic versions keep restored branches and aliases apart.
+# Projection is now constant work and retains immutable tables. A second map
+# of whole projections would duplicate bookkeeping and keep redundant snapshots.
 fn select_cached(e mut Environment, input Value, path string, type string, owner string, version int) Value {
-    if owner=="" { return select(input,path,type) }
-    let identity=owner+"|"+str(version)+"|"+path+"|"+type+"|"+str(input.root.writable)
-    if has(e.selected,identity) { var out=value(type,false)
-        out.root=field_fact(input,path,type)
-        out.root.type_name=type
-        if !input.root.writable { out.root.writable=false
-            out.root.readonly_children=true }
-        out.fields=unwrap(e.selected[identity])
-        out.prefixes=unwrap(e.selected_prefixes[identity])
-        return out }
-    let out=select(input,path,type)
-    e.selected[identity]=out.fields
-    e.selected_prefixes[identity]=out.prefixes
-    return out
+    return select(input,path,type)
 }
-fn attach(out mut Value, path string, input Value, copy bool) { var item=clone(input)
+# Values share immutable member/origin metadata. Changes to a field table go
+# through editable()/merge() before publication; attaching or changing the root
+# flags/type does not mutate the input table. Keep explicit deep clones for
+# writable edits, branch isolation and unknown-call conservative rewrites.
+fn attach(out mut Value, path string, input Value, copy bool) {
+    if out.prefix!="" || out.readonly_fields { let logical=materialized(out)
+        out.fields=clone(logical.fields)
+        out.prefixes=clone(logical.prefixes)
+        out.prefix=""
+        out.readonly_fields=false }
+    if !has(out.prefixes,"@types") { out.prefixes=prefix_index(out.fields) }
+    var item=materialized(input)
     if copy { item=copied(item) }
     if depth(path)<=8 { out.fields[path]=item.root
-        note_prefix(out.prefixes,path) }
+        note_prefix(out.prefixes,path)
+        note_type(out.prefixes,path,item.root.type_name) }
     for name, fact in item.fields { if depth(path+name)<=8 { out.fields[path+name]=fact
-            note_prefix(out.prefixes,path+name) }
+            note_prefix(out.prefixes,path+name)
+            note_type(out.prefixes,path+name,fact.type_name) }
         else { var parent=unwrap_or(out.fields[path],item.root)
             if !parent.deep_owned { parent.readonly_children=true }
             out.fields[path]=parent } }
@@ -288,7 +335,7 @@ fn value_path(values map[string]Value, path string) Value { let owner=path_owner
     let root=unwrap_or(values[owner],value("",false))
     let suffix=path_tail(path)
     if suffix=="" { return root }
-    return select(root,suffix,unwrap_or(root.fields[suffix],view("",false)).type_name)
+    return select(root,suffix,field_fact(root,suffix,"").type_name)
 }
 fn lookup_path(values map[string]Value, path string) Value { return value_path(values,path) }
 fn same_storage(a View, b View) bool { for origin, unused in a.origins { if has(b.origins,origin) { return true } }
@@ -312,15 +359,17 @@ fn end_updates(e mut Environment) {
     e.updating=false
     if len(e.edited_fields)>0 || len(e.edited_prefixes)>0 {
         e.edited_fields=map[string]map[string]View{}
-        e.edited_prefixes=map[string]map[string]bool{} }
+        e.edited_prefixes=map[string]map[string]map[string]bool{} }
 }
 fn editable(e mut Environment, input Value, owner string) Value {
     var out=input
     if e.updating && has(e.edited_fields,owner) {
         out.fields=unwrap(e.edited_fields[owner])
         out.prefixes=unwrap(e.edited_prefixes[owner])
+        out.prefix=""
+        out.readonly_fields=false
         return out }
-    out=clone(input)
+    out=clone(materialized(input))
     if e.updating { e.edited_fields[owner]=out.fields
         e.edited_prefixes[owner]=out.prefixes }
     return out
@@ -329,7 +378,7 @@ fn put(e mut Environment, path string, input Value, weak bool, copy bool) {
     let owner=path_owner(path)
     let suffix=path_tail(path)
     if owner=="" || !has(e.values,owner) { return }
-    var root=unwrap(e.values[owner])
+    var root=materialized(unwrap(e.values[owner]))
     if depth(suffix)>8 {
         root=editable(e,root,owner)
         let parts=strings.split(suffix,"#@")
@@ -340,11 +389,12 @@ fn put(e mut Environment, path string, input Value, weak bool, copy bool) {
         ancestor.deep_owned=false
         root.fields[prefix]=ancestor
         note_prefix(root.prefixes,prefix)
+        note_type(root.prefixes,prefix,ancestor.type_name)
         store(e,owner,root)
         if has(e.visible,owner) { e.writes[owner+"|"+prefix]=true }
         return
     }
-    if suffix=="" { var next=clone(input)
+    if suffix=="" { var next=input
         if copy { next=copied(input) }
         next.root.type_name=root.root.type_name
         if !rules.shared(next.root.type_name) { next.root.writable=root.root.writable }
@@ -354,10 +404,10 @@ fn put(e mut Environment, path string, input Value, weak bool, copy bool) {
         delete(e.edited_prefixes,owner)
         store(e,owner,next)
         if has(e.visible,owner) { e.writes[owner+"|"]=true
-            for name, unused in next.fields { e.writes[owner+"|"+name]=true } }
+            for name, unused in materialized(next).fields { e.writes[owner+"|"+name]=true } }
         return }
-    var item=clone(input)
-    if copy { item=copied(input) }
+    var item=materialized(input)
+    if copy { item=copied(item) }
     if weak { item=merge(lookup_path(e.values,path),item) }
     if !has(root.prefixes,suffix) && len(item.fields)==0 && len(item.positions)==0 && has(root.fields,suffix) && same_view(unwrap(root.fields[suffix]),item.root) {
         # The write still happened and its requirement was checked. Only the
@@ -368,9 +418,10 @@ fn put(e mut Environment, path string, input Value, weak bool, copy bool) {
     if has(root.fields,suffix) && rules.shared(unwrap(root.fields[suffix]).type_name) { keep_aliases=false }
     root=editable(e,root,owner)
     if has(root.prefixes,suffix) {
-        # Map iteration already snapshots entries. No deep clone is needed to
-        # delete descendants, and a leaf overwrite needs no table scan at all.
-        for name, unused in root.fields { if name==suffix || strings.starts_with(name,suffix+"#@") { delete(root.fields,name) } } }
+        # The existing index enumerates exactly the candidate descendants in
+        # the original order. Missing stale keys are harmless; do not scan siblings.
+        delete(root.fields,suffix)
+        for name, unused in unwrap(root.prefixes[suffix]) { delete(root.fields,name) } }
     attach(root,suffix,item,false)
     commit(e,owner,root,keep_aliases)
     if has(e.visible,owner) { e.writes[owner+"|"+suffix]=true
@@ -380,16 +431,32 @@ fn put(e mut Environment, path string, input Value, weak bool, copy bool) {
 # cannot change when a child-free nonshared field changes; other stores and
 # branch restoration clear the cache before the next query.
 fn storage_aliases(e mut Environment, container View) Result<[]string> {
+    var empty []string=[]
+    if len(container.origins)==0 { return ok(empty) }
     var identity=""
     if rules.shared(container.type_name) { let encoded=json.encode(container.origins)
         if is_ok(encoded) { identity=str(len(container.type_name))+":"+container.type_name+":"+unwrap(encoded)
             if has(e.alias_cache,identity) { return ok(unwrap(e.alias_cache[identity])) } } }
-    var empty []string=[]
     var found=list.from_slice(empty)
     for owner, root in e.values {
         if same_storage(root.root,container) { list.append(found,owner)? }
-        for prefix, field in root.fields {
-            if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+prefix)? } } }
+        if has(root.prefixes,"@types") {
+            let bucket="@type:"+container.type_name
+            if has(root.prefixes,bucket) { for full, unused in unwrap(root.prefixes[bucket]) {
+                if root.prefix!="" && !strings.starts_with(full,root.prefix+"#@") { continue }
+                if has(root.fields,full) { let field=unwrap(root.fields[full])
+                    if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+rules.cut(full,len(root.prefix),len(full)))? } } } }
+        } else {
+            # Accept older private metadata without type buckets using exact scans.
+            if root.prefix=="" { for prefix, field in root.fields {
+                if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+prefix)? } }
+            } else if has(root.prefixes,root.prefix) {
+                for full, unused in unwrap(root.prefixes[root.prefix]) { if has(root.fields,full) {
+                    let field=unwrap(root.fields[full])
+                    if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+rules.cut(full,len(root.prefix),len(full)))? } } }
+            }
+        }
+    }
     let result=list.snapshot(found)
     if identity!="" { e.alias_cache[identity]=result }
     return ok(result)
@@ -416,13 +483,13 @@ fn bind(declarations map[string]string, e mut Environment, n ast.Node, input Val
     store(e,name,next)
 }
 fn instantiate_view(caller string, module string, node int, source View, actual map[string]Value) View {
-    var out=clone(source)
+    var out=source
     out.origins=map[string]bool{}
     for origin, readonly in source.origins { let parts=split_origin(origin)
         if has(actual,parts[0]) { let root=unwrap(actual[parts[0]])
             var fact=root.root
             if parts[1]!="" { fact=field_fact(root,parts[1],source.type_name)
-                if !has(root.fields,parts[1]) && !root.root.deep_owned { fact.writable=false
+                if !has(root.fields,root.prefix+parts[1]) && !root.root.deep_owned { fact.writable=false
                     fact.readonly_children=true }
                 if !root.root.writable { fact.writable=false
                     fact.readonly_children=true } }
@@ -439,9 +506,13 @@ fn instantiate_view(caller string, module string, node int, source View, actual 
     }
     return out
 }
-fn instantiate(caller string, module string, node int, source Value, actual map[string]Value) Value { var out=clone(source)
-    out.root=instantiate_view(caller,module,node,source.root,actual)
-    for path, fact in source.fields { out.fields[path]=instantiate_view(caller,module,node,fact,actual) }
+# Root and every field are rebuilt below; avoid deep-cloning their discarded
+# source values first. Positions still clone their slice before indexed updates.
+# Keep prefixes independent too, so the result retains the old clone isolation.
+fn instantiate(caller string, module string, node int, source Value, actual map[string]Value) Value {
+    let logical=materialized(source)
+    var out=Value{root:instantiate_view(caller,module,node,source.root,actual),fields:map[string]View{},prefixes:clone(logical.prefixes),prefix:"",readonly_fields:false,positions:clone(source.positions)}
+    for path, fact in logical.fields { out.fields[path]=instantiate_view(caller,module,node,fact,actual) }
     for i in 0..len(source.positions) { out.positions[i]=instantiate(caller,module,node,source.positions[i],actual) }
     return out
 }
@@ -545,7 +616,8 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
             item.root.type_name=unwrap_or(s.fields[out.root.type_name+"#"+name],item.root.type_name)
             attach(out,"#@"+name,item,true) }
         return ok(out) }
-    if k=="Array" || k=="MapLiteral" || k=="Pack" { var out=seeded(s,"",true,e.function+"!"+key(e.unit.id,n.id.index))
+    if k=="Array" || k=="MapLiteral" || k=="Pack" { var out=value("",true)
+        out.root.origins[e.function+"!"+key(e.unit.id,n.id.index)+"|"]=false
         var seen=false
         var element=value("",false)
         var empty []Value=[]
@@ -584,7 +656,7 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         if k!="Member" { path="#@[]"
             typ=child_type(base.root.type_name)
             for i in 1..len(n.children) { if ast.kind(get(e.unit.tree.pool,n.children[i]).payload)!="Omitted" { expression(s,e,n.children[i])? } } }
-        if k=="Slice" { var out=clone(base)
+        if k=="Slice" { var out=base
             out.root.type_name="[]"+typ
             return ok(out) }
         var out=select_cached(e,base,path,typ,owner,version)
@@ -612,7 +684,7 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
             return ok(seeded(s,unwrap(s.variants[variant]),true,e.function+"!"+key(e.unit.id,n.id.index))) }
         if strings.starts_with(name,"fn:") { let fn_name=rules.cut(name,3,len(name))
             if has(s.functions,fn_name) { return invoke(s,e,n,unwrap(s.functions[fn_name]),args) } }
-        if len(args)>0 && alg.contains(["builtin:core:ok","builtin:core:err","builtin:core:unwrap","builtin:core:unwrap_err","builtin:core:unwrap_or","builtin:core:clone"],name) { var out=clone(args[0])
+        if len(args)>0 && alg.contains(["builtin:core:ok","builtin:core:err","builtin:core:unwrap","builtin:core:unwrap_err","builtin:core:unwrap_or","builtin:core:clone"],name) { var out=args[0]
             if name=="builtin:core:clone" { out=seeded(s,args[0].root.type_name,true,e.function+"!"+key(e.unit.id,n.id.index))
                 out.root.deep_owned=true
                 out.fields=field_defaults(s,out.root,0)
@@ -636,7 +708,7 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         let std=signatures.signature(name)
         if is_some(std) { let sig=unwrap(std)
             if sig.mutates && len(args)>0 { require_write(s,e,n,args[0].root)? }
-            if name=="builtin:std.list#from_slice" && len(args)>0 { var out=clone(args[0])
+            if name=="builtin:std.list#from_slice" && len(args)>0 { var out=args[0]
                 out.root.type_name="List<"+child_type(args[0].root.type_name)+">"
                 out.root.writable=true
                 out.root.origins=seeded(s,out.root.type_name,true,e.function+"!"+key(e.unit.id,n.id.index)).root.origins
@@ -650,7 +722,7 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         if name=="builtin:core:delete" && len(args)>0 { require_write(s,e,n,args[0].root)? }
         if strings.starts_with(name,"builtin:core:") { return ok(value("",false)) }
         # An unresolved callback may alter shared members. Keep them conservative.
-        for owner, input in e.values { if rules.shared(input.root.type_name) || record(input.root.type_name) { var out=clone(input)
+        for owner, input in e.values { if rules.shared(input.root.type_name) || record(input.root.type_name) { var out=clone(materialized(input))
             out.root.readonly_children=true
             out.root.deep_owned=false
             for path, fact in out.fields { var next=fact
@@ -765,7 +837,7 @@ fn statement(s mut State, e mut Environment, id ast.NodeId) Result<void> { let n
             changed=false
             for owner, input in previous { if has(e.values,owner) && unwrap_or(previous_versions[owner],0)!=unwrap_or(e.versions[owner],0) && !same_value(input,unwrap(e.values[owner])) { changed=true } }
         }
-        if changed { for owner, input in e.values { var conservative=clone(input)
+        if changed { for owner, input in e.values { var conservative=clone(materialized(input))
             conservative.root.readonly_children=true
             conservative.root.deep_owned=false
             for path, fact in conservative.fields { var item=fact
@@ -802,7 +874,7 @@ fn statement(s mut State, e mut Environment, id ast.NodeId) Result<void> { let n
 fn environment(unit modules.Unit, function string, values map[string]Value) Environment {
     var visible=map[string]bool{}
     for owner, unused in values { visible[owner]=true }
-    return Environment{unit:unit,function:function,values:snapshot(values),versions:map[string]int{},next_version:0,selected:map[string]map[string]View{},selected_prefixes:map[string]map[string]bool{},updating:false,edited_fields:map[string]map[string]View{},edited_prefixes:map[string]map[string]bool{},alias_cache:map[string][]string{},returned:value("",false),saw_return:false,writes:map[string]bool{},visible:visible,required:map[string]bool{},exits:[],deferred:false}
+    return Environment{unit:unit,function:function,values:snapshot(values),versions:map[string]int{},next_version:0,updating:false,edited_fields:map[string]map[string]View{},edited_prefixes:map[string]map[string]map[string]bool{},alias_cache:map[string][]string{},returned:value("",false),saw_return:false,writes:map[string]bool{},visible:visible,required:map[string]bool{},exits:[],deferred:false}
 }
 fn summary(e Environment) Summary { var writes=map[string]View{}
     for origin, unused in e.writes { let parts=split_origin(origin)
@@ -831,7 +903,16 @@ fn same_fields(a map[string]View, b map[string]View) bool {
     return true
 }
 fn same_value(a Value, b Value) bool {
-    if !same_view(a.root,b.root) || !same_fields(a.fields,b.fields) || len(a.positions)!=len(b.positions) { return false }
+    if !same_view(a.root,b.root) || len(a.positions)!=len(b.positions) { return false }
+    var equal=false
+    # Equality of the complete backing table and the same view is sufficient.
+    # Use the existing exact JSON/element comparison, never an identity/hash guess.
+    if a.prefix==b.prefix && a.readonly_fields==b.readonly_fields {
+        equal=same_fields(a.fields,b.fields)
+        if !equal && a.prefix=="" && !a.readonly_fields { return false } }
+    if !equal { let left=materialized(a)
+        let right=materialized(b)
+        if !same_fields(left.fields,right.fields) { return false } }
     for i in 0..len(a.positions) { if !same_value(a.positions[i],b.positions[i]) { return false } }
     return true
 }
@@ -839,7 +920,7 @@ fn same_summary(a Summary, b Summary) bool {
     return a.unknown==b.unknown && a.saw_return==b.saw_return && same_value(a.returned,b.returned) && same_fields(a.writes,b.writes) && same_flags(a.required,b.required)
 }
 fn conservative_value(input Value) Value {
-    var out=clone(input)
+    var out=clone(materialized(input))
     out.root.writable=false
     out.root.readonly_children=true
     out.root.deep_owned=false
@@ -864,7 +945,7 @@ pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[str
         own[name]=typ
         members[owner]=own
     }
-    var s=State{units:map[string]modules.Unit{},refs:refs,declarations:declarations,fields:fields,members:members,shapes:map[string]map[string]View{},shape_prefixes:map[string]map[string]bool{},functions:functions,variants:variants,summaries:map[string]Summary{},dependents:map[string]map[string]bool{},dirty:map[string]bool{},facts:map[string]Fact{},global_symbols:map[string]bool{},errors:map[string]string{},probing:true,work:0,error:""}
+    var s=State{units:map[string]modules.Unit{},refs:refs,declarations:declarations,fields:fields,members:members,shapes:map[string]map[string]View{},shape_prefixes:map[string]map[string]map[string]bool{},functions:functions,variants:variants,summaries:map[string]Summary{},dependents:map[string]map[string]bool{},dirty:map[string]bool{},facts:map[string]Fact{},global_symbols:map[string]bool{},errors:map[string]string{},probing:true,work:0,error:""}
     for unit in list.snapshot(graph.units) { s.units[unit.id]=unit }
     var globals=map[string]Value{}
     for module in list.snapshot(graph.order) { var e=environment(unwrap(s.units[module]),"",globals)

@@ -1,0 +1,26 @@
+{
+  "source": "docs/自举性能排查与优化过程.md",
+  "archived_path": ".codex-sync/knowledge/bootstrap-performance/archive/2026-10-18-自举性能排查与优化过程-重排前原文.md",
+  "sha256": "0327526254b60fac1672c9aad0377c0cb6f707d55094e3ea2f23285b56750c83",
+  "bytes": 193795,
+  "lines": 1664,
+  "anchors": [
+    "bo00-bo01-phase-audit",
+    "bo02-enum-kernel",
+    "bo04-active-enum",
+    "bo03-parser-transfer",
+    "bo01-native-cpu-followup",
+    "bo01-native-cpu-closure",
+    "bo04-value-call-kernels",
+    "bo04-result-materialization",
+    "bo08-host-sema",
+    "bo08-hua-sema",
+    "bo09-vm-slots",
+    "bo10-gc-cost",
+    "bo10-flat-edges",
+    "bo10-address-index",
+    "bo10-completion",
+    "bo11-scale-admission"
+  ],
+  "meaning": "原字节归档；旧建议不是新授权，当前顺序以精简过程文档为准"
+}

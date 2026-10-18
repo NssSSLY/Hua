@@ -362,7 +362,7 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
 #endif
         auto data=managed<StructData>(); data->name=p->data->name;
         data->enumeration=p->data->enumeration;data->variant=p->data->variant;
-        for(const auto& [k,x]:p->data->fields) data->fields.emplace_hint(data->fields.end(),k,copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1,resource_alias));
+        data->fields=p->data->fields.transform([&](const Value& x){return copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1,resource_alias);});
         return Value(StructValue{data,true});
     }
     if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1,resource_alias));if(deep)r.writable=true;return Value(r);}
@@ -387,10 +387,10 @@ Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
     if(auto p=std::get_if<StructValue>(&v.data)) {
         require_complete_enum(*p->data);
         if(p->data.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
-        for(auto& [_,x]:p->data->fields) {
+        p->data->fields.each_value([&](Value& x){
             if(!p->writable)x=read_only(std::move(x));
             x=copy_value(std::move(x),false,depth+1,resource_alias);
-        }
+        });
         p->writable=true;return std::move(v);
     }
     if(auto p=std::get_if<ResultValue>(&v.data)) {

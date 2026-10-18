@@ -16,7 +16,7 @@ Value snapshot(const Value& input,const std::function<Callable(const Callable&,u
     }
     if(file)runtime_error({},"task snapshots cannot contain File","E4104");
     if(auto f=std::get_if<Callable>(&input.data))return Value(copy(*f,depth+1));
-    if(auto p=std::get_if<StructValue>(&input.data)){require_complete_enum(*p->data);auto d=managed<StructData>();d->name=p->data->name;d->enumeration=p->data->enumeration;d->variant=p->data->variant;for(const auto& [k,v]:p->data->fields)d->fields.emplace(k,snapshot(v,copy,depth+1));return Value(StructValue{d,false});}
+    if(auto p=std::get_if<StructValue>(&input.data)){require_complete_enum(*p->data);auto d=managed<StructData>();d->name=p->data->name;d->enumeration=p->data->enumeration;d->variant=p->data->variant;d->fields=p->data->fields.transform([&](const Value& v){return snapshot(v,copy,depth+1);});return Value(StructValue{d,false});}
     if(auto p=std::get_if<MapValue>(&input.data)){auto d=managed<MapData>();d->key_type=p->data->key_type;d->item_type=p->data->item_type;for(const auto& [k,v]:p->data->entries)d->entries.emplace(k,snapshot(v,copy,depth+1));return Value(MapValue{d,false});}
     if(auto p=std::get_if<ListValue>(&input.data)){auto d=managed<ListData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(ListValue{d,false});}
     if(auto p=std::get_if<ResultValue>(&input.data)){auto r=*p;if(p->payload)r.payload=managed<Value>(snapshot(*p->payload,copy,depth+1));r.writable=false;return Value(r);}
@@ -101,7 +101,7 @@ Routine<Value> VirtualMachine::launch(const Callable& callable,const std::vector
     validate_callable(callable,site.span);auto type=task_result_type(callable);
     if(batch.empty()&&element.empty()&&type.starts_with("Task<")&&!declared_name(*callable.function).starts_with("$async$")){auto depth=frames_.size(),base=stack_.size();co_await call(callable,args,site);co_await dispatch(depth);if(stack_.size()!=base+1)runtime_error(site.span,"invalid task wrapper result","E6001");co_return pop(site.span);}
     auto heap=std::make_shared<ManagedHeap>(context_->execution_limits.collection_interval);HeapScope heap_scope(*heap);auto globals=std::make_shared<Environment>();
-    for(auto env=global_;env;env=env->parent)for(const auto& [name,b]:env->bindings)if(!globals->bindings.contains(name))globals->bindings.emplace(name,Binding{isolated(b.value),b.type,false});
+    for(auto env=global_;env;env=env->parent)env->each([&](const auto& name,const auto& b){if(!globals->bindings.contains(name))globals->bindings.emplace(name,Binding{isolated(b.value),b.type,false});});
     auto fn=std::get<Callable>(isolated(Value(callable)).data);std::vector<Value> values;for(const auto& arg:args)values.push_back(isolated(arg));auto* model=&model_;auto* bytecode=bytecode_;
     co_return context_->tasks->start_resumable([model,bytecode,globals,fn,values=std::move(values),site,batch=std::move(batch),element,contextual](RuntimeContext& context,std::ostream& output)mutable->Routine<Value>{
         VirtualMachine child(*model,output,&context);ExecutionScope execution(child.context_,output);context.type_relations=&model->relations;child.bytecode_=bytecode;child.global_=globals;

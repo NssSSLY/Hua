@@ -27,6 +27,7 @@ private:
     };
     using Location = ValueLocation;
     std::unordered_map<std::string,std::shared_ptr<const EnumLayout>> enum_layouts_;
+    std::unordered_map<std::string,std::shared_ptr<const RecordLayout>> record_layouts_;
     const SemanticModel& model_;
     std::ostream& output_;
     RuntimeContext* context_{};

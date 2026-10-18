@@ -4,6 +4,8 @@ from pathlib import Path
 import atexit,base64,ctypes,hashlib,importlib.util,json,re,shutil,struct,subprocess,sys,time,zlib
 hua,probe,oracle,driver,repo,build=map(lambda p:Path(p).resolve(),sys.argv[1:7])
 native_only='--native-only' in sys.argv[7:]
+cases_only='--cases-only' in sys.argv[7:]
+assert not cases_only or native_only,'--cases-only requires --native-only'
 # Release the temporary thread request on exit; keep long gates out of Modern Standby.
 if sys.platform=='win32':
     previous=ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
@@ -96,7 +98,8 @@ for old in json.loads((repo/'tests/data/a02_legacy_arrays.json').read_text(encod
         p=work/(old['name']+'-'+label+'.huab');p.write_bytes(corrupt)
         result=call([hua,'run',p],1);require('[E6002]' in result.stderr and not result.stdout,'malformed type archive')
 # All current compiler units still pass the native front-end. This is not a self-build budget gate.
-for source in sorted((repo/'selfhost').glob('*.hua')):call([hua,'check',source])
-summary={'cases':len(rows),'checks':checks,'analyzer_cases':sum(x['analyzer'] for x in rows),'Hua_encoded_cases':sum(x['Hua_encoding'] for x in rows),'compiler_units':len(list((repo/'selfhost').glob('*.hua'))),'seconds':round(time.monotonic()-started,3),'rows':rows}
+compiler_units=[] if cases_only else sorted((repo/'selfhost').glob('*.hua'))
+for source in compiler_units:call([hua,'check',source])
+summary={'cases':len(rows),'checks':checks,'analyzer_cases':sum(x['analyzer'] for x in rows),'Hua_encoded_cases':sum(x['Hua_encoding'] for x in rows),'compiler_units':len(compiler_units),'scope':'VM type cases and legacy HUAB only' if cases_only else 'full selected type contract','seconds':round(time.monotonic()-started,3),'rows':rows}
 (work/('native-results.json' if native_only else 'results.json')).write_text(json.dumps(summary,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
 print(json.dumps({k:v for k,v in summary.items() if k!='rows'},ensure_ascii=False),flush=True)

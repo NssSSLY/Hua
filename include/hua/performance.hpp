@@ -14,6 +14,9 @@ namespace hua::performance {
 #define HUA_PERFORMANCE_FIELDS(X) \
  X(vm_steps) X(user_calls) X(builtin_calls) X(parameter_scan_nodes) X(function_metadata_builds) X(field_scan_nodes) \
  X(type_name_calls) X(type_argument_parses) X(field_lookups) \
+ X(vm_code_layouts) X(vm_access_index_bytes) X(vm_access_caches) X(vm_scopes) X(vm_scope_slot_bytes) \
+ X(vm_slot_hits) X(vm_slot_misses) X(vm_slot_guards) X(vm_slot_writes) X(vm_lookup_hashes) \
+ X(vm_field_hits) X(vm_field_misses) X(vm_field_type_hits) X(vm_multi_type_hits) \
  X(environment_lookups) X(environment_probes) X(copy_const) X(copy_move) \
  X(copy_struct) X(copy_struct_fields) X(deep_clone_roots) X(deep_clone_nodes) X(copy_result) X(copy_fixed_array) X(enforce_type_calls) \
  X(result_constraints) X(result_ok_constraints) X(result_err_constraints) X(result_void_constraints) \

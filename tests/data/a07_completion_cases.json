@@ -703,5 +703,65 @@
     "name": "typed_nested_readonly_parameter",
     "expected": "E3003",
     "source": "fn inspect(a [1][2]u8){var view=a[0][:]\nview[0]=9}\n"
+  },
+  {
+    "name": "nested_projection_siblings_writable",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn main(){let ro=[1]\nvar b=Outer{left:Inner{xs:ro},right:Inner{xs:[2]}}\nvar old=b.left.xs\nb.right.xs[0]=9\nprint(b.right.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "nested_projection_siblings_readonly",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn main(){let ro=[1]\nvar b=Outer{left:Inner{xs:ro},right:Inner{xs:[2]}}\nvar old=b.right.xs\nb.left.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_projection_callee_refresh",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn refresh(b mut Outer){b.left.xs=[3]}\nfn main(){let ro=Outer{left:Inner{xs:[1]},right:Inner{xs:[2]}}\nvar b=ro\nvar before=b.left.xs\nrefresh(b)\nb.left.xs[0]=9\nprint(b.left.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "nested_projection_callee_downgrade",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn poison(b mut Outer,ro []int){b.left.xs=ro}\nfn main(){var b=Outer{left:Inner{xs:[1]},right:Inner{xs:[2]}}\nvar before=b.left.xs\npoison(b,[3])\nb.left.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_projection_branch_restore",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn choose(flag bool)Outer{var b=Outer{left:Inner{xs:[1]},right:Inner{xs:[2]}}\nlet ro=[3]\nif flag{b.left.xs=ro\nvar a=b.left.xs}else{b.left.xs=[4]\nvar a=b.left.xs}\nreturn b}\nfn main(){var b=choose(true)\nb.left.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_projection_index_rebind_old",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nvar items=[Outer{left:Inner{xs:[1]},right:Inner{xs:[2]}}]\nfn reset()int{let ro=Outer{left:Inner{xs:[3]},right:Inner{xs:[4]}}\nitems=[ro]\nreturn 0}\nfn main(){var old=items[reset()].left\nold.xs[0]=9\nprint(old.xs)}\n",
+    "expected": "ok",
+    "stdout": "[9]\n"
+  },
+  {
+    "name": "nested_projection_index_rebind_new",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nvar items=[Outer{left:Inner{xs:[1]},right:Inner{xs:[2]}}]\nfn reset()int{let ro=Outer{left:Inner{xs:[3]},right:Inner{xs:[4]}}\nitems=[ro]\nreturn 0}\nfn main(){var old=items[reset()].left\nold.xs[0]=9\nvar fresh=items[0].left\nfresh.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_projection_deferred_snapshot",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn refresh(b mut Outer){b.left.xs=[3]}\nfn make(ro Outer)Outer{var b=ro\ndefer refresh(b)\nreturn b}\nfn main(){var b=make(Outer{left:Inner{xs:[1]},right:Inner{xs:[2]}})\nb.left.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_projection_result_wrapper",
+    "source": "struct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn make(ro []int)Result<Outer>{return ok(Outer{left:Inner{xs:ro},right:Inner{xs:[2]}})}\nfn main(){var b=unwrap(make([1]))\nb.left.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_projection_list_wrapper",
+    "source": "import std.list as list\nstruct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn main(){let ro=[1]\nvar xs=list.from_slice([Outer{left:Inner{xs:ro},right:Inner{xs:[2]}}])\nvar b=unwrap(list.get(xs,0))\nb.left.xs[0]=9}\n",
+    "expected": "E3003",
+    "stdout": ""
   }
 ]

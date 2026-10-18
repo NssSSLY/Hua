@@ -289,53 +289,107 @@ fn block(s mut State, id int, scoped bool) Result<void> {
         s.depth -= 1 }
     return ok()
 }
+# Large enum dispatch uses existing comparisons/jumps; no new HUAB opcode.
+struct MatchRoute { arm int
+    tag string }
+fn match_arm(s mut State, arm lower.Node, binding string, value Scalar, enumeration bool, any bool) Result<int> {
+    simple(s,arm,9,"")?
+    s.depth+=1
+    if !any && enumeration { let bindings=get(s.core,arm.children[1])
+        for j in 0..len(bindings.children) { let p=get(s.core,bindings.children[j])
+            if p.text=="_" { continue }
+            simple(s,p,1,binding)?
+            simple(s,p,20,"$"+value.text+"#"+str(j)+"#"+p.type_name)?
+            emit(s,p,2,p.text,p.type_name,0,false,nil_scalar(),[],[false])? } }
+    block(s,arm.children[2],false)?
+    simple(s,arm,10,"")?
+    s.depth-=1
+    return simple(s,arm,6,"")
+}
+fn match_tree(s mut State, binding string, routes []MatchRoute, first int, last int, entries mut map[int]int, misses mut List<int>) Result<void> {
+    let mid=first+(last-first)//2
+    let route=routes[mid]
+    let arm=get(s.core,route.arm)
+    let pattern=get(s.core,arm.children[0])
+    simple(s,pattern,1,binding)?
+    constant(s,pattern,Scalar{kind:4,text:route.tag})?
+    if last-first==1 { simple(s,pattern,5,"==")?
+        entries[route.arm]=simple(s,pattern,8,"")?
+        list.append(misses,simple(s,pattern,6,"")?)?
+        return ok() }
+    simple(s,pattern,5,"<")?
+    let right=simple(s,pattern,7,"")?
+    match_tree(s,binding,routes,first,mid,entries,misses)?
+    patch(s,right,list.len(s.code.instructions))?
+    match_tree(s,binding,routes,mid,last,entries,misses)?
+    return ok()
+}
 fn match_statement(s mut State, n lower.Node) Result<void> {
     simple(s,n,9,"")?
-    s.depth += 1
-    let binding = "$match$"+str(list.len(s.code.instructions))
+    s.depth+=1
+    let binding="$match$"+str(list.len(s.code.instructions))
     expression(s,n.children[0])?
     emit(s,n,2,binding,n.type_name,0,false,nil_scalar(),[],[false])?
-    var empty []int = []
-    var done = list.from_slice(empty)
-    var enumeration = false
-    for st in list.snapshot(s.image.structures) { if st.name==n.type_name { enumeration = st.enumeration } }
-    for i in 1..len(n.children) {
-        let arm = get(s.core,n.children[i])
-        let pattern = get(s.core,arm.children[0])
-        let any = pattern.kind=="Name" && pattern.text=="_"
-        var next = 0
-        var value = nil_scalar()
-        if !any {
-            simple(s,pattern,1,binding)?
-            if enumeration { simple(s,pattern,20,"$case")?
-                let parts = strings.split(pattern.text,".")
-                value = Scalar{kind:4,text:parts[len(parts)-1]} }
-            else { value = scalar(s.core,pattern.id)? }
-            constant(s,pattern,value)?
-            simple(s,pattern,5,"==")?
-            next = simple(s,pattern,7,"")?
-        }
-        simple(s,arm,9,"")?
-        s.depth += 1
-        if !any && enumeration {
-            let bindings = get(s.core,arm.children[1])
-            for j in 0..len(bindings.children) {
-                let p = get(s.core,bindings.children[j])
-                if p.text=="_" { continue }
-                simple(s,p,1,binding)?
-                simple(s,p,20,"$"+value.text+"#"+str(j)+"#"+p.type_name)?
-                emit(s,p,2,p.text,p.type_name,0,false,nil_scalar(),[],[false])?
-            }
-        }
-        block(s,arm.children[2],false)?
-        simple(s,arm,10,"")?
-        s.depth -= 1
-        list.append(done,simple(s,arm,6,"")?)?
-        if !any { patch(s,next,list.len(s.code.instructions))? }
+    var empty []int=[]
+    var done=list.from_slice(empty)
+    var enumeration=false
+    for st in list.snapshot(s.image.structures) { if st.name==n.type_name { enumeration=st.enumeration } }
+    var count=len(n.children)-1
+    let final=get(s.core,get(s.core,n.children[count]).children[0])
+    if final.kind=="Name" && final.text=="_" { count-=1 }
+    if enumeration && count>=8 {
+        let tag=binding+"$case"
+        simple(s,n,1,binding)?
+        simple(s,n,20,"$case")?
+        emit(s,n,2,tag,"string",0,false,nil_scalar(),[],[false])?
+        var entries=map[int]int{}
+        var misses=list.from_slice(empty)
+        var sorted=map[string]int{}
+        for i in 1..count+1 { let arm=get(s.core,n.children[i])
+            let pattern=get(s.core,arm.children[0])
+            let parts=strings.split(pattern.text,".")
+            let value=Scalar{kind:4,text:parts[len(parts)-1]}
+            if i<=2 { simple(s,pattern,1,tag)?
+                constant(s,pattern,value)?
+                simple(s,pattern,5,"==")?
+                entries[arm.id]=simple(s,pattern,8,"")? }
+            else { sorted[value.text]=arm.id } }
+        var routes_empty []MatchRoute=[]
+        var routes=list.from_slice(routes_empty)
+        for label, arm in sorted { list.append(routes,MatchRoute{arm:arm,tag:label})? }
+        let ordered=list.snapshot(routes)
+        match_tree(s,tag,ordered,0,len(ordered),entries,misses)?
+        for i in 1..len(n.children) { let arm=get(s.core,n.children[i])
+            let pattern=get(s.core,arm.children[0])
+            let any=pattern.kind=="Name" && pattern.text=="_"
+            var value=nil_scalar()
+            if any { for pc in list.snapshot(misses) { patch(s,pc,list.len(s.code.instructions))? }
+                list.clear(misses) }
+            else { patch(s,unwrap(entries[arm.id]),list.len(s.code.instructions))?
+                let parts=strings.split(pattern.text,".")
+                value=Scalar{kind:4,text:parts[len(parts)-1]} }
+            list.append(done,match_arm(s,arm,binding,value,true,any)?)? }
+        for pc in list.snapshot(misses) { patch(s,pc,list.len(s.code.instructions))? }
+    } else {
+        for i in 1..len(n.children) { let arm=get(s.core,n.children[i])
+            let pattern=get(s.core,arm.children[0])
+            let any=pattern.kind=="Name" && pattern.text=="_"
+            var next=0
+            var value=nil_scalar()
+            if !any { simple(s,pattern,1,binding)?
+                if enumeration { simple(s,pattern,20,"$case")?
+                    let parts=strings.split(pattern.text,".")
+                    value=Scalar{kind:4,text:parts[len(parts)-1]} }
+                else { value=scalar(s.core,pattern.id)? }
+                constant(s,pattern,value)?
+                simple(s,pattern,5,"==")?
+                next=simple(s,pattern,7,"")? }
+            list.append(done,match_arm(s,arm,binding,value,enumeration,any)?)?
+            if !any { patch(s,next,list.len(s.code.instructions))? } }
     }
     for pc in list.snapshot(done) { patch(s,pc,list.len(s.code.instructions))? }
     simple(s,n,10,"")?
-    s.depth -= 1
+    s.depth-=1
     return ok()
 }
 fn statement(s mut State, id int) Result<void> {

@@ -16,7 +16,8 @@ void heap_edges(const ErrorData&,const HeapVisitor&);
 void heap_edges(const IOFailureData&,const HeapVisitor&);
 void heap_edges(const std::vector<Value>&,const HeapVisitor&);
 class ManagedHeap {
-    struct Record {std::weak_ptr<const void> pointer;std::function<void(const void*,const HeapVisitor&)> edges;std::function<void(const void*)> clear;};
+    // track() installs only capture-free callbacks; records keep weak references.
+    struct Record {std::weak_ptr<const void> pointer;void (*edges)(const void*,const HeapVisitor&){};void (*clear)(const void*){};};
     std::vector<Record> records_;
     std::size_t allocated_{},collected_{},collection_interval_{256};
 public:

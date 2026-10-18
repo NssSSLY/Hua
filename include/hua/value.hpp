@@ -65,6 +65,91 @@ struct Value {
     Value() = default;
     template<class T> explicit Value(T value) : data(std::move(value)) {}
 };
+// Names and field positions are immutable and own their storage independently of a model.
+struct RecordLayout {
+    const std::vector<std::string> names;
+    explicit RecordLayout(std::vector<std::string> fields);
+    static constexpr std::size_t missing=static_cast<std::size_t>(-1);
+    std::size_t index(const std::string& name) const;
+};
+std::shared_ptr<const RecordLayout> record_layout(const Node& declaration);
+class RecordFields {
+    using Tree=std::map<std::string,Value>;
+    struct Flat {
+        std::shared_ptr<const RecordLayout> layout;
+        std::vector<std::optional<Value>> slots;
+        std::size_t count{};
+        explicit Flat(std::shared_ptr<const RecordLayout> shape):layout(std::move(shape)),slots(layout->names.size()){}
+    };
+    std::variant<Tree,Flat> storage_;
+public:
+    template<bool Const> class Iterator {
+        using Owner=std::conditional_t<Const,const RecordFields,RecordFields>;
+        using TreeIterator=std::conditional_t<Const,Tree::const_iterator,Tree::iterator>;
+        Owner* owner_{};std::size_t position_{};TreeIterator tree_{};
+        friend class RecordFields;
+        Iterator(Owner* owner,std::size_t position):owner_(owner),position_(position){skip();}
+        Iterator(Owner* owner,TreeIterator tree):owner_(owner),tree_(tree){}
+        void skip(){if(auto* f=std::get_if<Flat>(&owner_->storage_))while(position_<f->slots.size()&&!f->slots[position_])++position_;}
+    public:
+        using reference=std::pair<const std::string&,std::conditional_t<Const,const Value&,Value&>>;
+        struct Arrow {reference entry;const reference* operator->()const{return &entry;}};
+        Iterator()=default;
+        reference operator*()const{
+            if(auto* f=std::get_if<Flat>(&owner_->storage_))return {f->layout->names[position_],*f->slots[position_]};
+            return {tree_->first,tree_->second};
+        }
+        Arrow operator->()const{return {**this};}
+        Iterator& operator++(){if(std::holds_alternative<Flat>(owner_->storage_)){++position_;skip();}else ++tree_;return *this;}
+        bool operator==(const Iterator& other)const{
+            if(owner_!=other.owner_)return false;
+            if(!owner_)return true;
+            return std::holds_alternative<Flat>(owner_->storage_)?position_==other.position_:tree_==other.tree_;
+        }
+    };
+    using iterator=Iterator<false>;using const_iterator=Iterator<true>;
+    RecordFields()=default;
+    explicit RecordFields(std::shared_ptr<const RecordLayout> layout):storage_(std::in_place_type<Flat>,std::move(layout)){}
+    const RecordLayout* layout()const{auto* f=std::get_if<Flat>(&storage_);return f?f->layout.get():nullptr;}
+    std::shared_ptr<const RecordLayout> retain_layout()const{auto* f=std::get_if<Flat>(&storage_);return f?f->layout:nullptr;}
+    RecordFields empty_copy()const{auto* f=std::get_if<Flat>(&storage_);return f?RecordFields(f->layout):RecordFields();}
+    Value* value_at(std::size_t index){auto* f=std::get_if<Flat>(&storage_);return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
+    const Value* value_at(std::size_t index)const{auto* f=std::get_if<Flat>(&storage_);return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
+    iterator begin(){if(std::holds_alternative<Flat>(storage_))return iterator(this,std::size_t{0});return iterator(this,std::get<Tree>(storage_).begin());}
+    iterator end(){if(auto* f=std::get_if<Flat>(&storage_))return iterator(this,f->slots.size());return iterator(this,std::get<Tree>(storage_).end());}
+    const_iterator begin()const{if(std::holds_alternative<Flat>(storage_))return const_iterator(this,std::size_t{0});return const_iterator(this,std::get<Tree>(storage_).begin());}
+    const_iterator end()const{if(auto* f=std::get_if<Flat>(&storage_))return const_iterator(this,f->slots.size());return const_iterator(this,std::get<Tree>(storage_).end());}
+    iterator find(const std::string& name);
+    const_iterator find(const std::string& name)const;
+    bool contains(const std::string& name)const{return find(name)!=end();}
+    Value& at(const std::string& name);
+    const Value& at(const std::string& name)const;
+    std::pair<iterator,bool> emplace(const std::string& name,Value value);
+    iterator emplace_hint(iterator,const std::string& name,Value value){if(auto* tree=std::get_if<Tree>(&storage_))return iterator(this,tree->emplace_hint(tree->end(),name,std::move(value)));return emplace(name,std::move(value)).first;}
+    iterator erase(iterator where);
+    std::size_t size()const{auto* f=std::get_if<Flat>(&storage_);return f?f->count:std::get<Tree>(storage_).size();}
+    bool empty()const{return size()==0;}
+    void clear(){if(auto* f=std::get_if<Flat>(&storage_)){f->slots.clear();f->count=0;}else std::get<Tree>(storage_).clear();}
+    template<class F> RecordFields transform(F&& copy)const{
+        auto result=empty_copy();
+        if(auto* f=std::get_if<Flat>(&storage_)){
+            auto& target=std::get<Flat>(result.storage_);
+            for(std::size_t i=0;i<f->slots.size();++i)if(f->slots[i]){target.slots[i].emplace(copy(*f->slots[i]));++target.count;}
+        }else{
+            auto& target=std::get<Tree>(result.storage_);
+            for(const auto& [name,value]:std::get<Tree>(storage_))target.emplace_hint(target.end(),name,copy(value));
+        }
+        return result;
+    }
+    template<class F> void each_value(F&& visit){
+        if(auto* f=std::get_if<Flat>(&storage_)){for(auto& slot:f->slots)if(slot)visit(*slot);}
+        else for(auto& [_,value]:std::get<Tree>(storage_))visit(value);
+    }
+    template<class F> void each_value(F&& visit)const{
+        if(auto* f=std::get_if<Flat>(&storage_)){for(const auto& slot:f->slots)if(slot)visit(*slot);}
+        else for(const auto& [_,value]:std::get<Tree>(storage_))visit(value);
+    }
+};
 struct ErrorData {
     std::string domain, code, message, origin, native_domain;
     std::optional<std::int64_t> native_code;
@@ -75,7 +160,7 @@ struct ErrorData {
 struct IOFailureData {ErrorValue error;std::optional<std::int64_t> transferred;std::optional<BytesValue> partial;};
 struct ListData { std::string element_type; std::vector<Value> values; };
 struct StructData {
-    std::string name; std::map<std::string, Value> fields;
+    std::string name; RecordFields fields;
     std::shared_ptr<const EnumLayout> enumeration;
     const EnumVariant* variant{}; // Owned by enumeration, never points into an AST/model.
 };

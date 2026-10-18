@@ -1,6 +1,6 @@
 """Canonical array-size spelling, rejection before effects, and old HUAB reading."""
 from pathlib import Path
-import base64, hashlib, json, re, sys, time
+import base64, hashlib, json, re, shutil, sys, time
 from process_guard import run
 hua, oracle, repo, build = map(lambda x: Path(x).resolve(), sys.argv[1:5])
 work = build/'performance-audit'/'grammar'; work.mkdir(parents=True, exist_ok=True)
@@ -25,16 +25,29 @@ for fixture in json.loads((repo/'tests/data/a02_legacy_arrays.json').read_text(e
     result=run([str(hua),'run',str(image)],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0 and result.stdout==fixture['stdout'],result
     checks+=2
+# Prepare the checker once; each rejected spelling still gets its own full report.
+# Keep its sources in the test worktree, never overwrite the repository compiler.
+checker_sources=work/'checker-sources';checker_sources.mkdir(exist_ok=True)
+units=sorted((repo/'selfhost').glob('*.hua'))
+for unit in units:shutil.copy2(unit,checker_sources/unit.name)
+checker=work/'checker.huab'
+print('array syntax: preparing one checker',flush=True)
+result=run([str(hua),'build',str(checker_sources/'types_main.hua'),'-o',str(checker)],capture_output=True,text=True,encoding='utf-8')
+assert result.returncode==0,result.stderr;checks+=1
 # The Hua parser rejects the same token and position as the independent host parser.
 for case in [c for c in cases if c['name'].startswith('array_syntax_')]:
     source=work/(case['name']+'.hua')
     ref=run([str(oracle),'--types',str(source)],capture_output=True,text=True,encoding='utf-8');expected=json.loads(ref.stdout)
-    result=run([str(hua),'run',str(repo/'selfhost/types_main.hua'),'--execution-profile','compiler','--',str(source)],capture_output=True,text=True,encoding='utf-8')
+    result=run([str(hua),'run',str(checker),'--execution-profile','compiler','--',str(source)],capture_output=True,text=True,encoding='utf-8')
     report=json.loads(result.stdout)
     assert result.returncode==0 and report['status']=='error',report
     assert report['error'].startswith(f"E2006@{expected['line']}:{expected['column']}"),(report,expected)
     checks+=2
-for unit in sorted((repo/'selfhost').glob('*.hua')):
-    result=run([str(hua),'check',str(unit)],capture_output=True,text=True,encoding='utf-8');assert result.returncode==0,(unit,result.stderr);checks+=1
-report={'status':'passed','rejected_cases':len(rows),'checks':checks,'seconds':round(time.monotonic()-started,3),'rows':rows}
+# A single import graph checks every current unit, with all original module bodies
+# and imports. Rebuilding the same dependency closure for each entry is redundant.
+aggregate=checker_sources/'array_syntax_all_units.hua'
+aggregate.write_text(''.join('import '+unit.stem+' as unit'+str(i)+'\n' for i,unit in enumerate(units)),encoding='utf-8',newline='\n')
+print('array syntax: checking all '+str(len(units))+' units in one graph',flush=True)
+result=run([str(hua),'check',str(aggregate)],capture_output=True,text=True,encoding='utf-8');assert result.returncode==0,result.stderr;checks+=1
+report={'status':'passed','rejected_cases':len(rows),'checks':checks,'seconds':round(time.monotonic()-started,3),'rows':rows,'checker_builds':1,'selfhost_checked_units':len(units),'selfhost_sources':{unit.name:hashlib.sha256(unit.read_bytes()).hexdigest() for unit in units}}
 (work/'results.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps(report,ensure_ascii=False))

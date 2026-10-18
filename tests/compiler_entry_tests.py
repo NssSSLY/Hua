@@ -1,9 +1,24 @@
 """Public Hua compiler entry: no Python report parsing is needed for failure status."""
 from pathlib import Path
-import hashlib, json, os, shutil, sys, time
+import argparse, hashlib, json, os, shutil, sys, time, subprocess
 from process_guard import run, TestProcessTimeout
-exe,root,build=(Path(x).resolve() for x in sys.argv[1:])
-os.environ['HUA_TEST_SUITE_TIMEOUT_SECONDS']='240'
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('exe',type=Path);parser.add_argument('root',type=Path);parser.add_argument('build',type=Path)
+parser.add_argument('--resume-ledger',type=Path,help='Explicit audited successful command ledger; never reuses a timeout')
+options=parser.parse_args();exe,root,build=(p.resolve() for p in (options.exe,options.root,options.build))
+# Each source engine deliberately prepares the compiler on every invocation.
+# Current 14-module preparation costs about17s: 17 preparations exceed240s.
+os.environ['HUA_TEST_SUITE_TIMEOUT_SECONDS']='600'
+resume=json.loads(options.resume_ledger.read_text(encoding='utf-8')) if options.resume_ledger else None
+if resume:
+    assert hashlib.sha256(exe.read_bytes()).hexdigest()==resume['runtime_sha256']
+    text=Path(__file__).read_text(encoding='utf-8')
+    body=text[text.index("try:\n    entry=root/'selfhost/compiler_main.hua'"):text.rindex('\nexcept TestProcessTimeout:')+1]
+    assert hashlib.sha256(body.encode()).hexdigest()==resume['test_body_sha256'],'test inputs/expectations changed'
+
+    for name,sha in {**resume['source_hashes'],**resume['artifacts']}.items():
+        assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==sha,name
+reused=0
 work=build/'a06-compiler';work.mkdir(exist_ok=True)
 commands=[];checks=0;started=time.monotonic()
 def require(ok,detail):
@@ -11,8 +26,14 @@ def require(ok,detail):
     checks+=1
     if not ok:raise AssertionError(detail)
 def call(args,code=0,output=None,error=None):
-    p=run([str(exe),*map(str,args)],capture_output=True,encoding='utf-8',errors='strict',timeout=30)
-    commands.append({'args':list(map(str,args)),'code':p.returncode,'stdout':p.stdout,'stderr':p.stderr})
+    global reused
+    names=list(map(str,args))
+    if resume and len(commands)<len(resume['commands']):
+        previous=resume['commands'][len(commands)];assert names==previous['args'],(names,previous['args'])
+        p=subprocess.CompletedProcess([str(exe),*names],previous['code'],previous['stdout'],previous['stderr']);reused+=1
+    else:p=run([str(exe),*names],capture_output=True,encoding='utf-8',errors='strict',timeout=30)
+    commands.append({'args':names,'code':p.returncode,'stdout':p.stdout,'stderr':p.stderr,'reused':bool(resume and len(commands)<len(resume['commands']))})
+    (work/'commands-progress.json').write_text(json.dumps(commands,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
     require(p.returncode==code,commands[-1])
     if output is not None:require(p.stdout==output,commands[-1])
     if error:require(error in p.stderr,commands[-1])
@@ -20,7 +41,7 @@ def call(args,code=0,output=None,error=None):
     return p
 def save(status):
     result={'status':status,'checks':checks,'commands':len(commands),'seconds':round(time.monotonic()-started,3),
-            'hua_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'engines':['AST','VM','source-free compiler HUAB']}
+            'hua_sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'engines':['AST','VM','source-free compiler HUAB'],'reused_commands':reused}
     (work/'results.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
     (work/'commands.json').write_text(json.dumps(commands,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(result),flush=True)
@@ -67,4 +88,5 @@ except TestProcessTimeout:
     save('timeout');raise
 except BaseException:
     save('failed');raise
+if resume:require(reused==len(resume['commands']),'resume ledger was not fully consumed')
 save('passed')

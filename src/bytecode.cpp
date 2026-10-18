@@ -52,11 +52,32 @@ void BytecodeCompiler::statement(const Node& n) {
     case N::ExpressionStatement:expression(*n.children[0]);emit(Op::Pop,n);break;
     case N::Match:{
         emit(Op::EnterScope,n);++depth_;auto name="$match$"+std::to_string(code_->instructions.size());expression(*n.children[0]);auto binding=emit(Op::Bind,n,name);code_->instructions[binding].type=model_->types.at(&n);code_->instructions[binding].contextual={false};std::vector<std::size_t> done;auto structure=model_->structures.find(model_->types.at(&n));bool enumeration=structure!=model_->structures.end()&&structure->second->text.find(" enum")!=std::string::npos;
-        for(std::size_t i=1;i<n.children.size();++i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];bool any=pattern.kind==N::Name&&display_type(pattern.text)=="_";std::size_t next=0;
-            if(!any){emit(Op::Load,pattern,name);if(enumeration)emit(Op::Member,pattern,"$case");code_->instructions[emit(Op::Constant,pattern)].constant=model_->constants.at(&pattern);emit(Op::Binary,pattern,"==");next=emit(Op::JumpFalse,pattern);}
+        auto any_arm=[&](std::size_t i){const auto& p=*n.children[i]->children[0];return p.kind==N::Name&&display_type(p.text)=="_";};
+        auto body=[&](std::size_t i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];bool any=any_arm(i);
             emit(Op::EnterScope,arm);++depth_;
             if(!any&&enumeration)for(std::size_t j=0;j<arm.children[1]->children.size();++j){const auto& p=*arm.children[1]->children[j];if(p.text=="_")continue;emit(Op::Load,p,name);emit(Op::Member,p,"$"+show(model_->constants.at(&pattern))+"#"+std::to_string(j)+"#"+model_->types.at(&p));auto op=emit(Op::Bind,p,p.text);code_->instructions[op].type=model_->types.at(&p);code_->instructions[op].contextual={false};}
-            block(*arm.children[2],false);emit(Op::LeaveScope,arm);--depth_;done.push_back(emit(Op::Jump,arm));if(!any)patch(next,code_->instructions.size());
+            block(*arm.children[2],false);emit(Op::LeaveScope,arm);--depth_;done.push_back(emit(Op::Jump,arm));
+        };
+        auto count=n.children.size()-1;if(count&&any_arm(count))--count;
+        if(enumeration&&count>=8){
+            // Evaluate once. Keep the first two source arms cheap, then partition
+            // disjoint string tags. Bodies retain source order and lexical scopes.
+            auto tag=name+"$case";emit(Op::Load,n,name);emit(Op::Member,n,"$case");auto op=emit(Op::Bind,n,tag);code_->instructions[op].type="string";code_->instructions[op].contextual={false};
+            std::vector<std::size_t> entries(n.children.size()),miss;std::vector<std::pair<std::string,std::size_t>> sorted;
+            for(std::size_t i=1;i<=count;++i){const auto& pattern=*n.children[i]->children[0];if(i<=2){emit(Op::Load,pattern,tag);code_->instructions[emit(Op::Constant,pattern)].constant=model_->constants.at(&pattern);emit(Op::Binary,pattern,"==");entries[i]=emit(Op::JumpTrue,pattern);}else sorted.emplace_back(show(model_->constants.at(&pattern)),i);}
+            std::sort(sorted.begin(),sorted.end());
+            auto tree=[&](auto&& self,std::size_t first,std::size_t last)->void{
+                if(last-first==1){auto i=sorted[first].second;const auto& pattern=*n.children[i]->children[0];emit(Op::Load,pattern,tag);code_->instructions[emit(Op::Constant,pattern)].constant=model_->constants.at(&pattern);emit(Op::Binary,pattern,"==");entries[i]=emit(Op::JumpTrue,pattern);miss.push_back(emit(Op::Jump,pattern));return;}
+                auto mid=first+(last-first)/2;const auto& pattern=*n.children[sorted[mid].second]->children[0];emit(Op::Load,pattern,tag);code_->instructions[emit(Op::Constant,pattern)].constant=model_->constants.at(&pattern);emit(Op::Binary,pattern,"<");auto right=emit(Op::JumpFalse,pattern);self(self,first,mid);patch(right,code_->instructions.size());self(self,mid,last);
+            };
+            tree(tree,0,sorted.size());
+            for(std::size_t i=1;i<n.children.size();++i){if(any_arm(i)){for(auto pc:miss)patch(pc,code_->instructions.size());miss.clear();}else patch(entries[i],code_->instructions.size());body(i);}
+            for(auto pc:miss)patch(pc,code_->instructions.size());
+        }else{
+            for(std::size_t i=1;i<n.children.size();++i){const auto& pattern=*n.children[i]->children[0];bool any=any_arm(i);std::size_t next=0;
+                if(!any){emit(Op::Load,pattern,name);if(enumeration)emit(Op::Member,pattern,"$case");code_->instructions[emit(Op::Constant,pattern)].constant=model_->constants.at(&pattern);emit(Op::Binary,pattern,"==");next=emit(Op::JumpFalse,pattern);}
+                body(i);if(!any)patch(next,code_->instructions.size());
+            }
         }
         for(auto jump:done)patch(jump,code_->instructions.size());emit(Op::LeaveScope,n);--depth_;break;
     }

@@ -7,6 +7,12 @@
 #include <fstream>
 #include <streambuf>
 #include <ctime>
+#ifdef HUA_MEMORY_AUDIT
+#include "support/native_allocations.hpp"
+#endif
+#ifdef HUA_GC_COST_PROFILE
+#include "hua/gc_cost.hpp"
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -22,6 +28,9 @@ std::uint64_t cpu_ns(){
  return std::uint64_t(double(std::clock())/CLOCKS_PER_SEC*1e9);
 }
 class PhaseBuffer final:public std::streambuf{
+#ifdef HUA_MEMORY_AUDIT
+ hua::ManagedHeap* heap_{};
+#endif
  std::streambuf* destination_;std::ofstream& trace_;hua::performance::Counters& counters_;Clock::time_point start_;std::uint64_t cpu_start_;std::string line_;
  void line(){
   constexpr std::string_view prefix="@@hua.phase:";
@@ -45,11 +54,19 @@ class PhaseBuffer final:public std::streambuf{
 public:
  PhaseBuffer(std::streambuf* destination,std::ofstream& trace,hua::performance::Counters& counters):
   destination_(destination),trace_(trace),counters_(counters),start_(Clock::now()),cpu_start_(cpu_ns()){}
+#ifdef HUA_MEMORY_AUDIT
+ void set_heap(hua::ManagedHeap* heap){heap_=heap;}
+#endif
  void record(const std::string& event,const std::string& phase){
   auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-start_).count();
   auto cpu=cpu_ns()-cpu_start_;
   trace_<<"{\"event\":\""<<event<<"\",\"phase\":\""<<phase<<"\",\"ns\":"<<ns<<",\"cpu_ns\":"<<cpu<<",\"counters\":";
-  hua::performance::write(trace_,counters_);trace_<<"}\n";trace_.flush();
+  hua::performance::write(trace_,counters_);
+#ifdef HUA_MEMORY_AUDIT
+  auto memory=hua::native_allocation::snapshot();
+  trace_<<",\"native_memory\":{\"calls\":"<<memory.calls<<",\"requested\":"<<memory.requested<<",\"live\":"<<memory.live<<",\"peak\":"<<memory.peak<<"},\"managed_live\":"<<(heap_?heap_->live():0)<<",\"managed_allocated\":"<<(heap_?heap_->allocated():0);
+#endif
+  trace_<<"}\n";trace_.flush();
   if(!trace_)throw std::runtime_error("cannot write diagnostic phase trace");
  }
  void finish(){if(!line_.empty()){destination_->sputn(line_.data(),static_cast<std::streamsize>(line_.size()));line_.clear();}destination_->pubsync();}
@@ -57,6 +74,13 @@ public:
 }
 static int run(std::vector<std::string> args){
  std::string trace_path;
+#ifdef HUA_GC_COST_PROFILE
+ std::ofstream gc_trace;std::unique_ptr<hua::gc_cost::Sink> gc_sink;std::unique_ptr<hua::gc_cost::Scope> gc_scope;
+ if(args.size()>=2&&args[0]=="--gc-cost-trace"){
+  gc_trace.open(path(args[1]));if(!gc_trace)throw std::runtime_error("cannot open GC cost trace");
+  gc_sink=std::make_unique<hua::gc_cost::Sink>(gc_trace);gc_scope=std::make_unique<hua::gc_cost::Scope>(*gc_sink);args.erase(args.begin(),args.begin()+2);
+ }
+#endif
  if(!args.empty()&&args[0]=="--phase-events"){
   if(args.size()<4){std::cerr<<"usage: probe [--phase-events trace.jsonl] compiler.huab input output\n";return 2;}
   trace_path=args[1];args.erase(args.begin(),args.begin()+2);
@@ -69,7 +93,15 @@ static int run(std::vector<std::string> args){
  hua::performance::Counters counters;int code=0;
  std::ofstream trace;if(!trace_path.empty()){trace.open(path(trace_path));if(!trace){std::cerr<<"cannot open diagnostic phase trace\n";return 2;}}
  counters.struct_histogram_enabled=trace.is_open();
- PhaseBuffer buffer(std::cout.rdbuf(),trace,counters);std::ostream output(&buffer);
+#ifdef HUA_MEMORY_AUDIT
+ context.heap=std::make_shared<hua::ManagedHeap>(65536);
+ counters.struct_histogram_enabled=false; // Avoid histogram allocations in memory accounting.
+#endif
+ PhaseBuffer buffer(std::cout.rdbuf(),trace,counters);
+#ifdef HUA_MEMORY_AUDIT
+ buffer.set_heap(context.heap.get());
+#endif
+ std::ostream output(&buffer);
  output.exceptions(std::ios::badbit|std::ios::failbit);
  {
   hua::performance::Scope scope(counters);
@@ -77,9 +109,20 @@ static int run(std::vector<std::string> args){
   try{code=hua::report_entry(hua::VirtualMachine(image.model,trace.is_open()?output:std::cout,&context).run(image.bytecode),std::cerr);}
   catch(const hua::Diagnostic& error){std::cerr<<"error["<<error.code()<<"] "<<error.what()<<'\n';code=1;}
   if(trace.is_open()){buffer.finish();buffer.record("end","execution");}
+#ifdef HUA_MEMORY_AUDIT
+  if(trace.is_open())buffer.record("begin","heap-release");
+  // Execution has finished and the temporary VM was destroyed. No live program
+  // roots may remain. Releasing weak records is observed separately from GC.
+  if(context.heap->live()!=0)throw std::runtime_error("memory audit: managed roots survive completed session");
+  buffer.set_heap(nullptr);context.heap.reset();
+  if(trace.is_open())buffer.record("end","heap-release");
+#endif
  }
  auto finished=Clock::now();hua::performance::write(std::cerr,counters);std::cerr<<'\n';
  std::cerr<<"{\"load_seconds\":"<<std::chrono::duration<double>(loaded-start).count()<<",\"run_seconds\":"<<std::chrono::duration<double>(finished-loaded).count()<<",\"steps\":"<<context.execution_metrics->steps.load()<<",\"peak_calls\":"<<context.execution_metrics->peak_calls.load()<<"}\n";
+#ifdef HUA_GC_COST_PROFILE
+ if(gc_sink&&(gc_sink->failed||gc_sink->dropped))throw std::runtime_error("GC diagnostic trace failed or exceeded4096 records");
+#endif
  return code;
 }
 #ifdef _WIN32
