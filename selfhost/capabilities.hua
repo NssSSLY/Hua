@@ -950,7 +950,7 @@ fn summary(e Environment) Summary { var writes=map[string]View{}
         writes[origin]=fact }
     return Summary{returned:e.returned,unknown:false,saw_return:e.saw_return,writes:writes,required:e.required}
 }
-# Structural equality (language rule since 2026-10-23) compares every field and
+# Structural equality (language rule since 2026-10-22) compares every field and
 # map entry natively; it replaces the former loops and the JSON round-trip.
 fn same_flags(a map[string]bool, b map[string]bool) bool { return a==b }
 fn same_view(a View, b View) bool { return a==b }

@@ -1,11 +1,19 @@
 # Hua项目背景
 
-项目：C:/file/project/hua，NssSSLY/Hua，project_id=aab00f84-5a35-48b3-973b-4ccd29e3d31c。语言基础A→基础标准库B→编译器自举C。C01–C06、C07容器/样例已有；当前完整自身与代际未验收，子集通过不代表G1/G2/G3。
+更新2026-10-22。项目：NssSSLY/Hua（https://github.com/NssSSLY/Hua.git，分支main），project_id=aab00f84-5a35-48b3-973b-4ccd29e3d31c。本机路径C:/file/project/hua，其他电脑路径可不同。
 
-唯一进度docs/项目概览与进度.md；方案docs/设计决策与未决事项.md#bootstrap-recovery-plan；百科逐项确认。仅10份活文档（含VM与自举性能改造分析，2026-10-22确认）；history/用户确认不改；过程只.codex-sync/knowledge；构建tests/build或tests/build-*，原始日志tests/artifacts，诊断tests/tools。selfhost是正式模块。
+Hua是小核心、静态类型的脚本语言：C++20宿主（Lexer/Parser/语义检查/AST解释器/字节码VM/GC/HUAB产物）＋用Hua写的编译器（selfhost/，14模块，入口selfhost/archive_main.hua）。路线：语言基础A → 基础标准库B → 编译器自举C → 应用扩展与高级优化。
 
-当前默认源码直接自举已测：14模块288120字节/C0 e3f8a429/对应VM库3afa32e1，实际进入main一次，165.063秒先达500M步，C04未完无HUAB。C04占总步72.21%，301次后续函数体访问占C04工作81.70%，同一体每次工作扩大；完整失败后未重跑。时间含跟踪，不能与旧普通基准比较。初始化前工具错误独立记录。
+**现状**：Hua编译器已在Windows上编译自身并到达代际不动点（C2=C3逐字节相同），2026-10-22同时段约344秒（compiler配置600秒墙钟为主、步数上限1000亿）。当前工作是性能（拉开余量、接近成熟解释器）与总验收（C09覆盖/兼容、A12/B10、G1–G3），不是“能不能自举”。
 
-下一项先固定最贵目标的调用摘要/写效果变化，区分必要新事实与重复传播，再选传播单位改造。只省物化/相等或CPU、先重写VM，没有足以改变本次步骤失败的证据。实验候选宿主准备120秒是不同路径，不是当前默认阻塞。5亿步与600秒的规模合同如需更改应单列核定，不能宣称语言逻辑必然不能自举。
+**权威入口**（共10份活文档，见docs/文档目录.md）：
+- 进度/能力：docs/项目概览与进度.md
+- 任务/优先级/唯一下一方案：docs/设计决策与未决事项.md（design-backlog，固定HUA-D编号）
+- 性能分析、A–G路线与按步骤工作日志：docs/VM与自举性能改造分析.md（第0节日志，0.3节下一步，第9节路线）
+- 语言合同：docs/语言设计与类型规则.md；运行时：docs/运行时与扩展设计.md；接口：docs/标准库与内建接口.md
+- 构建/运行/在另一台电脑接续：docs/开发与运行指南.md#resume-on-another-computer
+- 逐项学习与确认：docs/语言百科与设计核对.md（固定条目ID，用户确认栏不改）
 
-默认源码/核心/history不改，数字候选仍非默认。小校准普通/观察64348步、回执/产物相同，reader/输出3通过；不代表自身成功。本轮只诊断/文档、未性能改码、未提交推送。最新过程knowledge/bootstrap-performance/runs/2026-10-20-direct-selfhost-trace.md及-evidence.json；原始tests/artifacts/selfhost-trace-20261020-run。
+**目录约定**：构建在tests/build（默认）或tests/build-*/（均不入Git）；原始日志tests/artifacts/（不入Git）；诊断工具tests/tools/；性能基准perf/（含reference/的CPython与Lua参照）；本机工具.tools/（不入Git：llvm-mingw-20260922-ucrt-x86_64、wasmtime-v49.0.2-x86_64-windows-c-api、可选lua-5.4.7）；完整过程记录.codex-sync/knowledge/（性能入口knowledge/bootstrap-performance/INDEX.md）。docs/history为原字节归档，不改写。
+
+**工作规则**（详见AGENTS.md）：项目文档用中文；一个任务只更新涉及的文档；区分规划/实现/已验证；提交与推送只在用户明确要求时做。
