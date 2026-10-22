@@ -932,6 +932,46 @@ fn conservative_value(input Value) Value {
     for i in 0..len(out.positions) { out.positions[i]=conservative_value(out.positions[i]) }
     return out
 }
+# Callee-first visit order for summary rounds: a DFS post-order over resolved
+# call edges, so a changed helper summary reaches its callers in the same round.
+# Recursive cycles still need later rounds. Ties keep function key order; the
+# explicit stack avoids Hua call depth on long call chains.
+fn callee_first(functions map[string]Function, dependents map[string]map[string]bool) Result<[]string> {
+    var empty []string=[]
+    var callees=map[string]map[string]bool{}
+    for callee, callers in dependents { if has(functions,callee) {
+        for caller, unused in callers { if has(functions,caller) {
+            var own=map[string]bool{}
+            if has(callees,caller) { own=clone(unwrap(callees[caller])) }
+            own[callee]=true
+            callees[caller]=own } } } }
+    var edges=map[string][]string{}
+    for caller, targets in callees { var items=list.from_slice(empty)
+        for callee, unused in targets { list.append(items,callee)? }
+        edges[caller]=list.snapshot(items) }
+    var none []int=[]
+    var order=list.from_slice(empty)
+    var names=list.from_slice(empty)
+    var cursor=list.from_slice(none)
+    var seen=map[string]bool{}
+    for root, unused in functions { if has(seen,root) { continue }
+        seen[root]=true
+        list.append(names,root)?
+        list.append(cursor,0)?
+        while list.len(names)>0 { let top=list.len(names)-1
+            let name=list.get(names,top)?
+            let i=list.get(cursor,top)?
+            let targets=unwrap_or(edges[name],empty)
+            if i<len(targets) { list.set(cursor,top,i+1)?
+                let child=targets[i]
+                if !has(seen,child) { seen[child]=true
+                    list.append(names,child)?
+                    list.append(cursor,0)? } }
+            else { list.pop(names)?
+                list.pop(cursor)?
+                list.append(order,name)? } } }
+    return ok(list.snapshot(order))
+}
 pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[string]string, fields map[string]string, functions map[string]Function, variants map[string]string) Result<Model> {
     # Index immutable declaration metadata once. Recursive projections visit only
     # the requested record's fields, never every unrelated field in the project.
@@ -955,11 +995,17 @@ pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[str
     for name, unused in functions { s.dirty[name]=true }
     var passes=0
     var changed=true
+    var first []string=[]
+    var keyed=list.from_slice(first)
+    for name, unused in functions { list.append(keyed,name)? }
+    var order=list.snapshot(keyed)
     while changed && passes<32 { passes+=1
         changed=false
-        # Preserve declaration order and the original 32 coarse rounds. Within
+        # Keep the original 32 coarse rounds. The first round uses function key
+        # order and records call edges; later rounds visit callees first. Within
         # each round, skip only a body whose consulted summaries cannot change.
-        for name, f in functions {
+        if passes>1 { order=callee_first(functions,s.dependents)? }
+        for name in order { let f=unwrap(functions[name])
             if !has(s.dirty,name) { continue }
             delete(s.dirty,name)
             delete(s.errors,name)

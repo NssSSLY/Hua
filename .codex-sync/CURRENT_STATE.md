@@ -1,5 +1,45 @@
 # 当前状态
 
+## 最新：S0测量与S1调度（2026-10-23）
+
+S0：14模块完整输入（旧C0 875fb8dd）能力阶段1100819785步、9轮、668.6秒；到HUA-D008的E3003停止共12.66亿步，降级/编码未计入。capabilities.hua的递归簇占主体，其余13个模块只增加约1.7亿。
+
+S1已在工作区实施（未提交）：selfhost/capabilities.hua新增callee_first（显式栈DFS后序），analyze第2轮起按被调用方优先访问，每轮重算顺序；第1轮、32轮上限、保守回退和最终验证循环不变。新C0 868b1095。同输入能力阶段-23.9%（9.32→7.10亿，9→7轮）；完整输入-22.1%（11.01→8.58亿），总计10.24亿、546秒；Parser/Modules/留出普通步骤-8%~-9%。
+
+正确性：C04 124例、实例化/元数据隔离、5个真实输入HUAB逐字节相同，均通过。有两处差异需用户接受：185输入报告中1例stats.work 333→309（内部工作计数）；capabilities.hua的17825条能力事实中35条（34 string、1 bool）来源减少（新为旧的子集），所有可写性标志和首错相同。用户已于2026-10-23接受S1的两处差异（stats.work 333→309；capabilities.hua中35条标量事实的来源减少，均为旧来源子集），S1作为基线保留；改动仍未提交。S2接口提案已写好待确认：[提案](knowledge/bootstrap-performance/designs/2026-10-23-s2-native-map-primitives.md)，推荐新建std.maps，提供equal/intersects/union_or（fill可选），首批只支持map[string]bool，HUAB格式9并同步selfhost/archive.hua；预计能力阶段再降约21%–28%。[详细依据](knowledge/bootstrap-performance/runs/2026-10-23-s0-s1.md)；本机build/bo11-s0-20261023、build/bo11-s1-20261023/summary.json。
+
+## 此前：能力分析性能路线方案待审（2026-10-23）
+
+按用户要求，HUA-D008假阳性只登记、暂不修复；已按9.3亿步的量级写出性能路线设计稿（[设计稿](knowledge/bootstrap-performance/designs/2026-10-23-capability-performance-route.md)）。关键新数据：递归簇5个函数体共808.6M步，其中第5–8轮重访只带来很少的新来源（statement 6→7只多150条），每次却要重算约7400万步；functions按字母序遍历，不是被调用方优先。集合/视图循环约占能力阶段的54%。建议先做S0（测14模块完整输入的量级）和S1（被调用方优先调度，目标语义中性，估计能力阶段约9.3亿→约6亿），再决定S2原生集合原语和S3抽象域界限。未实施，未提交。
+
+## 此前：BO-11超5亿诊断与新正确性缺陷（2026-10-23）
+
+候选A已回退，capabilities.hua恢复820b86a0，C0重建与875fb8dd相同。诊断工具新增显式`--beyond-production-diagnostic`，不带该标志时≥5亿仍被拒绝，生产预算不变。capabilities.hua单模块：总计1030005824步、381秒、515MiB；能力阶段931937087步（生产预算的1.86倍）、9轮，statement每次访问自第5轮起稳定在约74M步。
+
+新发现：Hua编译器以E3003@698:102拒绝capabilities.hua，原生check接受，所以这不是完整编译，后续降级/编码阶段的步骤未计入。最小反例r5：`fn f(arg R) R { var out=arg; out.root.w=true; return out }`以字面量调用，Hua报“callee writes through a read-only member/view”。单层写和本地数组元素副本正常。已登记为HUA-D008 P0，现有C04未覆盖。它独立阻塞C07；是否也放大了摘要来源只是推测，未证明。
+
+下一步：先修该假阳性并把r1/r2/r5加入C04，修后重测能力阶段步骤。再按约9.3亿步的量级选路线：原生集合运算（约54%步骤在集合/视图循环）、路径截断加集合上限的抽象域，或两者组合。完整自身与代际0次，未提交推送。[详细依据](knowledge/bootstrap-performance/runs/2026-10-23-bo11-beyond-diagnostic.md)；本机build/bo11-beyond-20261023/summary.json。
+
+## 此前：BO-11候选A实测（2026-10-23，已回退）
+
+候选A已在工作区实施（selfhost/capabilities.hua的instantiate_view，以及tests/capability_instantiation_tests.py的2处预期），未提交。正确性检查全部通过：实例化预言4例（旧源码按新预言失败，作负对照）、C04 124例/667检查、185输入新旧分析报告逐字节相同、元数据隔离3例/225断言、5个真实输入编译HUAB与改动前逐字节相同。
+
+性能目标失败：capabilities.hua普通运行仍在5亿步骤处E4099（159.02秒）。不同写来源6653→1239，但每次访问处理的视图×来源条目没有减少：statement最后一次访问842K→2.05M，逐次访问步骤到66.3M。merge_view/same_flags/note_prefix成本不变，调用方内部投影又重新长出字段路径。结论：成本驱动是宽值各字段视图在merge/instantiate中的重复来源处理，不是不同标签数。建议回退候选A（它降低别名精度却没有收益），再针对“视图×来源”条目设计修复。完整自身与代际0次，生产预算保持。[详细依据](knowledge/bootstrap-performance/runs/2026-10-23-bo11-origin-candidate-a.md)；本机build/bo11-origin-a-20261023/summary.json。
+
+## 此前：BO-11来源增长定位（2026-10-23）
+
+仅诊断，未修复。capabilities输入超出5亿步骤的原因已定位：statement↔expression↔expression_body递归簇的摘要写来源逐轮增长（927→3940→13619→29348），同时脏函数体在收敛（176→99→63→44→13）。statement第4轮6653个不同写来源中96.3%是instantiate_view按调用点重标的新分配来源：35个调用点各自复制被调用方约46个分配身份在8层字段路径上的展开，平均每点183条。来源嵌套恒为2、长度≤184，所以不是无界改写。Modules观察输出与普通相同。
+
+修复候选（均未实施）：A 在（调用点，分配身份）内去掉字段路径，6653→811，同一新结果内各字段会被视为可能别名；B 每调用点1个来源，6653→282，最粗；C 保留标签，只共享/驻留每调用点集合，语义不变，但收益较小、需要表示层工作。A/B改变别名精度，可能改变诊断或事实，需要用户选择后再做C04逻辑对照、隔离和事实差分。完整自身与代际0次，生产预算保持，未提交推送。[详细依据](knowledge/bootstrap-performance/runs/2026-10-23-bo11-origin-flow.md)；本机build/bo11-origin-flow-20261023/summary.json。
+
+## 此前：BO-11逐函数体能力工作量（2026-10-22）
+
+仅诊断，未修复、未放行。capabilities.hua单模块输入在当前C0（875fb8dd，HEAD 67faab1）下于499999999步诊断上限停止，能力阶段≥4.26亿步，因此完整自身当前不可能在5亿步内通过。普通函数体中位成本880–945步/AST节点，各输入相近；超线性来自同一函数体逐轮变贵。例如statement 1.9M→8.0M→34.6M→55.0M步，主要耗在instantiate_view/merge_view/same_flags，并随摘要视图来源条目1288→842K同步增长。别名、可编辑字段第3轮后持平，snapshot不增长。8层投影的38/56种动态类型宽度全部等于静态值（Environment 272、State 188，Modules最宽80）。
+
+同输入对照（编译器已变）：Modules 168951711→163043745步，能力阶段-9.19%；留出181524288→175362847步。5组观察与普通输出HUAB逐字节相同、步骤/峰值调用相同。HEAD 67faab1包含中断会话未写入交接的枚举分发、capabilities惰性投影/索引及生产VMCallObserver；lazy/indexed之后的全量CTest未查到记录。
+
+下一步：按调用点定位来源集合逐轮扩张的递归摘要，并核对其与dirty/same_summary的关系；证据成立后选一项窄修复，先保证C04/隔离/事实差分，再让capabilities.hua单模块在原5亿步内完成；之后换新留出建模。完整自身与代际0次，生产预算保持，未提交推送。[详细依据](knowledge/bootstrap-performance/runs/2026-10-22-bo11-body-work.md)；本机build/bo11-body-work-20261022/summary.json。下面旧快照不覆盖本次交接。
+
 ## 最新：BO-11重新放行判断（2026-10-18）
 
 本轮复评完成，仍不放行正式自身：新基线4个真实训练规模及新7模块留出各一次普通/观察，共10次缩小VM执行；完整自身0、代际0。留出普通47.998秒/181524288步，总步骤预测-7.59%，能力阶段步骤-27.57%、观察墙钟-54.26%，超25%；Modules观察CPU扰动-11.49%，普通阶段时间未校准。失败模型完整场景不能作为实测或可靠界；调用深度余量尚未证明。

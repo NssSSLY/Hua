@@ -26,10 +26,15 @@ struct Session {
  std::ofstream& output;ExecutionMetrics& metrics;Clock::time_point start{Clock::now()};std::uint64_t cpu_start{cpu_ns()};
  std::unordered_map<const Node*,Route> routes;std::vector<std::pair<const Node*,const char*>> stack;
  struct Work {std::uint64_t calls{},inclusive{},exclusive{};};
- struct Frame {const Node* fn{};std::string name,body,type;std::uint64_t begin{},children{};};
+ struct Frame {const Node* fn{};std::string name,body,type;std::uint64_t begin{},children{};std::map<std::string,std::uint64_t> volume0,exclusive0;};
+ struct Visit {std::uint64_t steps{},work{},summaries{};std::map<std::string,std::uint64_t> volume,exclusive;};
  std::map<std::string,Work> work,body_work;std::vector<Frame> work_stack;
  std::unordered_map<const Node*,std::string> helpers;std::map<std::string,std::uint64_t> volume;
  std::map<std::string,std::uint64_t> calls,bodies;const Node* analyze{};bool complete{};
+ std::map<std::string,std::vector<Visit>> visits;std::uint64_t entry_work{},entry_summaries{};
+ static bool additive(const std::string& k){return k.find("max")==std::string::npos&&k.find("last")==std::string::npos&&k!="actual-passes"&&k!="logical-work"&&k.rfind("intentional",0)!=0&&k.rfind("partial",0)!=0;}
+ std::map<std::string,std::uint64_t> exclusive_now()const{std::map<std::string,std::uint64_t> r;for(const auto& [n,w]:work)r[n]=w.exclusive;return r;}
+ static std::map<std::string,std::uint64_t> diff(const std::map<std::string,std::uint64_t>& now,const std::map<std::string,std::uint64_t>& before,bool all){std::map<std::string,std::uint64_t> r;for(const auto& [k,v]:now){if(!all&&!additive(k))continue;auto b=before.find(k);auto d=v-(b==before.end()?0:b->second);if(d)r[k]=d;}return r;}
  Session(const SemanticModel& model,ExecutionMetrics& m,std::ofstream& out):output(out),metrics(m){
   if(active)throw std::runtime_error("nested bootstrap phase session");
   std::map<std::pair<std::string,std::string>,const char*> names={{{"types.hua","analyze"},"types"},{{"types.hua","infer"},"return-infer"},{{"modules.hua","analyze_compiler"},"names"},{{"parser.hua","parse_compiler"},"parse"},{{"capabilities.hua","analyze"},"capabilities"},{{"lowering.hua","lower"},"lower"},{{"lowering.hua","verify"},"core-verify"},{{"bytecode.hua","compile"},"codegen"},{{"bytecode.hua","generate_verified"},"emit"},{{"bytecode_verify.hua","verify"},"bytecode-verify"},{{"archive.hua","encode"},"encode"},{{"archive.hua","publish"},"publish"}};
@@ -53,7 +58,7 @@ struct Session {
  void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){
   if(auto h=helpers.find(fn);h!=helpers.end()){
    Frame f{fn,h->second,"","",metrics.steps.load(),0};
-   if(f.name=="statement"&&caller==analyze)f.body=string(member(args.at(1),"function"));
+   if(f.name=="statement"&&caller==analyze){f.body=string(member(args.at(1),"function"));f.volume0=volume;f.exclusive0=exclusive_now();}
    if(f.name=="field_defaults"){f.type=string(member(args.at(1),"type_name"));volume["seed-root-origins"]+=size(member(args.at(1),"origins"));}
    if(f.name=="snapshot"){volume["snapshot-bindings"]+=size(args.at(0));for(const auto& [_,v]:std::get<MapValue>(args[0].data).data->entries)volume["snapshot-fields"]+=size(member(v,"fields"));}
    if(f.name=="editable")volume["editable-fields"]+=size(member(args.at(1),"fields"));
@@ -71,7 +76,8 @@ struct Session {
    auto f=std::move(work_stack.back());work_stack.pop_back();auto delta=metrics.steps.load()-f.begin;
    if(delta<f.children)throw std::runtime_error("invalid helper step partition");auto& w=work[f.name];++w.calls;w.inclusive+=delta;w.exclusive+=delta-f.children;
    if(!work_stack.empty())work_stack.back().children+=delta;
-   if(!f.body.empty()){auto& b=body_work[f.body];++b.calls;b.inclusive+=delta;b.exclusive+=delta-f.children;}
+   if(!f.body.empty()){auto& b=body_work[f.body];++b.calls;b.inclusive+=delta;b.exclusive+=delta-f.children;
+    visits[f.body].push_back(Visit{delta,entry_work,entry_summaries,diff(volume,f.volume0,false),diff(exclusive_now(),f.exclusive0,true)});}
    if(f.name=="field_defaults"&&result){auto count=size(*result);volume["default-instantiated-fields"]+=count;volume["shape-max:"+f.type]=std::max(volume["shape-max:"+f.type],count);for(const auto& [_,v]:std::get<MapValue>(result->data).data->entries)volume["default-instantiated-origins"]+=size(member(v,"origins"));}
    if(f.name=="analyze"&&result){const auto& model=*std::get<ResultValue>(result->data).payload;volume["actual-passes"]=std::get<std::int64_t>(member(model,"passes").data);volume["logical-work"]=std::get<std::int64_t>(member(model,"work").data);}
   }
@@ -80,7 +86,7 @@ struct Session {
  }
  void finish(){if(!work_stack.empty())throw std::runtime_error("unbalanced helper end");if(!stack.empty())throw std::runtime_error("incomplete VM phase execution");event("end","execution");complete=true;}
  void report(std::ostream& out){out<<"{\"schema\":\"hua.bootstrap.phase-summary.v1\",\"steps\":"<<metrics.steps.load()<<",\"peak_calls\":"<<metrics.peak_calls.load()<<",\"complete\":"<<(complete?"true":"false")<<",\"calls\":{";bool first=true;
-  for(const auto& [n,v]:calls){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"body_visits\":{";first=true;for(const auto& [n,v]:bodies){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"helper_work\":{";first=true;for(const auto& [n,v]:work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"inclusive\":"<<v.inclusive<<",\"exclusive\":"<<v.exclusive<<'}';}out<<"},\"body_work\":{";first=true;for(const auto& [n,v]:body_work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"steps\":"<<v.inclusive<<'}';}out<<"},\"volumes\":{";first=true;for(const auto& [n,v]:volume){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"}}\n";
+  for(const auto& [n,v]:calls){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"body_visits\":{";first=true;for(const auto& [n,v]:bodies){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"helper_work\":{";first=true;for(const auto& [n,v]:work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"inclusive\":"<<v.inclusive<<",\"exclusive\":"<<v.exclusive<<'}';}out<<"},\"body_work\":{";first=true;for(const auto& [n,v]:body_work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"steps\":"<<v.inclusive<<'}';}out<<"},\"body_visit_detail\":{";first=true;for(const auto& [n,list]:visits){if(!first)out<<',';first=false;out<<std::quoted(n)<<":[";bool inner=true;for(const auto& v:list){if(!inner)out<<',';inner=false;out<<"{\"steps\":"<<v.steps<<",\"work_at_entry\":"<<v.work<<",\"summaries_at_entry\":"<<v.summaries<<",\"volume\":{";bool k=true;for(const auto& [a,b]:v.volume){if(!k)out<<',';k=false;out<<std::quoted(a)<<':'<<b;}out<<"},\"helper_exclusive\":{";k=true;for(const auto& [a,b]:v.exclusive){if(!k)out<<',';k=false;out<<std::quoted(a)<<':'<<b;}out<<"}}";}out<<']';}out<<"},\"volumes\":{";first=true;for(const auto& [n,v]:volume){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"}}\n";
  }
 };
 inline void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){if(active)active->enter(fn,caller,args);}

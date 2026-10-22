@@ -516,3 +516,13 @@ ON/OFF各42例1705检查/C04各56例757；定向ON9/OFF3、指南11命令。ON/V
 - BO-11重新复评未过25%主要阶段误差及普通时间校准，失败模型完整数字不作为实测或可靠界；不得据此执行正式自身。
 - 本轮确认大函数重访，未测得真实投影/别名/克隆宽度；函数最大访问次数不等于全局轮数，不对已观察留出调参后重新验收。
 - 保持500M步骤、128调用、GC65536、600秒与16MiB；同身份复用既有正确性，主文档只留简洁结果，详细依据进入项目记忆。
+
+- Diagnosis only; no repair, no admission; production limits unchanged
+
+- Diagnosis only; repair candidates A (drop field path per site+allocation, 6653->811), B (one origin per site, ->282), C (share sets, no semantic change) left to the user because A/B change alias precision
+
+- Candidate A fails the performance goal; left uncommitted and unreverted pending user decision; recommend revert
+
+- Registered as HUA-D008 P0; fix correctness before choosing performance route; production budget unchanged
+
+- S1 pending user acceptance of the two differences; S2/S3 not yet authorized

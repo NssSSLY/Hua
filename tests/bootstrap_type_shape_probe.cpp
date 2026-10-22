@@ -1,0 +1,6 @@
+// Declared record fields and user function parameter types from a HUAB, for the static depth-8 projection proxy.
+// Enum payload fields are excluded: capabilities never projects them as record members.
+#include "hua/archive.hpp"
+#include <iostream>
+#include <iomanip>
+int wmain(int argc,wchar_t** argv){try{auto a=hua::read_huab(std::filesystem::path(argv[1]));std::cout<<"{\"structures\":{";bool first=true;for(const auto& [name,n]:a.model.structures){if(!first)std::cout<<',';first=false;std::cout<<std::quoted(name)<<":{";bool field=true;for(const auto& c:n->children)if(c->kind==hua::NodeKind::Field && n->text.find(" enum")==std::string::npos){if(!field)std::cout<<',';field=false;std::cout<<std::quoted(c->text)<<':'<<std::quoted(hua::type_name(*c->children.at(0)));}std::cout<<'}';}std::cout<<"},\"functions\":{";first=true;for(const auto& [name,n]:a.model.functions){if(n->span.file_id.find("std:")==0)continue;if(!first)std::cout<<',';first=false;std::cout<<std::quoted(name)<<":[";bool p=true;for(const auto& c:n->children)if(c->kind==hua::NodeKind::Parameter){if(!p)std::cout<<',';p=false;std::cout<<std::quoted(hua::type_name(*c->children.at(0)));}std::cout<<']';}std::cout<<"}}\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 2;}}
