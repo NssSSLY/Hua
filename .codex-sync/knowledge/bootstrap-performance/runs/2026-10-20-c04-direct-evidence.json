@@ -1,0 +1,612 @@
+{
+  "schema": "hua.c04.direct-evidence.v1",
+  "status": "experimental-not-admitted",
+  "source_sha256": "026285e2e97988864dc571a98cbd0a54fd62db0103a1d4cc435ec7b649498dd0",
+  "source_path": "tests/experimental/c04-direct/capabilities.hua",
+  "head": "67faab1348be730327601a7ee14e73ccfd15eb3d",
+  "full_self_runs": 0,
+  "default_activated": false,
+  "committed_or_pushed": false,
+  "final_full_c04_cases": 0,
+  "final_full_c04_reason": "native preparation exceeded 120 seconds before AST/VM",
+  "final_analyzer": null,
+  "parser_intermediate": {
+    "baseline": {
+      "measurement": {
+        "label": "parser-baseline",
+        "command": [
+          "C:\\file\\project\\hua\\tests\\artifacts\\build-bo11-body-20261019-r3\\hua.exe",
+          "run",
+          "C:\\file\\project\\hua\\tests\\artifacts\\build\\c04-call-20261020\\analyzer-after.huab",
+          "--execution-profile",
+          "compiler",
+          "--report-budget",
+          "--",
+          "C:\\file\\project\\hua\\tests\\artifacts\\c04-r1-r2-20261020\\baseline\\selfhost\\parser.hua"
+        ],
+        "working_directory": "C:\\file\\project\\hua",
+        "limit_seconds": 60,
+        "seconds": 17.32799999997951,
+        "cpu_seconds": 16.5,
+        "peak_working_bytes": 164401152,
+        "returncode": 0,
+        "timeout": false,
+        "stdout_bytes": 1458869,
+        "stderr_bytes": 179
+      },
+      "budget": {
+        "schema": "hua.execution.budget.v1",
+        "profile": "compiler",
+        "per_executor_step_limit": 500000000,
+        "call_depth_limit": 128,
+        "collection_interval": 65536,
+        "steps": 75143090,
+        "peak_calls": 42
+      },
+      "output_sha256": "a0893ed3893e0e1e3a7f5c2af7b7f1f3d85c2ef73afe5bda4f621b0b08b70e40",
+      "runtime_sha256": "3afa32e1121d3677e73be9fb5467aabeb132ad1e700c011870643f02e7e33e85",
+      "artifact_sha256": "a3a49313f0de73696db0a73dc485a0720ffa40963dbbaf6b5c258a22a28153d4",
+      "input_sha256": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28"
+    },
+    "candidate": {
+      "measurement": {
+        "label": "parser-candidate",
+        "command": [
+          "C:\\file\\project\\hua\\tests\\artifacts\\build-bo11-body-20261019-r3\\hua.exe",
+          "run",
+          "C:\\file\\project\\hua\\tests\\artifacts\\c04-direct-20261020\\analyzer-compact.huab",
+          "--execution-profile",
+          "compiler",
+          "--report-budget",
+          "--",
+          "C:\\file\\project\\hua\\tests\\artifacts\\c04-r1-r2-20261020\\baseline\\selfhost\\parser.hua"
+        ],
+        "working_directory": "C:\\file\\project\\hua",
+        "limit_seconds": 60,
+        "seconds": 19.60899999999674,
+        "cpu_seconds": 19.34375,
+        "peak_working_bytes": 184414208,
+        "returncode": 0,
+        "timeout": false,
+        "stdout_bytes": 1458869,
+        "stderr_bytes": 179
+      },
+      "budget": {
+        "schema": "hua.execution.budget.v1",
+        "profile": "compiler",
+        "per_executor_step_limit": 500000000,
+        "call_depth_limit": 128,
+        "collection_interval": 65536,
+        "steps": 89709120,
+        "peak_calls": 42
+      },
+      "output_sha256": "a0893ed3893e0e1e3a7f5c2af7b7f1f3d85c2ef73afe5bda4f621b0b08b70e40",
+      "runtime_sha256": "3afa32e1121d3677e73be9fb5467aabeb132ad1e700c011870643f02e7e33e85",
+      "artifact_sha256": "4bb26a803bfdcadb87e638d843a13b46d72d55cb7089162b159c732553525cd5",
+      "input_sha256": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28"
+    }
+  },
+  "observer_intermediate": {
+    "schema": "hua.c04.version-observer.v2",
+    "steps": 89709120,
+    "c04_steps": 46392378,
+    "logical_work": 30833,
+    "passes": 5,
+    "body_visits": {
+      "": 3,
+      "ast_pool.hua#add": 2,
+      "ast_pool.hua#count": 1,
+      "ast_pool.hua#create": 1,
+      "ast_pool.hua#get": 2,
+      "ast_pool.hua#kind": 1,
+      "ast_pool.hua#payload_text": 1,
+      "ast_pool.hua#preorder": 1,
+      "ast_pool.hua#reachable": 1,
+      "ast_pool.hua#register_source": 1,
+      "ast_pool.hua#replace": 2,
+      "ast_pool.hua#rewrite_integer": 2,
+      "ast_pool.hua#same": 1,
+      "ast_pool.hua#shape": 1,
+      "ast_pool.hua#source_info": 1,
+      "ast_pool.hua#span": 1,
+      "ast_pool.hua#validate": 1,
+      "ast_pool.hua#verify": 1,
+      "lexer.hua#alpha": 1,
+      "lexer.hua#decimal": 1,
+      "lexer.hua#digit": 1,
+      "lexer.hua#emit": 2,
+      "lexer.hua#failure": 1,
+      "lexer.hua#scan": 2,
+      "lexer.hua#scan_bounded": 2,
+      "lexer.hua#scan_impl": 1,
+      "parser.hua#array_literal": 4,
+      "parser.hua#assignable": 1,
+      "parser.hua#binding": 4,
+      "parser.hua#block": 3,
+      "parser.hua#compiler_limits": 1,
+      "parser.hua#compound_type": 4,
+      "parser.hua#conditional": 4,
+      "parser.hua#defaults": 1,
+      "parser.hua#dotted": 2,
+      "parser.hua#enter": 2,
+      "parser.hua#enumeration": 4,
+      "parser.hua#excluded": 1,
+      "parser.hua#expect": 2,
+      "parser.hua#expression": 4,
+      "parser.hua#extended_statement": 4,
+      "parser.hua#failure": 1,
+      "parser.hua#finish_statement": 3,
+      "parser.hua#for_loop": 4,
+      "parser.hua#function": 4,
+      "parser.hua#leaf": 3,
+      "parser.hua#lines": 2,
+      "parser.hua#map_literal": 3,
+      "parser.hua#match_statement": 3,
+      "parser.hua#multi_assignment": 3,
+      "parser.hua#node": 2,
+      "parser.hua#pack": 3,
+      "parser.hua#parse": 3,
+      "parser.hua#parse_compiler": 3,
+      "parser.hua#parse_extended": 3,
+      "parser.hua#parse_extended_with_limits": 3,
+      "parser.hua#parse_impl": 3,
+      "parser.hua#parse_with_limits": 2,
+      "parser.hua#postfix": 3,
+      "parser.hua#power": 1,
+      "parser.hua#primary": 3,
+      "parser.hua#scalar_type": 3,
+      "parser.hua#specialization_ahead": 1,
+      "parser.hua#statement": 3,
+      "parser.hua#struct_ahead": 1,
+      "parser.hua#struct_literal": 3,
+      "parser.hua#structure": 3,
+      "parser.hua#suffix": 3,
+      "parser.hua#take": 2,
+      "parser.hua#tick": 1,
+      "parser.hua#unsupported": 1,
+      "parser.hua#valid": 1
+    },
+    "helpers": {
+      "alias_paths": {
+        "calls": 5995,
+        "exclusive_steps": 167115
+      },
+      "analyze": {
+        "calls": 1,
+        "exclusive_steps": 41963
+      },
+      "assign": {
+        "calls": 447,
+        "exclusive_steps": 25061
+      },
+      "attach": {
+        "calls": 371,
+        "exclusive_steps": 53173
+      },
+      "begin_updates": {
+        "calls": 676,
+        "exclusive_steps": 4732
+      },
+      "bind": {
+        "calls": 873,
+        "exclusive_steps": 42848
+      },
+      "canonical": {
+        "calls": 14450,
+        "exclusive_steps": 586145
+      },
+      "capture": {
+        "calls": 617,
+        "exclusive_steps": 12957
+      },
+      "capture_inputs": {
+        "calls": 224,
+        "exclusive_steps": 238713
+      },
+      "changed_versions": {
+        "calls": 79,
+        "exclusive_steps": 1382
+      },
+      "child_type": {
+        "calls": 964,
+        "exclusive_steps": 112611
+      },
+      "commit": {
+        "calls": 5606,
+        "exclusive_steps": 191230
+      },
+      "copied": {
+        "calls": 5411,
+        "exclusive_steps": 98055
+      },
+      "copied_canonical": {
+        "calls": 5209,
+        "exclusive_steps": 224771
+      },
+      "copy_view": {
+        "calls": 8561,
+        "exclusive_steps": 127557
+      },
+      "declaration": {
+        "calls": 895,
+        "exclusive_steps": 11635
+      },
+      "depth": {
+        "calls": 7843,
+        "exclusive_steps": 70587
+      },
+      "descendants": {
+        "calls": 11907,
+        "exclusive_steps": 194931
+      },
+      "end_updates": {
+        "calls": 676,
+        "exclusive_steps": 22984
+      },
+      "environment": {
+        "calls": 153,
+        "exclusive_steps": 10231
+      },
+      "expression": {
+        "calls": 21508,
+        "exclusive_steps": 924844
+      },
+      "expression_body": {
+        "calls": 21508,
+        "exclusive_steps": 5313259
+      },
+      "field_defaults": {
+        "calls": 13,
+        "exclusive_steps": 3776
+      },
+      "field_exists": {
+        "calls": 97197,
+        "exclusive_steps": 3167278
+      },
+      "field_fact": {
+        "calls": 93674,
+        "exclusive_steps": 4735523
+      },
+      "field_paths": {
+        "calls": 11524,
+        "exclusive_steps": 391594
+      },
+      "field_relative": {
+        "calls": 38183,
+        "exclusive_steps": 312520
+      },
+      "field_shape": {
+        "calls": 303,
+        "exclusive_steps": 35367
+      },
+      "get": {
+        "calls": 33287,
+        "exclusive_steps": 2330090
+      },
+      "has_fields": {
+        "calls": 8709,
+        "exclusive_steps": 217713
+      },
+      "instantiate_at": {
+        "calls": 1460,
+        "exclusive_steps": 17012
+      },
+      "instantiate_canonical": {
+        "calls": 1443,
+        "exclusive_steps": 128562
+      },
+      "instantiate_view_at": {
+        "calls": 8462,
+        "exclusive_steps": 1364993
+      },
+      "invoke": {
+        "calls": 1686,
+        "exclusive_steps": 1595403
+      },
+      "join": {
+        "calls": 1257,
+        "exclusive_steps": 317149
+      },
+      "key": {
+        "calls": 42189,
+        "exclusive_steps": 337512
+      },
+      "lookup_path": {
+        "calls": 6364,
+        "exclusive_steps": 31820
+      },
+      "materialized": {
+        "calls": 400,
+        "exclusive_steps": 18886
+      },
+      "memo_return": {
+        "calls": 1446,
+        "exclusive_steps": 38526
+      },
+      "memo_writes": {
+        "calls": 1446,
+        "exclusive_steps": 78403
+      },
+      "merge": {
+        "calls": 4072,
+        "exclusive_steps": 1068082
+      },
+      "merge_canonical": {
+        "calls": 3414,
+        "exclusive_steps": 243916
+      },
+      "merge_view": {
+        "calls": 8407,
+        "exclusive_steps": 674085
+      },
+      "node_fact": {
+        "calls": 21508,
+        "exclusive_steps": 344128
+      },
+      "note_prefix": {
+        "calls": 11926,
+        "exclusive_steps": 1232406
+      },
+      "note_reads": {
+        "calls": 681,
+        "exclusive_steps": 11798
+      },
+      "note_type": {
+        "calls": 11926,
+        "exclusive_steps": 350296
+      },
+      "numeric_shape": {
+        "calls": 1054,
+        "exclusive_steps": 76753
+      },
+      "numeric_view": {
+        "calls": 37240,
+        "exclusive_steps": 2644040
+      },
+      "origin_terms": {
+        "calls": 32997,
+        "exclusive_steps": 1761703
+      },
+      "overlay_existing": {
+        "calls": 108,
+        "exclusive_steps": 804
+      },
+      "parameter_seeded": {
+        "calls": 296,
+        "exclusive_steps": 2072
+      },
+      "path_owner": {
+        "calls": 32142,
+        "exclusive_steps": 257136
+      },
+      "path_tail": {
+        "calls": 16071,
+        "exclusive_steps": 321420
+      },
+      "prefix_index": {
+        "calls": 3524,
+        "exclusive_steps": 206686
+      },
+      "projected": {
+        "calls": 3297,
+        "exclusive_steps": 201042
+      },
+      "projection": {
+        "calls": 1290,
+        "exclusive_steps": 53934
+      },
+      "put": {
+        "calls": 7054,
+        "exclusive_steps": 1744956
+      },
+      "record": {
+        "calls": 14768,
+        "exclusive_steps": 500026
+      },
+      "record_dependencies": {
+        "calls": 150,
+        "exclusive_steps": 30829
+      },
+      "require_write": {
+        "calls": 360,
+        "exclusive_steps": 14968
+      },
+      "reusable_body": {
+        "calls": 165,
+        "exclusive_steps": 37608
+      },
+      "same_fields": {
+        "calls": 784,
+        "exclusive_steps": 44966
+      },
+      "same_flags": {
+        "calls": 31772,
+        "exclusive_steps": 1203585
+      },
+      "same_inputs": {
+        "calls": 133,
+        "exclusive_steps": 2261
+      },
+      "same_storage": {
+        "calls": 6831,
+        "exclusive_steps": 266434
+      },
+      "same_value": {
+        "calls": 1353,
+        "exclusive_steps": 1089569
+      },
+      "same_view": {
+        "calls": 32962,
+        "exclusive_steps": 1971112
+      },
+      "seeded": {
+        "calls": 1054,
+        "exclusive_steps": 72404
+      },
+      "select": {
+        "calls": 12531,
+        "exclusive_steps": 609534
+      },
+      "select_cached": {
+        "calls": 3528,
+        "exclusive_steps": 21168
+      },
+      "select_root": {
+        "calls": 12531,
+        "exclusive_steps": 353772
+      },
+      "snapshot": {
+        "calls": 3072,
+        "exclusive_steps": 262266
+      },
+      "split_origin": {
+        "calls": 30805,
+        "exclusive_steps": 154025
+      },
+      "statement": {
+        "calls": 5111,
+        "exclusive_steps": 1177386
+      },
+      "storage_aliases": {
+        "calls": 2861,
+        "exclusive_steps": 397351
+      },
+      "store": {
+        "calls": 1977,
+        "exclusive_steps": 17793
+      },
+      "summary": {
+        "calls": 150,
+        "exclusive_steps": 136913
+      },
+      "target": {
+        "calls": 17105,
+        "exclusive_steps": 222365
+      },
+      "tick": {
+        "calls": 26619,
+        "exclusive_steps": 346047
+      },
+      "type_name": {
+        "calls": 140,
+        "exclusive_steps": 18212
+      },
+      "value": {
+        "calls": 26924,
+        "exclusive_steps": 619252
+      },
+      "value_path": {
+        "calls": 9017,
+        "exclusive_steps": 324420
+      },
+      "value_reads": {
+        "calls": 15,
+        "exclusive_steps": 4609
+      },
+      "version_summary": {
+        "calls": 150,
+        "exclusive_steps": 10747
+      },
+      "view": {
+        "calls": 30221,
+        "exclusive_steps": 483536
+      },
+      "visible_field": {
+        "calls": 77942,
+        "exclusive_steps": 1146582
+      },
+      "wide_fields": {
+        "calls": 1596,
+        "exclusive_steps": 58470
+      }
+    },
+    "numeric_queries": 37240,
+    "packed_numeric_queries": 37240,
+    "numeric_cell_bytes": 16,
+    "numeric_layout_failures": 0
+  },
+  "final_numeric_contract": {
+    "status": "passed",
+    "assertions_per_path": 73,
+    "paths": 3,
+    "rows": [
+      {
+        "mode": "interpret",
+        "seconds": 6.563000000023749
+      },
+      {
+        "mode": "run",
+        "seconds": 6.35899999999674
+      },
+      {
+        "mode": "build",
+        "seconds": 6.702999999979511
+      },
+      {
+        "mode": "huab",
+        "seconds": 0.125
+      }
+    ]
+  },
+  "final_full_attempt": {
+    "code": 1,
+    "seconds": 125.82900000002701,
+    "source_sha256": "026285e2e97988864dc571a98cbd0a54fd62db0103a1d4cc435ec7b649498dd0"
+  },
+  "intermediate_prepare": {
+    "label": "prepare-compact",
+    "command": [
+      "C:\\file\\project\\hua\\tests\\artifacts\\c04-direct-20261020\\prepare-probe.exe",
+      "C:\\file\\project\\hua\\tests\\artifacts\\c04-direct-20261020\\compact-source\\a07_main.hua",
+      "C:\\file\\project\\hua\\tests\\artifacts\\c04-direct-20261020\\analyzer-compact.huab",
+      "C:\\file\\project\\hua\\tests\\artifacts\\c04-direct-20261020\\prepare-compact.trace"
+    ],
+    "working_directory": "C:\\file\\project\\hua",
+    "limit_seconds": 120,
+    "seconds": 114.51600000000326,
+    "cpu_seconds": 111.265625,
+    "peak_working_bytes": 539136000,
+    "returncode": 0,
+    "timeout": false,
+    "stdout_bytes": 0,
+    "stderr_bytes": 0
+  },
+  "final_symbolic_contract": {
+    "status": "passed",
+    "assertions_per_path": 56,
+    "paths": 3,
+    "rows": [
+      {
+        "mode": "interpret",
+        "status": "passed"
+      },
+      {
+        "mode": "run",
+        "status": "passed"
+      },
+      {
+        "mode": "build",
+        "status": "passed"
+      },
+      {
+        "mode": "huab",
+        "status": "passed"
+      }
+    ]
+  },
+  "directed_ctest": {
+    "passed": 6,
+    "total": 6,
+    "seconds": 57.88,
+    "scope": "existing symbolic/pooled/default helper contracts; not final full C04",
+    "raw": "tests/artifacts/c04-direct-20261020/ctest-final.log"
+  },
+  "protected_files": 148,
+  "unchanged_default_files": 32,
+  "unchanged_history_files": 39,
+  "confirmation_blocks": 207,
+  "fixed_er_rs_rows": 22,
+  "active_docs": 9,
+  "local_links_checked": 1238,
+  "default_hua_files": 31
+}

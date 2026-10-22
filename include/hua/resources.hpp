@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 // Shared internal resource protocol. This is not a public Hua type or Native ABI.
 #include <array>
 #include <cstdint>
@@ -134,6 +135,9 @@ public:
     Failure backend_write(const Event&,std::span<const std::uint8_t>);
     Outcome<CloseTicket> close(const Handle&,TaskId);
     Failure pump(); // Executes physical close callbacks only on the configured CPU executor.
+    // True once any resource was admitted; pump() is a no-op (apart from an ignored
+    // executor check) while false, so callers may skip it on their hot path.
+    const std::atomic<bool>& created_flag()const noexcept;
     Outcome<Handle> transfer_quiescent(const Handle&,TaskId from,TaskId to); // Internal protocol proof only.
     Failure confirm_released(const Handle&); // Host confirmation of a previously unknown release.
     void owner_exit(TaskId);void shutdown();

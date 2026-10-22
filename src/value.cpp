@@ -81,13 +81,22 @@ std::string display_type(std::string type) {
     }
     return type;
 }
+const std::string* BuiltinName::intern(std::string text){
+    static const std::string empty;
+    if(text.empty())return &empty;
+    // Node-based set: element addresses stay valid; never shrinks (finite builtin names).
+    static std::mutex mutex;static std::unordered_set<std::string> names;
+    std::lock_guard lock(mutex);return &*names.insert(std::move(text)).first;
+}
+BuiltinName::BuiltinName():text_(intern({})){}
 std::string value_type(const Value& v) {
     switch(v.data.index()) {
     case 0: return "nil"; case 1: return "bool"; case 2: return "int";
     case 3: return "float"; case 4: return "string";
     case 5: {const auto& s=std::get<SliceValue>(v.data);return (s.fixed?"["+std::to_string(s.length)+"]":"[]")+s.element_type;}
     case 6: return std::get<StructValue>(v.data).data->name;
-    case 7: { const auto& c=std::get<Callable>(v.data); return c.function ? "fn:"+declared_name(*c.function) : "builtin:"+c.builtin; }
+    case 21:return std::get<PlainRecord>(v.data).layout->name;
+    case 7: { const auto& c=std::get<Callable>(v.data); return c.function ? "fn:"+declared_name(*c.function) : "builtin:"+c.builtin.str(); }
     case 8: {const auto& m=std::get<MapValue>(v.data);return "map<"+m.data->key_type+","+m.data->item_type+">";}
     case 9: {std::string out="multi<";const auto& vs=std::get<MultiValue>(v.data).data->values;for(std::size_t i=0;i<vs.size();++i){if(i)out+=',';out+=value_type(vs[i]);}return out+">";}
     case 10: {const auto& r=std::get<ResultValue>(v.data);return "Result<"+r.success_type+","+r.error_type+">";}
@@ -199,6 +208,52 @@ Value unary_value(std::string_view op,const Value& v,const SourceSpan& s) {
     }
     runtime_error(s,"unsupported unary operand for "+std::string(op),"E4003");
 }
+namespace {
+bool is_record_value(const Value& v){return std::holds_alternative<StructValue>(v.data)||std::holds_alternative<PlainRecord>(v.data);}
+// Structural equality for == / != (both static checkers already require equal
+// operand types). Records compare type, enum variant and every field by name;
+// maps compare key sets and values; sequences and lists compare element-wise;
+// Results compare branch and payload. Kinds without a value notion of equality
+// (functions, tasks, files, buffers, JSON, errors) keep E4008.
+bool values_equal(const Value& a,const Value& b,const SourceSpan& s,unsigned depth){
+    if(depth>128)runtime_error(s,"value nesting limit exceeded","E4099");
+    if(is_record_value(a)||is_record_value(b)){
+        if(!is_record_value(a)||!is_record_value(b))runtime_error(s,"equality requires matching types","E4003");
+        Value left=a,right=b;auto* x=materialize_record(left);auto* y=materialize_record(right);
+        if(x->data->name!=y->data->name)runtime_error(s,"equality requires matching types","E4003");
+        const auto* vx=x->data->variant;const auto* vy=y->data->variant;
+        if((vx==nullptr)!=(vy==nullptr)||(vx&&vx->name!=vy->name))return false; // variant identity by name
+        if(x->data->fields.size()!=y->data->fields.size())return false;
+        for(const auto& [name,item]:x->data->fields){auto other=y->data->fields.find(name);
+            if(other==y->data->fields.end()||!values_equal(item,other->second,s,depth+1))return false;}
+        return true;
+    }
+    if(a.data.index()!=b.data.index()){
+        if(a.data.index()==0||b.data.index()==0)return false;
+        runtime_error(s,"equality requires matching types","E4003");
+    }
+    if(a.data.index()==0)return true;
+    if(auto p=std::get_if<bool>(&a.data))return *p==std::get<bool>(b.data);
+    if(auto p=std::get_if<I>(&a.data))return *p==std::get<I>(b.data);
+    if(auto p=std::get_if<double>(&a.data))return *p==std::get<double>(b.data);
+    if(auto p=std::get_if<std::string>(&a.data))return *p==std::get<std::string>(b.data);
+    if(auto p=std::get_if<NumericValue>(&a.data)){const auto& q=std::get<NumericValue>(b.data);return p->type==q.type&&p->number==q.number;}
+    if(auto p=std::get_if<SliceValue>(&a.data)){const auto& q=std::get<SliceValue>(b.data);if(p->length!=q.length)return false;
+        for(std::size_t i=0;i<p->length;++i)if(!values_equal(sequence_read(*p,i),sequence_read(q,i),s,depth+1))return false;return true;}
+    if(auto p=std::get_if<MapValue>(&a.data)){const auto& q=std::get<MapValue>(b.data);if(p->data==q.data)return true;
+        if(p->data->entries.size()!=q.data->entries.size())return false;
+        for(const auto& [key,item]:p->data->entries){auto other=q.data->entries.find(key);
+            if(other==q.data->entries.end()||!values_equal(item,other->second,s,depth+1))return false;}
+        return true;}
+    if(auto p=std::get_if<ListValue>(&a.data)){const auto& q=std::get<ListValue>(b.data);if(p->data==q.data)return true;
+        const auto& x=p->data->values;const auto& y=q.data->values;if(x.size()!=y.size())return false;
+        for(std::size_t i=0;i<x.size();++i)if(!values_equal(x[i],y[i],s,depth+1))return false;return true;}
+    if(auto p=std::get_if<ResultValue>(&a.data)){const auto& q=std::get<ResultValue>(b.data);if(p->ok!=q.ok)return false;
+        if(!p->payload||!q.payload)return !p->payload&&!q.payload;return values_equal(*p->payload,*q.payload,s,depth+1);}
+    if(auto p=std::get_if<BytesValue>(&a.data))return *p->data==*std::get<BytesValue>(b.data).data;
+    runtime_error(s,"equality is not implemented for this value kind","E4008");
+}
+}
 Value binary_value(std::string_view op,const Value& a,const Value& b,const SourceSpan& s,bool contextual_right) {
     if(std::holds_alternative<VoidValue>(a.data)||std::holds_alternative<VoidValue>(b.data))runtime_error(s,"void is not an operand","E4003");
     if(contextual_right&&std::holds_alternative<NumericValue>(a.data)&&numeric_spec(value_type(b)))return binary_numeric(op,a,convert_numeric(b,value_type(a),s,true),s);
@@ -211,8 +266,9 @@ Value binary_value(std::string_view op,const Value& a,const Value& b,const Sourc
             else if(auto p=std::get_if<I>(&a.data)) same=*p==std::get<I>(b.data);
             else if(auto p=std::get_if<double>(&a.data)) same=*p==std::get<double>(b.data);
             else if(auto p=std::get_if<std::string>(&a.data)) same=*p==std::get<std::string>(b.data);
-            else runtime_error(s,"aggregate equality is not implemented","E4008");
-        } else if(a.data.index()!=0 && b.data.index()!=0) runtime_error(s,"equality requires matching types","E4003");
+            else same=values_equal(a,b,s,0);
+        } else if(is_record_value(a)&&is_record_value(b)) same=values_equal(a,b,s,0); // StructValue vs packed PlainRecord
+        else if(a.data.index()!=0 && b.data.index()!=0) runtime_error(s,"equality requires matching types","E4003");
         return Value(op=="==" ? same : !same);
     }
     if(op=="**" && a.data.index()==3 && b.data.index()==2) {
@@ -277,6 +333,7 @@ Value binary_value(std::string_view op,const Value& a,const Value& b,const Sourc
     runtime_error(s,"operator "+std::string(op)+" is not defined for "+value_type(a),"E4003");
 }
 Value read_only(Value v) {
+    if(auto p=std::get_if<PlainRecord>(&v.data))p->writable=false;
     if(auto p=std::get_if<BufferValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<ListValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<SliceValue>(&v.data)) p->writable=false;
@@ -321,7 +378,7 @@ bool scan_file(const Value& v,unsigned depth,FileScan& scan){
         for(const auto& x:p->data->values)if(nested(x))return true;
     // Different views of one backing can expose different resources.
     if(auto p=std::get_if<SliceValue>(&v.data);p&&!p->packed&&first(p->storage.get(),p->start,p->length))
-        for(std::size_t i=0;i<p->length;++i)if(nested(sequence_read(*p,i)))return true;
+        for(std::size_t i=0;i<p->length;++i)if(nested(sequence_copy_source(*p,i)))return true;
     if(auto p=std::get_if<ResultValue>(&v.data);p&&p->payload&&first(p->payload.get())&&nested(*p->payload))return true;
     if(auto p=std::get_if<MultiValue>(&v.data);p&&first(p->data.get()))
         for(const auto& x:p->data->values)if(nested(x))return true;
@@ -339,7 +396,7 @@ bool contains_file(const Value& v,unsigned depth){
     return scan_file(v,depth,scan);
 }
 Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
-    HUA_PROFILE_COUNT(copy_const);
+    HUA_PROFILE_COUNT(copy_const);if(depth==0)HUA_PROFILE_KIND(copy_const_kinds,v);
 #ifdef HUA_INTERNAL_PROFILE
     if(deep){HUA_PROFILE_COUNT(deep_clone_nodes);if(depth==0)HUA_PROFILE_COUNT(deep_clone_roots);}
 #endif
@@ -353,6 +410,9 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     }
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     if(depth>128) runtime_error({},"value nesting limit exceeded","E4099");
+    if(auto p=std::get_if<PlainRecord>(&v.data)){if(depth+p->layout->depth>128)runtime_error({},"value nesting limit exceeded","E4099");auto copy=*p;copy.writable=true;return Value(std::move(copy));}
+    if(auto p=std::get_if<StructValue>(&v.data)){PlainRecord copy;if(pack_plain_record(*p,copy,depth))return Value(std::move(copy));}
+
     if(deep)if(auto p=std::get_if<ErrorValue>(&v.data)){auto data=*p->data;if(data.cause)data.cause=std::get<ErrorValue>(copy_value(Value(ErrorValue{data.cause}),true,depth+1,resource_alias).data).data;return Value(ErrorValue{managed<const ErrorData>(std::move(data))});}
     if(auto p=std::get_if<StructValue>(&v.data)) {
         require_complete_enum(*p->data);
@@ -372,7 +432,7 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=managed<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1,resource_alias));return Value(MapValue{data,true});}
     if(auto p=std::get_if<SliceValue>(&v.data);p&&(deep||p->fixed)) {
         auto storage=managed<std::vector<Value>>(); storage->reserve(p->length);
-        for(std::size_t i=0;i<p->length;++i) storage->push_back(copy_value(sequence_read(*p,i),deep,depth+1,resource_alias));
+        for(std::size_t i=0;i<p->length;++i) storage->push_back(copy_value(sequence_copy_source(*p,i),deep,depth+1,resource_alias));
         SliceValue result{storage,0,p->length,deep||p->writable,p->element_type};if(p->fixed)result=fixed_array(result,p->element_type,{},false);return Value(result);
     }
     return v;
@@ -380,13 +440,17 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
 // A consumed, uniquely owned value needs no second backing allocation. Shared values
 // retain the ordinary snapshot copy; writable/read-only descendants follow the same rule.
 Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
-    HUA_PROFILE_COUNT(copy_move);
+    HUA_PROFILE_COUNT(copy_move);if(depth==0)HUA_PROFILE_KIND(copy_move_kinds,v);
     if(deep)return copy_value(static_cast<const Value&>(v),deep,depth,resource_alias);
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
+    if(auto p=std::get_if<PlainRecord>(&v.data)){if(depth+p->layout->depth>128)runtime_error({},"value nesting limit exceeded","E4099");p->writable=true;return std::move(v);}
+    // A shared struct takes the copying path, which makes its own packing attempt.
+    if(auto p=std::get_if<StructValue>(&v.data);p&&p->data.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
+    if(auto p=std::get_if<StructValue>(&v.data)){PlainRecord copy;if(pack_plain_record(*p,copy,depth))return Value(std::move(copy));}
+
     if(auto p=std::get_if<StructValue>(&v.data)) {
         require_complete_enum(*p->data);
-        if(p->data.use_count()!=1)return copy_value(static_cast<const Value&>(v),false,depth,resource_alias);
         p->data->fields.each_value([&](Value& x){
             if(!p->writable)x=read_only(std::move(x));
             x=copy_value(std::move(x),false,depth+1,resource_alias);
@@ -412,6 +476,17 @@ Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
 }
 Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bool contextual) {
     HUA_PROFILE_COUNT(enforce_type_calls);
+    // Exact scalar/record matches leave the value unchanged on the general path
+    // below; decide them without parsing type strings.
+    switch(v.data.index()){
+    case 1:if(expected=="bool")return v;break;
+    case 2:if(expected=="int")return v;break;
+    case 3:if(expected=="float"&&std::isfinite(std::get<double>(v.data)))return v;break;
+    case 4:if(expected=="string")return v;break;
+    default:
+        if(auto p=std::get_if<StructValue>(&v.data);p&&p->data->name==expected)return v;
+        if(auto p=std::get_if<PlainRecord>(&v.data);p&&p->layout->name==expected)return v;
+    }
     if(expected.find('[')!=std::string::npos){auto type=canonical_type(expected);if(type!=expected)return enforce_type(std::move(v),type,span,contextual);}
     if(std::holds_alternative<VoidValue>(v.data)&&expected!="void")runtime_error(span,"void has no usable value","E4003");
     if(expected.empty()) return v;
@@ -475,6 +550,8 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
     return v;
 }
 std::string show(const Value& v) {
+    if(auto p=std::get_if<PlainRecord>(&v.data)){std::string text=display_type(p->layout->name)+"{";bool first=true;for(const auto& f:p->layout->fields){if(!first)text+=", ";first=false;text+=f.name+": "+show(*plain_record_field(*p,f.name));}return text+"}";}
+
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no displayable value","E4003");
     if(std::holds_alternative<FileValue>(v.data))return "<File>";
     if(std::holds_alternative<IOFailureValue>(v.data))return "<IOFailure>";
@@ -489,7 +566,7 @@ std::string show(const Value& v) {
     if(auto p=std::get_if<double>(&v.data)) { std::ostringstream out; out<<std::setprecision(15)<<*p; return out.str(); }
     if(auto p=std::get_if<std::string>(&v.data)) return *p;
     if(auto p=std::get_if<SliceValue>(&v.data)) {
-        std::string out="["; for(std::size_t i=0;i<p->length;++i){if(i)out+=", ";out+=show(sequence_read(*p,i));}return out+"]";
+        std::string out="["; for(std::size_t i=0;i<p->length;++i){if(i)out+=", ";out+=show(sequence_copy_source(*p,i));}return out+"]";
     }
     if(auto p=std::get_if<StructValue>(&v.data)) {
         if(auto tag=p->data->fields.find("$case");tag!=p->data->fields.end()){auto name=std::get<std::string>(tag->second.data);std::string out=display_type(p->data->name)+"."+name+"(";bool first=true;for(const auto& [field,value]:p->data->fields)if(field.starts_with("$"+name+"#")&&field.substr(field.rfind('#')+1)!="void"){if(!first)out+=", ";first=false;out+=show(value);}return out+")";}
@@ -516,7 +593,7 @@ Value make_map(const std::string& type,const SourceSpan& s) {auto ts=type_argume
 MapKey map_key(const MapValue& map,const Value& key,const SourceSpan& s) {auto value=enforce_type(key,map.data->key_type,s);if(auto p=std::get_if<bool>(&value.data))return *p;if(auto p=std::get_if<I>(&value.data))return *p;if(auto p=std::get_if<std::string>(&value.data))return *p;runtime_error(s,"map keys require bool/int/string","E4003");}
 void map_put(MapValue& m,const Value& key,Value value,const SourceSpan& s,bool contextual) {if(!m.writable)runtime_error(s,"cannot mutate a read-only map","E4007");auto k=map_key(m,key,s);auto v=enforce_type(std::move(value),m.data->item_type,s,contextual);if(m.data->entries.size()>=1000000&&!m.data->entries.contains(k))runtime_error(s,"map entry limit exceeded","E4099");m.data->entries.insert_or_assign(k,copy_value(v));}
 Value index_value(const Value& base,const Value& key,const SourceSpan& s) {
-    if(auto m=std::get_if<MapValue>(&base.data)){auto found=m->data->entries.find(map_key(*m,key,s));if(found==m->data->entries.end())return {};return m->writable?found->second:read_only(found->second);}
+    if(auto m=std::get_if<MapValue>(&base.data)){auto found=m->data->entries.find(map_key(*m,key,s));if(found==m->data->entries.end())return {};retain_record_alias(found->second);return m->writable?found->second:read_only(found->second);}
     auto p=std::get_if<SliceValue>(&base.data);if(!p)runtime_error(s,"index requires a slice, array or map","E4003");auto i=as_int(key,s);if(i<0||static_cast<std::size_t>(i)>=p->length)runtime_error(s,"index out of bounds","E4006");return sequence_read(*p,static_cast<std::size_t>(i));
 }
 ValueLocation index_location(Value base,Value key,const SourceSpan& s) {
@@ -539,7 +616,7 @@ void location_write(const ValueLocation& l,const Value& value,const SourceSpan& 
     }else *l.value=copy_value(value);
 }
 void location_write(const ValueLocation& l,const Value& value) {location_write(l,value,{});}
-Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span){if(type.find('[')!=std::string::npos){auto normalized=canonical_type(type);if(normalized!=type)return enforce_borrow(std::move(value),normalized,span);}if(type.starts_with('[')){auto sequence=std::get_if<SliceValue>(&value.data);auto close=type.find(']');if(!sequence||sequence->element_type!=type.substr(close+1)||(close>1&&!sequence->fixed))runtime_error(span,"mut array/slice borrow requires identical element type and existing fixed layout","E4003");}return enforce_type(std::move(value),type,span);}
+Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span){if(std::holds_alternative<PlainRecord>(value.data))materialize_record(value);if(type.find('[')!=std::string::npos){auto normalized=canonical_type(type);if(normalized!=type)return enforce_borrow(std::move(value),normalized,span);}if(type.starts_with('[')){auto sequence=std::get_if<SliceValue>(&value.data);auto close=type.find(']');if(!sequence||sequence->element_type!=type.substr(close+1)||(close>1&&!sequence->fixed))runtime_error(span,"mut array/slice borrow requires identical element type and existing fixed layout","E4003");}return enforce_type(std::move(value),type,span);}
 namespace {
 template<class Type> Value return_value(Value value,std::size_t count,Type type,const SourceSpan& s,bool contextual){
     HUA_PROFILE_CONSTRAINT_SOURCE(returning);

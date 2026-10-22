@@ -7,6 +7,31 @@
 #include <stdexcept>
 namespace hua {
 struct VmSlotTestAccess {
+    static bool activation_leases(){
+        ManagedHeap heap(65536);HeapScope heap_scope(heap);
+        auto arena=std::make_shared<VirtualMachine::FrameArena>();VirtualMachine::ScopeLayout shape;shape.add("slot");
+        auto first=arena->acquire(&shape,arena);auto* address=first.get();
+        first->insert("slot",{Value(std::int64_t(1)),"int",true});
+        ValueLocation retained{&first->own("slot")->value,"int",true,first};first.reset();
+        auto second=arena->acquire(&shape,arena);if(second.get()==address)return false;
+        second->insert("slot",{Value(std::int64_t(2)),"int",true});location_write(retained,Value(std::int64_t(9)));
+        if(as_int(second->own("slot")->value,{})!=2||as_int(location_read(retained,{}),{})!=9)return false;
+        retained.owner.reset();auto reused=arena->acquire(&shape,arena);
+        if(reused.get()!=address||reused->own("slot"))return false;
+        auto cycle=managed<ListData>();cycle->values.emplace_back(ListValue{cycle,true});std::weak_ptr<ListData> weak=cycle;
+        reused->insert("slot",{Value(ListValue{cycle,true}),"List<int>",false});cycle.reset();heap.collect();if(weak.expired())return false;
+        reused.reset();second.reset();heap.collect();
+        return weak.expired()&&heap.live()==0&&arena->work.active==0&&arena->work.created==2&&arena->work.reused==1&&arena->work.retired==3;
+    }
+    static bool bounded_recency(){
+        auto arena=std::make_shared<VirtualMachine::FrameArena>();
+        std::array<VirtualMachine::ScopeLayout,65> shapes;
+        for(auto& shape:shapes){shape.add("x");auto activation=arena->acquire(&shape,arena);}
+        // The newest shape must displace a cold empty frame when capacity is full.
+        // The former first-64 cache allocated all 1000 of these activations.
+        for(unsigned i=0;i<1000;++i){auto activation=arena->acquire(&shapes.back(),arena);}
+        return arena->free.size()==64&&arena->work.created==65&&arena->work.reused==1000&&arena->work.active==0;
+    }
     static bool clears_unreachable_cycle(){
         ManagedHeap heap(256);HeapScope heap_scope(heap);
         VirtualMachine::ScopeLayout shape;shape.add("slot");
@@ -49,6 +74,10 @@ Builder retained_location(){
     for(unsigned i=0;i<128;++i){b.integer(i);b.bind("later"+std::to_string(i));}
     b.integer(9);b.emit(Op::Store,"=");b.emit(Op::Pop);b.print("x");b.finish();return b;
 }
+Builder location_after_scope(){
+    Builder b;b.emit(Op::EnterScope);b.integer(1);b.bind("x");b.emit(Op::LocateName,"x");b.emit(Op::LeaveScope);
+    b.emit(Op::EnterScope);b.integer(2);b.bind("x");b.integer(9);b.emit(Op::Store,"=");b.emit(Op::Pop);b.print("x");b.emit(Op::LeaveScope);b.finish();return b;
+}
 Builder dictionary_fallback(){
     Builder b;b.integer(1);b.bind("x");b.emit(Op::EnterScope);auto skip=b.emit(Op::Jump);
     // Reachable flow keeps the child scope; the linear storage hint sees this leave.
@@ -59,9 +88,9 @@ Builder uninitialized(){Builder b;b.print("later");b.integer(1);b.bind("later");
 void raw_protocol(){
     SemanticModel model;std::ostringstream output;VirtualMachine vm(model,output);
     for(unsigned repeat=0;repeat<8;++repeat){
-        for(auto make:{late_shadow,retained_location,dictionary_fallback}){
+        for(auto make:{late_shadow,retained_location,dictionary_fallback,location_after_scope}){
             auto code=make();output.str("");output.clear();check(vm.run(code.bytecode).exit_code==0,"raw entry failed");
-            const auto want=make==late_shadow?"1\n2\n":make==retained_location?"9\n":"2\n1\n";
+            const auto want=make==late_shadow?"1\n2\n":make==retained_location?"9\n":make==location_after_scope?"2\n":"2\n1\n";
             check(output.str()==want,"slot route, fallback, or retained location mismatch");
         }
         auto code=uninitialized();bool rejected=false;
@@ -89,5 +118,5 @@ print(callback(),sum)}
     }
 }
 }
-int main(){try{raw_protocol();graph_roots();check(VmSlotTestAccess::clears_unreachable_cycle(),"GC clear must release slot, dictionary and deferred closure cycles");std::cout<<checks<<" VM slot, dynamic fallback, location and GC checks passed\n";return 0;}
+int main(){try{raw_protocol();graph_roots();check(VmSlotTestAccess::bounded_recency(),"cold cached shapes starved a hot activation");check(VmSlotTestAccess::activation_leases(),"activation lease recycled a live slot or retained business roots");check(VmSlotTestAccess::clears_unreachable_cycle(),"GC clear must release slot, dictionary and deferred closure cycles");std::cout<<checks<<" VM slot, dynamic fallback, location and GC checks passed\n";return 0;}
 catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

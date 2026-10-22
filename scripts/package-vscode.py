@@ -11,7 +11,7 @@ parser.add_argument("--output", type=Path)
 args = parser.parse_args()
 source = root / "editors" / "vscode"
 package = json.loads((source / "package.json").read_text(encoding="utf-8"))
-output = args.output or root / "build" / f"{package['name']}-{package['version']}.vsix"
+output = args.output or root / "tests" / "build" / f"{package['name']}-{package['version']}.vsix"
 output.parent.mkdir(parents=True, exist_ok=True)
 ns = "http://schemas.microsoft.com/developer/vsx-schema/2011"
 manifest = Element("PackageManifest", {"Version": "2.0.0", "xmlns": ns})

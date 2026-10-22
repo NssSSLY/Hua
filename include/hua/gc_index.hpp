@@ -36,7 +36,10 @@ public:
         if(largest<8||expected>largest/2)throw std::length_error("GC address index capacity overflow");
         return std::bit_ceil(std::max(std::size_t(8),expected*2));
     }
+    AddressIndex()=default;
     explicit AddressIndex(std::size_t expected,Hash hash={}):hash_(hash){slots_.resize(capacity_for(expected,slots_.max_size()));}
+    // Reuse storage across collections: same capacity rule, all slots empty.
+    void reset(std::size_t expected){slots_.assign(capacity_for(expected,slots_.max_size()),Slot{});size_=0;}
     bool emplace(const void* key,std::size_t value){
         if(!key)throw std::invalid_argument("GC address index requires a pinned nonnull object");
         if(slots_.empty())throw std::length_error("GC address index has no capacity");

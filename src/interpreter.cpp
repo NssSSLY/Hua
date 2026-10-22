@@ -18,7 +18,7 @@ struct Broken {};struct Continued {};
 template<class T> struct Restore {T& value;T old;Restore(T& v,T next):value(v),old(v){value=next;}~Restore(){value=old;}};
 std::vector<const Node*> params(const Node& n) {std::vector<const Node*>out;for(const auto&c:n.children)if(c->kind==N::Parameter)out.push_back(c.get());return out;}
 bool mutable_param(const Node& p){return p.text.find(" mut")!=std::string::npos || (!p.children.empty()&&p.children[0]->kind==N::MutableType);}
-bool writable_value(const Value& v){if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
+bool writable_value(const Value& v){if(auto p=std::get_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
 
 Value read_member(const Value& v,bool writable){return writable ? v : read_only(v);}
 }
@@ -155,7 +155,7 @@ Routine<Interpreter::Location> Interpreter::locate(const Node& n) {
     co_await Yield{};tick(n);
     if(n.kind==N::Name){auto& b=environment_->lookup(n.text,n.span);co_return Location{&b.value,b.type,b.mutable_binding,{},{},{}};}
     if(n.kind==N::Member) {
-        auto base=(co_await evaluate(*n.children[0]));auto object=std::get_if<StructValue>(&base.data);
+        auto base=(co_await evaluate(*n.children[0]));auto object=materialize_record(base);
         if(!object)runtime_error(n.span,"field assignment requires a struct","E4003");
         if(object->data->enumeration)runtime_error(n.span,"enum fields are private","E4003");
         auto field=object->data->fields.find(n.text);if(field==object->data->fields.end())runtime_error(n.span,"unknown struct field","E4003");
@@ -174,7 +174,7 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     co_await Yield{};tick(n);
     switch(n.kind) {
     case N::Integer:case N::Float:case N::String:case N::Boolean:case N::Nil:co_return literal(n);
-    case N::Name:{auto& b=environment_->lookup(n.text,n.span);co_return b.value;}
+    case N::Name:{auto& b=environment_->lookup(n.text,n.span);if(auto p=std::get_if<PlainRecord>(&b.value.data);p&&p->writable)materialize_record(b.value);co_return b.value;}
     case N::Pack:{std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back((co_await evaluate(*c)));contextual.push_back(contextual_literal(*c));}for(auto& value:values)value=copy_value(std::move(value));co_return make_multi(std::move(values),std::move(contextual));}
     case N::MapLiteral:{auto value=make_map(type_name(*n.children[0]),n.span);auto& map=std::get<MapValue>(value.data);for(std::size_t i=1;i<n.children.size();++i){auto key=(co_await evaluate(*n.children[i]->children[0]));auto item=(co_await evaluate(*n.children[i]->children[1]));map_put(map,key,std::move(item),n.children[i]->span,contextual_literal(*n.children[i]->children[1]));}co_return value;}
     case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value,n.span),false};co_return result_payload(value,true,n.span);}
@@ -234,8 +234,9 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     case N::Member: {
         auto base=(co_await evaluate(*n.children[0]));
         if(n.text=="len" && (std::holds_alternative<SliceValue>(base.data)||std::holds_alternative<MapValue>(base.data)||std::holds_alternative<std::string>(base.data)))co_return aggregate_member(base,n.text,n.span);
-        auto object=std::get_if<StructValue>(&base.data);if(!object)runtime_error(n.span,"member access requires a struct","E4003");
-        if(auto field=object->data->fields.find(n.text);field!=object->data->fields.end())co_return read_member(field->second,object->writable);
+        if(auto p=std::get_if<PlainRecord>(&base.data))if(auto item=plain_record_field(*p,n.text))co_return std::move(*item);
+        auto object=materialize_record(base);if(!object)runtime_error(n.span,"member access requires a struct","E4003");
+        if(auto field=object->data->fields.find(n.text);field!=object->data->fields.end()){retain_record_alias(field->second);co_return read_member(field->second,object->writable);}
         auto key=object->data->name+"."+n.text;auto method=model_.functions.find(key);
         if(method==model_.functions.end())runtime_error(n.span,"unknown struct member","E4003");
         if(method->second->span.file_id!=n.span.file_id && method->second->text.find(" pub")==std::string::npos)

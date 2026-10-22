@@ -23,8 +23,8 @@ struct Row {
  HUA_GC_COST_FIELDS(HUA_GC_COST_MEMBER)
 #undef HUA_GC_COST_MEMBER
  std::array<std::uint64_t,9> ns{};
- std::array<std::uint64_t,21> value_kinds{};
- std::array<std::array<std::uint64_t,21>,4> value_sources{};std::size_t source=3;
+ std::array<std::uint64_t,22> value_kinds{};
+ std::array<std::array<std::uint64_t,22>,4> value_sources{};std::size_t source=3;
  std::uint64_t start_ns{},total_ns{};
 };
 struct Sink {
@@ -38,7 +38,7 @@ struct Sink {
    HUA_GC_COST_FIELDS(HUA_GC_COST_JSON)
 #undef HUA_GC_COST_JSON
    output<<",\"phases_ns\":{";for(std::size_t i=0;i<row.ns.size();++i){if(i)output<<',';output<<'"'<<phases[i]<<"\":"<<row.ns[i];}
-   output<<"},\"value_kinds\":[";for(std::size_t i=0;i<row.value_kinds.size();++i){if(i)output<<',';output<<row.value_kinds[i];}output<<"],\"value_sources\":[";for(std::size_t i=0;i<row.value_sources.size();++i){if(i)output<<',';output<<'[';for(std::size_t j=0;j<21;++j){if(j)output<<',';output<<row.value_sources[i][j];}output<<']';}output<<"]}\n";output.flush();failed=failed||!output;
+   output<<"},\"value_kinds\":[";for(std::size_t i=0;i<row.value_kinds.size();++i){if(i)output<<',';output<<row.value_kinds[i];}output<<"],\"value_sources\":[";for(std::size_t i=0;i<row.value_sources.size();++i){if(i)output<<',';output<<'[';for(std::size_t j=0;j<22;++j){if(j)output<<',';output<<row.value_sources[i][j];}output<<']';}output<<"]}\n";output.flush();failed=failed||!output;
   }catch(...){failed=true;}
  }
 };

@@ -26,10 +26,15 @@ struct Session {
  std::ofstream& output;ExecutionMetrics& metrics;Clock::time_point start{Clock::now()};std::uint64_t cpu_start{cpu_ns()};
  std::unordered_map<const Node*,Route> routes;std::vector<std::pair<const Node*,const char*>> stack;
  struct Work {std::uint64_t calls{},inclusive{},exclusive{};};
- struct Frame {const Node* fn{};std::string name,body,type;std::uint64_t begin{},children{};};
+ struct Visit {
+  std::string target,module;bool probing{};std::uint64_t ordinal{},steps{},values{},work_at_entry{};
+  std::map<std::string,Work> before,helpers;std::map<std::string,std::uint64_t> volume_before,volumes;
+ };
+ std::vector<Visit> visits;
+ struct Frame {const Node* fn{};std::string name,body,type;std::uint64_t begin{},children{};std::size_t visit{std::size_t(-1)};};
  std::map<std::string,Work> work,body_work;std::vector<Frame> work_stack;
  std::unordered_map<const Node*,std::string> helpers;std::map<std::string,std::uint64_t> volume;
- std::map<std::string,std::uint64_t> calls,bodies;const Node* analyze{};bool complete{};
+ std::map<std::string,std::uint64_t> calls,bodies;const Node* analyze{};bool complete{};bool pooled{};
  Session(const SemanticModel& model,ExecutionMetrics& m,std::ofstream& out):output(out),metrics(m){
   if(active)throw std::runtime_error("nested bootstrap phase session");
   std::map<std::pair<std::string,std::string>,const char*> names={{{"types.hua","analyze"},"types"},{{"types.hua","infer"},"return-infer"},{{"modules.hua","analyze_compiler"},"names"},{{"parser.hua","parse_compiler"},"parse"},{{"capabilities.hua","analyze"},"capabilities"},{{"lowering.hua","lower"},"lower"},{{"lowering.hua","verify"},"core-verify"},{{"bytecode.hua","compile"},"codegen"},{{"bytecode.hua","generate_verified"},"emit"},{{"bytecode_verify.hua","verify"},"bytecode-verify"},{{"archive.hua","encode"},"encode"},{{"archive.hua","publish"},"publish"}};
@@ -37,7 +42,7 @@ struct Session {
   std::size_t phases=0;
   for(const auto& [_,fn]:model.functions){auto file=std::filesystem::path(fn->span.file_id).filename().string(),name=declared_name(*fn);auto split=name.rfind('$');if(split!=std::string::npos)name.erase(0,split+1);
    Route route;if(auto found=names.find({file,name});found!=names.end()){route.phase=found->second;++phases;if(file=="capabilities.hua"&&name=="analyze")analyze=fn;}
-   if(file=="capabilities.hua"){helpers.emplace(fn,name);if(auto found=counters.find(name);found!=counters.end())route.count=found->second;}
+   if(file=="capabilities.hua"){if(name=="prepare_plan")pooled=true;helpers.emplace(fn,name);if(auto found=counters.find(name);found!=counters.end())route.count=found->second;}
    if(route.phase||route.count)routes.emplace(fn,route);
   }
   if(phases!=names.size()||!analyze)throw std::runtime_error("compiler phase identity mismatch");active=this;event("begin","execution");
@@ -53,11 +58,18 @@ struct Session {
  void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){
   if(auto h=helpers.find(fn);h!=helpers.end()){
    Frame f{fn,h->second,"","",metrics.steps.load(),0};
-   if(f.name=="statement"&&caller==analyze)f.body=string(member(args.at(1),"function"));
+   if(f.name=="statement"&&caller==analyze){
+    f.body=string(member(args.at(1),"function"));Visit visit;
+    visit.target=f.body;visit.module=string(member(member(args.at(1),"unit"),"id"));
+    visit.probing=std::get<bool>(member(args.at(0),"probing").data);
+    visit.ordinal=bodies[f.body]+1;visit.values=size(member(args.at(1),"values"));
+    visit.work_at_entry=std::get<std::int64_t>(member(args.at(0),"work").data);
+    visit.before=work;visit.volume_before=volume;f.visit=visits.size();visits.push_back(std::move(visit));
+   }
    if(f.name=="field_defaults"){f.type=string(member(args.at(1),"type_name"));volume["seed-root-origins"]+=size(member(args.at(1),"origins"));}
    if(f.name=="snapshot"){volume["snapshot-bindings"]+=size(args.at(0));for(const auto& [_,v]:std::get<MapValue>(args[0].data).data->entries)volume["snapshot-fields"]+=size(member(v,"fields"));}
-   if(f.name=="editable")volume["editable-fields"]+=size(member(args.at(1),"fields"));
-   if(f.name=="storage_aliases"){const auto& values=member(args.at(0),"values");volume["alias-bindings"]+=size(values);for(const auto& [_,v]:std::get<MapValue>(values.data).data->entries)volume["alias-fields"]+=size(member(v,"fields"));}
+   if(f.name=="editable")volume["editable-fields"]+=size(member(args.at(pooled?2:1),"fields"));
+   if(f.name=="storage_aliases"){const auto& values=member(args.at(pooled?1:0),"values");volume["alias-bindings"]+=size(values);for(const auto& [_,v]:std::get<MapValue>(values.data).data->entries)volume["alias-fields"]+=size(member(v,"fields"));}
    if(f.name=="copy_view")volume["copy-view-origins"]+=size(member(args.at(0),"origins"));
    work_stack.push_back(std::move(f));
   }
@@ -72,15 +84,35 @@ struct Session {
    if(delta<f.children)throw std::runtime_error("invalid helper step partition");auto& w=work[f.name];++w.calls;w.inclusive+=delta;w.exclusive+=delta-f.children;
    if(!work_stack.empty())work_stack.back().children+=delta;
    if(!f.body.empty()){auto& b=body_work[f.body];++b.calls;b.inclusive+=delta;b.exclusive+=delta-f.children;}
-   if(f.name=="field_defaults"&&result){auto count=size(*result);volume["default-instantiated-fields"]+=count;volume["shape-max:"+f.type]=std::max(volume["shape-max:"+f.type],count);for(const auto& [_,v]:std::get<MapValue>(result->data).data->entries)volume["default-instantiated-origins"]+=size(member(v,"origins"));}
+   if(f.visit!=std::size_t(-1)){
+    auto& v=visits.at(f.visit);v.steps=delta;std::uint64_t partition=0;
+    for(const auto& [name,w]:work){const auto old=v.before[name];Work d{w.calls-old.calls,w.inclusive-old.inclusive,w.exclusive-old.exclusive};
+     if(d.calls||d.inclusive||d.exclusive)v.helpers.emplace(name,d);partition+=d.exclusive;}
+    if(partition!=delta)throw std::runtime_error("target helper steps do not partition body visit");
+    for(const auto& [name,count]:volume)if(!name.starts_with("shape-max:")&&name!="actual-passes"&&name!="logical-work"){
+     auto old=v.volume_before[name];if(count<old)throw std::runtime_error("nonmonotonic capability volume");
+     if(count!=old)v.volumes.emplace(name,count-old);}
+    v.before.clear();v.volume_before.clear();
+   }
+   if(f.name=="field_defaults"&&result){auto count=size(*result);++volume["shape-calls:"+f.type];volume["shape-steps:"+f.type]+=delta;volume["shape-fields:"+f.type]+=count;volume["default-instantiated-fields"]+=count;volume["shape-max:"+f.type]=std::max(volume["shape-max:"+f.type],count);for(const auto& [_,v]:std::get<MapValue>(result->data).data->entries)volume["default-instantiated-origins"]+=size(member(v,"origins"));}
    if(f.name=="analyze"&&result){const auto& model=*std::get<ResultValue>(result->data).payload;volume["actual-passes"]=std::get<std::int64_t>(member(model,"passes").data);volume["logical-work"]=std::get<std::int64_t>(member(model,"work").data);}
   }
   auto found=routes.find(fn);if(found==routes.end()||!found->second.phase)return;
   if(stack.empty()||stack.back().first!=fn)throw std::runtime_error("unbalanced VM phase return");event("end",stack.back().second);stack.pop_back();
  }
  void finish(){if(!work_stack.empty())throw std::runtime_error("unbalanced helper end");if(!stack.empty())throw std::runtime_error("incomplete VM phase execution");event("end","execution");complete=true;}
+ void write_visits(std::ostream& out){
+  out<<",\"target_visits\":[";bool first=true;
+  for(const auto& v:visits){if(!first)out<<',';first=false;
+   out<<"{\"target\":"<<std::quoted(v.target)<<",\"module\":"<<std::quoted(v.module)<<",\"probing\":"<<(v.probing?"true":"false")
+      <<",\"ordinal\":"<<v.ordinal<<",\"steps\":"<<v.steps<<",\"values_at_entry\":"<<v.values<<",\"logical_work_at_entry\":"<<v.work_at_entry<<",\"helpers\":{";
+   bool field=true;for(const auto& [n,w]:v.helpers){if(!field)out<<',';field=false;
+    out<<std::quoted(n)<<":{\"calls\":"<<w.calls<<",\"inclusive\":"<<w.inclusive<<",\"exclusive\":"<<w.exclusive<<'}';}
+   out<<"},\"volumes\":{";field=true;for(const auto& [n,count]:v.volumes){if(!field)out<<',';field=false;out<<std::quoted(n)<<':'<<count;}out<<"}}";
+  }out<<']';
+ }
  void report(std::ostream& out){out<<"{\"schema\":\"hua.bootstrap.phase-summary.v1\",\"steps\":"<<metrics.steps.load()<<",\"peak_calls\":"<<metrics.peak_calls.load()<<",\"complete\":"<<(complete?"true":"false")<<",\"calls\":{";bool first=true;
-  for(const auto& [n,v]:calls){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"body_visits\":{";first=true;for(const auto& [n,v]:bodies){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"helper_work\":{";first=true;for(const auto& [n,v]:work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"inclusive\":"<<v.inclusive<<",\"exclusive\":"<<v.exclusive<<'}';}out<<"},\"body_work\":{";first=true;for(const auto& [n,v]:body_work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"steps\":"<<v.inclusive<<'}';}out<<"},\"volumes\":{";first=true;for(const auto& [n,v]:volume){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"}}\n";
+  for(const auto& [n,v]:calls){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"body_visits\":{";first=true;for(const auto& [n,v]:bodies){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"},\"helper_work\":{";first=true;for(const auto& [n,v]:work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"inclusive\":"<<v.inclusive<<",\"exclusive\":"<<v.exclusive<<'}';}out<<"},\"body_work\":{";first=true;for(const auto& [n,v]:body_work){if(!first)out<<',';first=false;out<<std::quoted(n)<<":{\"calls\":"<<v.calls<<",\"steps\":"<<v.inclusive<<'}';}out<<"}";write_visits(out);out<<",\"volumes\":{";first=true;for(const auto& [n,v]:volume){if(!first)out<<',';first=false;out<<std::quoted(n)<<':'<<v;}out<<"}}\n";
  }
 };
 inline void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){if(active)active->enter(fn,caller,args);}

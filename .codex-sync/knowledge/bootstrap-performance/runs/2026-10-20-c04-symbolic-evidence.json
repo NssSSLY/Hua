@@ -1,0 +1,91 @@
+{
+  "status": "semantic_verified_performance_rejected_default_unchanged",
+  "candidate_sha256": "0f5b7631616d456bd2ea305a04f2cdf98b29288aae55ed7e8274b3013dc443a4",
+  "default_capability_sha256": "6d6a4a2accb33b4cf31f0b8e2bc23d4eea2aade527367642636038302266266b",
+  "runtime_sha256": "3afa32e1121d3677e73be9fb5467aabeb132ad1e700c011870643f02e7e33e85",
+  "ordinary_test_runtime_sha256": "922fdab4ca138e5bb2b8247d96e8bc85048d4d2d46ab6b3b76fab1503d52b1b2",
+  "default_closure": {
+    "modules": 14,
+    "bytes": 288120
+  },
+  "candidate_closure": {
+    "modules": 14,
+    "bytes": 304433,
+    "sources": {
+      "archive.hua": "b99c09b006a8613a183c5183b1dd1637092fbbabe6d8eb1885a72b5d6b171f23",
+      "archive_main.hua": "864e55563119868c7be43d8caf1f4657074dc246df516679a442ef9f812dd522",
+      "ast_pool.hua": "6cbe5f78816f533f14b6ecedd86256f844125ee97b87550fddf8234c44ed5c14",
+      "bytecode.hua": "3514e1853fd142e814c5aff9b10a4bf22c91efeddb8e306f4f30ca6e756da712",
+      "bytecode_verify.hua": "8cbb9a77e51d701deb8bf5ff86ea4b1b18c1d12aacb45fe3919e14639ac5e1db",
+      "capabilities.hua": "0f5b7631616d456bd2ea305a04f2cdf98b29288aae55ed7e8274b3013dc443a4",
+      "catalog.hua": "77f747fd4df0b57744f905ccf5bb18921cb7676fc29857f81e2cb5529c0e2fad",
+      "lexer.hua": "08bf282c6aea386a2ce72caad3f999ade361afe6a708dfe4a98997f2f469953d",
+      "lowering.hua": "c442ca0a52da125d7eca28d94e36392cf64ab35f1fcaddbc9b5cc7594e89d6f5",
+      "modules.hua": "452c7a3945e7351ce7cc1aee727bcf6418f33d6c2774becc2e4fbd0652cdbff6",
+      "parser.hua": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28",
+      "signatures.hua": "f79c4d86d0dd76ead202401d56813d6117db2929fc05aa1f0997b1dff20af40d",
+      "type_rules.hua": "5d92c454c4f99ad97eff2335207c57424f93d10d3da1fd74d257f03c28f182ab",
+      "types.hua": "1732165c82aa76e20bb69a4c9a9c7b50486fb282d4a150cb5ca584dcf6d77c33"
+    }
+  },
+  "candidate_analyzer_sha256": "06e0a19bbbc5ed3e47783890434f9e841bb2ea44b0df8f364cddfef900801c9e",
+  "full_own_source_runs": 0,
+  "default_selfhost_unchanged": 32,
+  "protected_files_unchanged": 148,
+  "tests": {
+    "c04_cases": 196,
+    "c04_checks": 1034,
+    "private_assertions_per_path": 56,
+    "private_paths": 3,
+    "metadata_assertions": 279,
+    "seed_assertions_per_path": 17,
+    "seed_paths": 3,
+    "selected_ctest": "6/6",
+    "supervisor_cases": 5,
+    "whole_ctest_run": false
+  },
+  "body_visits_before": 168,
+  "body_visits_after": 153,
+  "logical_work_before": 30833,
+  "logical_work_after": 30833,
+  "passes_before": 5,
+  "passes_after": 5,
+  "c04_body_steps_before": 31826348,
+  "c04_body_steps_after": 35160636,
+  "performance": {
+    "parser": {
+      "before_steps": 75143090,
+      "after_steps": 78477378,
+      "step_change_percent": 4.437251648820939,
+      "before_cpu_seconds": 18.328125,
+      "after_cpu_seconds": 16.78125,
+      "before_peak_bytes": 163598336,
+      "after_peak_bytes": 188977152,
+      "report_sha256": "a0893ed3893e0e1e3a7f5c2af7b7f1f3d85c2ef73afe5bda4f621b0b08b70e40"
+    },
+    "modules": {
+      "before_steps": 100159280,
+      "after_steps": 106680744,
+      "step_change_percent": 6.511093130861156,
+      "before_cpu_seconds": 22.671875,
+      "after_cpu_seconds": 23.453125,
+      "before_peak_bytes": 212701184,
+      "after_peak_bytes": 237576192,
+      "report_sha256": "8956aa5581c716a5ef514dfc449e5ef1ffe491a4b63e6f69edd36079a7fa9d30"
+    }
+  },
+  "scope": "C04 pipeline on frozen Parser/Modules; not C05-C07 whole compiler or self generations",
+  "commit_push": false,
+  "final_audit": {
+    "status": "passed",
+    "protected_files": 148,
+    "default_selfhost_files": 32,
+    "history_files": 39,
+    "confirmations": 207,
+    "fixed_er_rs_rows": 22,
+    "active_docs": 9,
+    "local_links_checked": 1254,
+    "full_own_source_runs": 0,
+    "committed_or_pushed": false
+  }
+}

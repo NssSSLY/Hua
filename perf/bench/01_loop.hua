@@ -1,0 +1,6 @@
+# 纯分发：while 循环加一，测每条字节码的基础开销
+fn main() {
+    var i = 0
+    while i < 3000000 { i += 1 }
+    print(i)
+}

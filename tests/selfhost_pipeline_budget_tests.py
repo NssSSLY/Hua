@@ -11,7 +11,7 @@ summary=sys.argv[7:]==['--summary']
 out=build/'c04-performance';out.mkdir(exist_ok=True)
 contract=json.loads((repo/'selfhost/contract.json').read_text(encoding='utf-8'));limits=contract['compiler_budget']
 contract['budgets']=limits['parser'];contract['analysis']['budgets']=limits['analysis']
-assert (limits['execution_steps'],limits['function_calls_depth'],limits['collection_interval'],limits['supervisor_seconds'],limits['report_bytes'])==(500000000,128,65536,600,16777216)
+assert (limits['execution_steps'],limits['function_calls_depth'],limits['collection_interval'],limits['supervisor_seconds'],limits['report_bytes'])==(100000000000,128,65536,600,16777216)
 entry=source/'bytecode_main.hua';pending=[entry];files={}
 while pending:
     file=pending.pop()

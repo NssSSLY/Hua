@@ -1,0 +1,131 @@
+{
+  "schema": "hua.directory-relocation.v1",
+  "date": "2026-10-20",
+  "default_build": "tests/build",
+  "diagnostics": "tests/tools",
+  "historical_builds": "tests/artifacts",
+  "moves": [
+    {
+      "from": "build",
+      "to": "tests/artifacts/build"
+    },
+    {
+      "from": "build-bo01-symbols-20261016",
+      "to": "tests/artifacts/build-bo01-symbols-20261016"
+    },
+    {
+      "from": "build-bo04-value-profile-20261016",
+      "to": "tests/artifacts/build-bo04-value-profile-20261016"
+    },
+    {
+      "from": "build-bo11-body-20261019",
+      "to": "tests/artifacts/build-bo11-body-20261019"
+    },
+    {
+      "from": "build-bo11-body-20261019-r2",
+      "to": "tests/artifacts/build-bo11-body-20261019-r2"
+    },
+    {
+      "from": "build-bo11-body-20261019-r3",
+      "to": "tests/artifacts/build-bo11-body-20261019-r3"
+    },
+    {
+      "from": "build-python-off",
+      "to": "tests/artifacts/build-python-off"
+    },
+    {
+      "from": "tools/audit_bootstrap_phases.py",
+      "to": "tests/tools/audit_bootstrap_phases.py"
+    },
+    {
+      "from": "tools/audit_bootstrap_readmission.py",
+      "to": "tests/tools/audit_bootstrap_readmission.py"
+    },
+    {
+      "from": "tools/audit_bootstrap_scale.py",
+      "to": "tests/tools/audit_bootstrap_scale.py"
+    },
+    {
+      "from": "tools/audit_c07_completion.py",
+      "to": "tests/tools/audit_c07_completion.py"
+    },
+    {
+      "from": "tools/audit_capability_bodies.py",
+      "to": "tests/tools/audit_capability_bodies.py"
+    },
+    {
+      "from": "tools/audit_capability_performance.py",
+      "to": "tests/tools/audit_capability_performance.py"
+    },
+    {
+      "from": "tools/audit_compiler_performance.py",
+      "to": "tests/tools/audit_compiler_performance.py"
+    },
+    {
+      "from": "tools/audit_enum_kernel.py",
+      "to": "tests/tools/audit_enum_kernel.py"
+    },
+    {
+      "from": "tools/audit_enum_layout.py",
+      "to": "tests/tools/audit_enum_layout.py"
+    },
+    {
+      "from": "tools/audit_gc_completion.py",
+      "to": "tests/tools/audit_gc_completion.py"
+    },
+    {
+      "from": "tools/audit_gc_cost.py",
+      "to": "tests/tools/audit_gc_cost.py"
+    },
+    {
+      "from": "tools/audit_gc_flat.py",
+      "to": "tests/tools/audit_gc_flat.py"
+    },
+    {
+      "from": "tools/audit_gc_index.py",
+      "to": "tests/tools/audit_gc_index.py"
+    },
+    {
+      "from": "tools/audit_hua_sema.py",
+      "to": "tests/tools/audit_hua_sema.py"
+    },
+    {
+      "from": "tools/audit_native_cpu.py",
+      "to": "tests/tools/audit_native_cpu.py"
+    },
+    {
+      "from": "tools/audit_parser_transfer.py",
+      "to": "tests/tools/audit_parser_transfer.py"
+    },
+    {
+      "from": "tools/audit_result_materialization.py",
+      "to": "tests/tools/audit_result_materialization.py"
+    },
+    {
+      "from": "tools/audit_sema_scale.py",
+      "to": "tests/tools/audit_sema_scale.py"
+    },
+    {
+      "from": "tools/audit_value_calls.py",
+      "to": "tests/tools/audit_value_calls.py"
+    },
+    {
+      "from": "tools/audit_vm_slots.py",
+      "to": "tests/tools/audit_vm_slots.py"
+    },
+    {
+      "from": "tools/native_cpu_sampler.cpp",
+      "to": "tests/tools/native_cpu_sampler.cpp"
+    }
+  ],
+  "file_preservation": {
+    "files": 9133,
+    "bytes": 1458802172,
+    "fixture_symlinks_retargeted": 2
+  },
+  "notes": [
+    "旧日志及快照的绝对路径保留原文；文件哈希及迁移前状态仅保存在本机tests/artifacts/layout-20261020。",
+    "旧CMakeCache/Ninja仅存档，在新目录重新配置。",
+    "自举模块、运行时源码和公共协议未因目录整理修改。"
+  ]
+}

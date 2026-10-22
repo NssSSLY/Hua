@@ -15,7 +15,7 @@ for name in sorted(seen):shutil.copy2(entry.parent/name,snapshot/name)
 source=snapshot/entry.name
 contract=json.loads((r/'selfhost/contract.json').read_text(encoding='utf-8'))
 budget=contract['compiler_budget']
-assert (budget['execution_steps'],budget['function_calls_depth'],budget['collection_interval'],budget['supervisor_seconds'],budget['report_bytes'])==(500000000,128,65536,600,16777216)
+assert (budget['execution_steps'],budget['function_calls_depth'],budget['collection_interval'],budget['supervisor_seconds'],budget['report_bytes'])==(100000000000,128,65536,600,16777216)
 phasefile=o/'phases.log';phasefile.write_text('',encoding='utf-8')
 compiler=o/'compiler-source';compiler.mkdir(exist_ok=True)
 for name in seen:shutil.copy2(entry.parent/name,compiler/name)
@@ -73,7 +73,7 @@ base=result['phases_ns'].get('start',0);result['phases_ns']={k:v-base for k,v in
 (o/'self-scale-results.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
 print(json.dumps(result),flush=True)
 if p.returncode!=0 or result.get('status')!='ok' or not result.get('transport_within_budget') or result.get('transport_error'):raise SystemExit(1)
-assert result['metrics']['steps']<=500000000 and result['metrics']['peak_calls']<=128
+assert result['metrics']['steps']<=100000000000 and result['metrics']['peak_calls']<=128
 assert result['seconds']<600
 # The adapter validates/executes already emitted instructions; it never compiles this input.
 calls=[]

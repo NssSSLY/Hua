@@ -9,6 +9,7 @@ ManagedHeap& managed_heap(){return active?*active:fallback;}
 HeapScope::HeapScope(ManagedHeap& heap):previous(active){active=&heap;}
 HeapScope::~HeapScope(){active=previous;}
 std::size_t ManagedHeap::live() const {return std::count_if(records_.begin(),records_.end(),[](const auto& x){return !x.pointer.expired();});}
+std::size_t ManagedHeap::poll(){return collect();}
 std::size_t ManagedHeap::collect(){
 #ifdef HUA_INTERNAL_PROFILE
     performance::CollectionTimer collection_timer;

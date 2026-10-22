@@ -7,7 +7,7 @@ std::vector<std::string> sorted_names(std::vector<std::string> names){
     std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());return names;
 }
 }
-RecordLayout::RecordLayout(std::vector<std::string> fields):names(sorted_names(std::move(fields))){}
+RecordLayout::RecordLayout(std::vector<std::string> fields,std::string name,std::map<std::string,std::string> types):names(sorted_names(std::move(fields))),nominal_name(std::move(name)),annotations(std::move(types)){}
 std::size_t RecordLayout::index(const std::string& name)const{
     auto found=std::lower_bound(names.begin(),names.end(),name);
     return found!=names.end()&&*found==name?static_cast<std::size_t>(found-names.begin()):missing;
@@ -15,7 +15,8 @@ std::size_t RecordLayout::index(const std::string& name)const{
 std::shared_ptr<const RecordLayout> record_layout(const Node& declaration){
     std::vector<std::string> names;names.reserve(declaration.children.size());
     for(const auto& field:declaration.children)names.push_back(field->text);
-    return std::make_shared<const RecordLayout>(std::move(names));
+    std::map<std::string,std::string> types;for(const auto& field:declaration.children)if(!field->children.empty())types.emplace(field->text,type_name(*field->children[0]));
+    return std::make_shared<const RecordLayout>(std::move(names),declared_name(declaration),std::move(types));
 }
 RecordFields::iterator RecordFields::find(const std::string& name){
     if(auto* f=std::get_if<Flat>(&storage_)){auto i=f->layout->index(name);return value_at(i)?iterator(this,i):end();}

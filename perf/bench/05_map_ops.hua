@@ -1,0 +1,12 @@
+# map[string]bool：插入、查询、遍历（C04 的主要数据形态）
+fn main() {
+    var m = map[string]bool{}
+    for i in 0..20000 { m["k"+str(i)] = i % 2 == 0 }
+    var hits = 0
+    for round in 0..20 {
+        for i in 0..20000 { if has(m, "k"+str(i*7 % 20000)) && unwrap(m["k"+str(i)]) { hits += 1 } }
+    }
+    var count = 0
+    for key, flag in m { if flag { count += 1 } }
+    print(hits, count)
+}

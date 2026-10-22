@@ -34,6 +34,7 @@ public:
     resources::TaskId owner;
     std::shared_ptr<resources::QuotaLedger> root,ledger;
     resources::ResourceDomain protocol;
+    const std::atomic<bool>* created{}; // == &protocol.created_flag()
     explicit FileScope(resources::TaskId,std::shared_ptr<resources::QuotaLedger> = {},
                        std::optional<resources::Cost> limits = {});
     ~FileScope();

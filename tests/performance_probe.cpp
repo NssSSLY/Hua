@@ -1,6 +1,7 @@
 #include "hua/archive.hpp"
 #include "hua/vm.hpp"
 #include "hua/performance.hpp"
+#include "hua/execution.hpp"
 #include <chrono>
 #include <iostream>
 #include <filesystem>
@@ -81,18 +82,22 @@ static int run(std::vector<std::string> args){
   gc_sink=std::make_unique<hua::gc_cost::Sink>(gc_trace);gc_scope=std::make_unique<hua::gc_cost::Scope>(*gc_sink);args.erase(args.begin(),args.begin()+2);
  }
 #endif
+ // --mix: opcode/value-kind histograms are always counted; this adds per-builtin names.
+ bool mix=false;
+ if(!args.empty()&&args[0]=="--mix"){mix=true;args.erase(args.begin());}
  if(!args.empty()&&args[0]=="--phase-events"){
-  if(args.size()<4){std::cerr<<"usage: probe [--phase-events trace.jsonl] compiler.huab input output\n";return 2;}
+  if(args.size()<4){std::cerr<<"usage: probe [--mix] [--phase-events trace.jsonl] program.huab [args...]\n";return 2;}
   trace_path=args[1];args.erase(args.begin(),args.begin()+2);
  }
  if(args.empty())return 2;
  auto start=Clock::now();auto image=hua::read_huab(path(args[0]));auto loaded=Clock::now();
  hua::RuntimeContext context;context.input=&std::cin;
  context.working_directory=std::filesystem::current_path();context.arguments.assign(args.begin()+1,args.end());
- context.execution_limits={500000000,128,65536};context.execution_metrics=std::make_shared<hua::ExecutionMetrics>();
+ // Same limits as --execution-profile compiler.
+ context.execution_limits={hua::compiler_step_limit,128,65536};context.execution_metrics=std::make_shared<hua::ExecutionMetrics>();
  hua::performance::Counters counters;int code=0;
  std::ofstream trace;if(!trace_path.empty()){trace.open(path(trace_path));if(!trace){std::cerr<<"cannot open diagnostic phase trace\n";return 2;}}
- counters.struct_histogram_enabled=trace.is_open();
+ counters.struct_histogram_enabled=trace.is_open();counters.builtin_histogram_enabled=mix;
 #ifdef HUA_MEMORY_AUDIT
  context.heap=std::make_shared<hua::ManagedHeap>(65536);
  counters.struct_histogram_enabled=false; // Avoid histogram allocations in memory accounting.
@@ -119,7 +124,11 @@ static int run(std::vector<std::string> args){
 #endif
  }
  auto finished=Clock::now();hua::performance::write(std::cerr,counters);std::cerr<<'\n';
- std::cerr<<"{\"load_seconds\":"<<std::chrono::duration<double>(loaded-start).count()<<",\"run_seconds\":"<<std::chrono::duration<double>(finished-loaded).count()<<",\"steps\":"<<context.execution_metrics->steps.load()<<",\"peak_calls\":"<<context.execution_metrics->peak_calls.load()<<"}\n";
+ std::cerr<<"{\"load_seconds\":"<<std::chrono::duration<double>(loaded-start).count()<<",\"run_seconds\":"<<std::chrono::duration<double>(finished-loaded).count()<<",\"steps\":"<<context.execution_metrics->steps.load()<<",\"peak_calls\":"<<context.execution_metrics->peak_calls.load();
+#ifdef HUA_MEMORY_AUDIT
+ {auto memory=hua::native_allocation::snapshot();std::cerr<<",\"native_allocations\":"<<memory.calls<<",\"native_requested_bytes\":"<<memory.requested<<",\"native_peak_bytes\":"<<memory.peak;}
+#endif
+ std::cerr<<"}\n";
 #ifdef HUA_GC_COST_PROFILE
  if(gc_sink&&(gc_sink->failed||gc_sink->dropped))throw std::runtime_error("GC diagnostic trace failed or exceeded4096 records");
 #endif

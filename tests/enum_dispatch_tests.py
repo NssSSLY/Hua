@@ -1,7 +1,7 @@
 """Large enum match dispatch: all leaves, wildcard, payloads and lexical cleanup."""
 from pathlib import Path
 import argparse,json,sys,time
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'tools'))
 from audit_bootstrap_phases import command,save,digest
 
 def source():

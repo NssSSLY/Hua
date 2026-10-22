@@ -1,0 +1,5 @@
+fn one() int { return 1 }
+fn main() {
+    let f = one
+    print(f == f)
+}

@@ -763,5 +763,65 @@
     "source": "import std.list as list\nstruct Inner{xs []int}\nstruct Outer{left Inner\nright Inner}\nfn main(){let ro=[1]\nvar xs=list.from_slice([Outer{left:Inner{xs:ro},right:Inner{xs:[2]}}])\nvar b=unwrap(list.get(xs,0))\nb.left.xs[0]=9}\n",
     "expected": "E3003",
     "stdout": ""
+  },
+  {
+    "name": "nested_copy_scalar_slice_index",
+    "source": "struct View{w bool\nos map[string]bool}\nstruct Val{root View\nn int}\nfn f(args []Val) Val { var out=args[0]\nout.root.w=true\nout.n=2\nreturn out }\nfn main(){let a=[Val{root:View{w:false,os:map[string]bool{}},n:1}]\nlet r=f(a)\nprint(r.root.w,r.n)}\n",
+    "expected": "ok",
+    "stdout": "true 2\n"
+  },
+  {
+    "name": "nested_copy_scalar_let_list",
+    "source": "import std.list as list\nstruct View{w bool\nos map[string]bool}\nstruct Val{root View\nn int}\nfn main(){var empty []Val=[]\nvar items=list.from_slice(empty)\nlist.append(items,Val{root:View{w:false,os:map[string]bool{}},n:1})\nlet args=list.snapshot(items)\nvar out=args[0]\nout.root.w=true\nprint(out.root.w)}\n",
+    "expected": "ok",
+    "stdout": "true\n"
+  },
+  {
+    "name": "nested_copy_shared_member_readonly",
+    "source": "import std.list as list\nstruct View{w bool\nos map[string]bool}\nstruct Val{root View\nn int}\nfn main(){var empty []Val=[]\nvar items=list.from_slice(empty)\nlist.append(items,Val{root:View{w:false,os:map[string]bool{}},n:1})\nlet args=list.snapshot(items)\nvar out=args[0]\nout.root.w=true\nout.root.os[\"k\"]=true}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "nested_copy_param_shared_member_readonly",
+    "source": "struct View{w bool\nos map[string]bool}\nstruct Val{root View\nn int}\nfn main(){let args=[Val{root:View{w:false,os:map[string]bool{}},n:1}]\nvar out=args[0]\nout.root.w=true\nout.root.os[\"k\"]=true}\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "map_loop_key_fresh_record_writable",
+    "source": "struct Env{function string\nvalues map[string]int\nvisible map[string]bool}\nfn snap(values map[string]int) map[string]int { var out=map[string]int{}\nfor k, v in values { out[k]=v }\nreturn out }\nfn environment(function string, values map[string]int) Env { var visible=map[string]bool{}\nfor owner, unused in values { visible[owner]=true }\nreturn Env{function:function,values:snap(values),visible:visible} }\nstruct P{target string\nwritable bool}\nstruct F{module string\nparameters []P}\nfn main(){ var globals=map[string]int{}\nvar functions=map[string]F{}\nfunctions[\"f\"]=F{module:\"m\",parameters:[P{target:\"x\",writable:true}]}\nfor name, f in functions { var e=environment(name,globals)\nfor p in f.parameters { if p.writable { e.visible[p.target]=true } }\nprint(len(e.visible)) } }\n",
+    "expected": "ok",
+    "stdout": "1\n"
+  },
+  {
+    "name": "map_loop_key_typed_call_writable",
+    "source": "struct Env{function string\nvalues map[string]int\nvisible map[string]bool}\nfn environment(function string, values map[string]int) Env { var visible=map[string]bool{}\nreturn Env{function:function,values:values,visible:visible} }\nstruct P{target string\nwritable bool}\nstruct F{module string\nparameters []P}\nfn main(){ var globals=map[string]int{}\nvar functions=map[string]F{}\nfunctions[\"f\"]=F{module:\"m\",parameters:[P{target:\"x\",writable:true}]}\nfor name, f in functions { var e=environment(name,globals)\ne.visible[\"a\"]=true\nprint(len(e.visible)) } }\n",
+    "expected": "ok",
+    "stdout": "1\n"
+  },
+  {
+    "name": "map_loop_value_shared_member_readonly",
+    "source": "struct B{xs []int\nn int}\nfn main(){ var m=map[string]B{}\nm[\"a\"]=B{xs:[1],n:1}\nfor k, b in m { b.xs[0]=2 } }\n",
+    "expected": "E3003",
+    "stdout": ""
+  },
+  {
+    "name": "map_loop_single_key_binding",
+    "source": "fn main(){ var m=map[string]int{}\nm[\"a\"]=1\nfor k in m { var t=k\nt+=\"x\"\nprint(t) } }\n",
+    "expected": "ok",
+    "stdout": "ax\n"
+  },
+  {
+    "name": "empty_map_element_repeat_mut_call",
+    "source": "import std.strings as strings\nstruct View{type_name string\nwritable bool\norigins map[string]bool}\nstruct Value{root View\nfields map[string]View\nprefixes map[string]map[string]bool\nprefix string}\nfn view(type string, writable bool) View { return View{type_name:type,writable:writable,origins:map[string]bool{}} }\nfn value(type string, writable bool) Value { return Value{root:view(type,writable),fields:map[string]View{},prefixes:map[string]map[string]bool{},prefix:\"\"} }\nfn note_prefix(prefixes mut map[string]map[string]bool, path string) {\n    let parts=strings.split(path,\"#@\")\n    var prefix=\"\"\n    let end=len(parts)-1\n    for i in 1..end { prefix+=\"#@\"+parts[i]\n        if !has(prefixes,prefix) { prefixes[prefix]=map[string]bool{} }\n        var descendants=unwrap(prefixes[prefix])\n        descendants[path]=true }\n}\nfn attach(out mut Value, path string, input Value) {\n    if out.prefix!=\"\" { out.fields=clone(out.fields)\n        out.prefixes=clone(out.prefixes) }\n    var item=input\n    out.fields[path]=item.root\n    note_prefix(out.prefixes,path)\n    for name, fact in item.fields { out.fields[path+name]=fact\n        note_prefix(out.prefixes,path+name) }\n}\nfn only_fields(out mut Value, path string, input Value) {\n    out.fields[path]=input.root\n}\nfn only_prefix(out mut Value, path string) {\n    note_prefix(out.prefixes,path)\n}\nfn main(){ var out=value(\"T\",true)\nonly_prefix(out,\"#@a#@y\")\nonly_prefix(out,\"#@b#@y\")\nprint(len(out.prefixes)) }\n",
+    "expected": "ok",
+    "stdout": "2\n"
+  },
+  {
+    "name": "empty_map_element_loop_nested_call",
+    "source": "import std.strings as strings\nstruct View{type_name string\nwritable bool\norigins map[string]bool}\nstruct Value{root View\nfields map[string]View\nprefixes map[string]map[string]bool\nprefix string}\nfn view(type string, writable bool) View { return View{type_name:type,writable:writable,origins:map[string]bool{}} }\nfn value(type string, writable bool) Value { return Value{root:view(type,writable),fields:map[string]View{},prefixes:map[string]map[string]bool{},prefix:\"\"} }\nfn note_prefix(prefixes mut map[string]map[string]bool, path string) {\n    let parts=strings.split(path,\"#@\")\n    var prefix=\"\"\n    let end=len(parts)-1\n    for i in 1..end { prefix+=\"#@\"+parts[i]\n        if !has(prefixes,prefix) { prefixes[prefix]=map[string]bool{} }\n        var descendants=unwrap(prefixes[prefix])\n        descendants[path]=true }\n}\nfn attach(out mut Value, path string, input Value) {\n    if out.prefix!=\"\" { out.fields=clone(out.fields)\n        out.prefixes=clone(out.prefixes) }\n    var item=input\n    out.fields[path]=item.root\n    note_prefix(out.prefixes,path)\n    for name, fact in item.fields { out.fields[path+name]=fact\n        note_prefix(out.prefixes,path+name) }\n}\nfn main(){ var out=value(\"T\",true)\nfor n in [\"a\",\"b\"] { var item=value(n,false)\nitem.root.type_name=n\nattach(out,\"#@\"+n+\"#@y\",item) }\nprint(len(out.fields)) }\n",
+    "expected": "ok",
+    "stdout": "2\n"
   }
 ]

@@ -1,0 +1,12 @@
+# 路径字符串：拼接、split、内建调用（C04 来源路径写法）
+import std.strings as strings
+fn depth(path string) int { return len(strings.split(path,"#@"))-1 }
+fn main() {
+    var total = 0
+    for i in 0..150000 {
+        let origin = "module" + str(i % 13) + "|#@a#@b" + str(i % 5)
+        let parts = strings.split(origin, "|")
+        total += depth(parts[1]) + len(parts[0])
+    }
+    print(total)
+}

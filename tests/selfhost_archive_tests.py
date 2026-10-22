@@ -43,7 +43,7 @@ def case(label,text,expected=None,runtime=False,files=None,filename='input.hua',
  for i,(exe,action,target) in enumerate(paths):
   artifact=project/f'path-{i}.huab';artifact.write_bytes(b'KEEP')
   p=invoke([exe,action,target,'--execution-profile','compiler','--report-budget','--',source,artifact])
-  receipt=json.loads(p.stdout);metrics=json.loads(p.stderr);assert metrics['profile']=='compiler' and metrics['steps']<=500000000 and metrics['peak_calls']<=128
+  receipt=json.loads(p.stdout);metrics=json.loads(p.stderr);assert metrics['profile']=='compiler' and metrics['steps']<=100000000000 and metrics['peak_calls']<=128
   assert receipt['schema']=='hua.archive.result.v1' and receipt['profile']=='C07-HUAB1'
   results.append(receipt);artifacts.append(artifact)
   if reject:

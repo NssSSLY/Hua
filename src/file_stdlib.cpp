@@ -175,7 +175,7 @@ struct FileNativeState {
     explicit FileNativeState(Mode m):mode(m){}
 };
 FileScope::FileScope(R::TaskId id,std::shared_ptr<R::QuotaLedger> r,std::optional<R::Cost> custom)
-    :owner(id),root(r?r:R::QuotaLedger::root(limits(true))),ledger(root->child(custom.value_or(limits(false)))),protocol(ledger){}
+    :owner(id),root(r?r:R::QuotaLedger::root(limits(true))),ledger(root->child(custom.value_or(limits(false)))),protocol(ledger),created(&protocol.created_flag()){}
 FileScope::~FileScope(){try{finish();}catch(...){}}
 void FileScope::pump(){protocol.pump();}
 void FileScope::finish(){protocol.owner_exit(owner);pump();}

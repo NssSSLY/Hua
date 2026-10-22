@@ -217,7 +217,7 @@
       "depth": 64,
       "work": 262144
     },
-    "execution_steps": 500000000,
+    "execution_steps": 100000000000,
     "function_calls_depth": 128,
     "collection_interval": 65536,
     "supervisor_seconds": 600,

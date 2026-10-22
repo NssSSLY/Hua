@@ -11,7 +11,8 @@ if(MSVC)
 else()
     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-add_library(hua_semantics src/entry.cpp src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/enum_value.cpp src/numeric.cpp src/array.cpp src/record_fields.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
+add_library(hua_semantics src/entry.cpp src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/enum_value.cpp src/numeric.cpp src/array.cpp src/record_fields.cpp
+    src/plain_record.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(hua_semantics PUBLIC hua_frontend Threads::Threads)
 option(HUA_SEMA_PROFILE "Build diagnostic host semantic scale counters" OFF)
@@ -240,6 +241,29 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(hua_runtime_storage_probe tests/runtime_storage_probe.cpp tests/support/native_allocations.cpp)
+    target_link_libraries(hua_runtime_storage_probe PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_runtime_storage_probe PRIVATE -static -municode)
+    endif()
+    add_executable(hua_plain_record_tests tests/plain_record_tests.cpp tests/support/native_allocations.cpp)
+    target_link_libraries(hua_plain_record_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_plain_record_tests PRIVATE -static)
+    endif()
+    add_test(NAME plain_records COMMAND hua_plain_record_tests)
+    set_tests_properties(plain_records PROPERTIES TIMEOUT 30 LABELS "runtime-contract")
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME plain_record_execution COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/plain_record_execution_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/plain-record-execution)
+        set_tests_properties(plain_record_execution PROPERTIES TIMEOUT 180 LABELS "runtime-contract")
+    endif()
+    add_executable(hua_gc_generation_tests tests/gc_generation_tests.cpp tests/support/native_allocations.cpp)
+    target_link_libraries(hua_gc_generation_tests PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_gc_generation_tests PRIVATE -static)
+    endif()
+    add_test(NAME gc_generations COMMAND hua_gc_generation_tests)
+    set_tests_properties(gc_generations PROPERTIES TIMEOUT 30 LABELS "runtime-contract;gc-contract")
     add_executable(hua_gc_tests tests/gc_tests.cpp)
     target_link_libraries(hua_gc_tests PRIVATE hua_semantics)
     if(MINGW)
@@ -651,16 +675,50 @@ endif()
 
 # Small C04 capability parity only; compiler own-source/generation pipelines stay separate.
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_executable(hua_capability_prepared_execution tests/c04_prepared_execution_probe.cpp)
+    target_link_libraries(hua_capability_prepared_execution PRIVATE hua_semantics)
+    if(MINGW)
+        target_link_options(hua_capability_prepared_execution PRIVATE -static -municode -Wl,--stack,8388608)
+    endif()
     add_test(NAME capability_c04 COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_c04_tests.py $<TARGET_FILE:hua>
         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
         --subset-probe $<TARGET_FILE:hua_subset_probe>
-        --type-oracle $<TARGET_FILE:hua_parser_oracle>)
+        --type-oracle $<TARGET_FILE:hua_parser_oracle>
+        --extra-cases ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/c04_call_cases.json
+        --execution-probe $<TARGET_FILE:hua_capability_prepared_execution>
+        --batch-size 64 --child-seconds 60 --prepare-seconds 120)
     set_tests_properties(capability_c04 PROPERTIES TIMEOUT 900 LABELS "capability-contract;c04-small-inputs")
     add_test(NAME capability_instantiation COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_instantiation_tests.py $<TARGET_FILE:hua>
         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-instantiation)
     set_tests_properties(capability_instantiation PROPERTIES TIMEOUT 60 LABELS "capability-contract;c04-small-inputs")
+    add_test(NAME capability_dependencies COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_dependency_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-dependencies)
+    set_tests_properties(capability_dependencies PROPERTIES TIMEOUT 60 LABELS "capability-contract;c04-small-inputs")
+    add_test(NAME capability_prepared_supervisor COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_prepared_support_tests.py)
+    set_tests_properties(capability_prepared_supervisor PROPERTIES TIMEOUT 10 LABELS "capability-contract;c04-small-inputs")
+    add_test(NAME capability_symbolic COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_symbolic_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-symbolic
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/tests/experimental/c04-symbolic/capabilities.hua)
+    set_tests_properties(capability_symbolic PROPERTIES TIMEOUT 60 LABELS "capability-contract;c04-small-inputs;c04-experimental")
+    add_test(NAME capability_transforms COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_transform_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-transforms
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/tests/experimental/c04-r1-r2/capabilities.hua)
+    set_tests_properties(capability_transforms PROPERTIES TIMEOUT 60 LABELS "capability-contract;c04-small-inputs;c04-experimental")
+    add_test(NAME capability_flow_state COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_flow_state_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-flow-state
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/tests/experimental/c04-r1-r2/capabilities.hua)
+    set_tests_properties(capability_flow_state PROPERTIES TIMEOUT 60 LABELS "capability-contract;c04-small-inputs;c04-experimental")
+    add_test(NAME capability_parameter_origins COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_seed_tests.py $<TARGET_FILE:hua>
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-seed)
+    set_tests_properties(capability_parameter_origins PROPERTIES TIMEOUT 180 LABELS "capability-contract;c04-small-inputs")
     add_test(NAME capability_flow_metadata COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/capability_metadata_tests.py $<TARGET_FILE:hua>
         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/capability-metadata)

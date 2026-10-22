@@ -1,0 +1,25 @@
+# 值复制：含字符串/切片/嵌套 struct 的记录按值传入、修改后返回
+struct Inner { name string
+    tags []string
+    count int }
+struct Outer { label string
+    left Inner
+    right Inner
+    flags map[string]bool
+    total int }
+fn bump(o Outer, k int) Outer {
+    var out = o
+    out.total = o.total + k
+    out.left.count = o.left.count + 1
+    return out
+}
+fn read(o Outer) int { return o.total + o.left.count + o.right.count }
+fn main() {
+    var o = Outer{label:"outer", left:Inner{name:"l", tags:["a","b","c"], count:0}, right:Inner{name:"r", tags:["x"], count:5}, flags:map[string]bool{"p":true}, total:0}
+    var acc = 0
+    for i in 0..200000 {
+        o = bump(o, i % 7)
+        acc = (acc + read(o)) % 1000003
+    }
+    print(acc, o.left.count)
+}

@@ -28,6 +28,19 @@ with tempfile.TemporaryDirectory(prefix='hua-binary-',dir=build) as temp:
         p=fixture(text)
         for command in ['check','run','interpret','build']:run(command,p,code=1,error=error)
         assert not p.with_suffix('.huab').exists()
+    # Structural equality for List, Bytes and enum values (runtime fixtures cover
+    # records, maps, slices and Results; they cannot import std modules or declare enums).
+    triple('''import std.list as list
+import std.bytes as b
+enum Shape { Circle(int), Square(int), Empty }
+var l1=list.from_slice([1,2])
+var l2=list.from_slice([1,2])
+print(l1==l2)
+list.append(l2,3)
+print(l1==l2,l1!=l2)
+print(b.from_text("ab")==b.from_text("ab"),b.from_text("ab")==b.from_text("ac"))
+print(Shape.Circle(1)==Shape.Circle(1),Shape.Circle(1)==Shape.Square(1),Shape.Circle(1)==Shape.Circle(2),Shape.Empty()==Shape.Empty())
+''','true\nfalse true\ntrue false\ntrue false false true\n')
     triple('''import std.bytes as b
 let raw=unwrap(b.from_ints([0,127,128,255]))
 print(type(raw),b.len(raw),unwrap(b.to_ints(raw)),is_err(b.to_text(raw)))

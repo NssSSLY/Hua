@@ -16,6 +16,7 @@ struct Suspend {
 };
 struct Yield {
     bool force{};
+    unsigned weight{1}; // safe-point ticks represented by this check (VM polls every N steps)
     bool await_ready()const;
     void await_suspend(std::coroutine_handle<>);
     void await_resume()const noexcept{}

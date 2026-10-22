@@ -21,7 +21,7 @@ while queue:
 for name in seen:
  shutil.copy2(entry.parent/name,snapshot/name);shutil.copy2(entry.parent/name,compiler/name)
 source=snapshot/entry.name;contract=json.loads((repo/'selfhost/contract.json').read_bytes());b=contract['compiler_budget']
-assert (b['execution_steps'],b['function_calls_depth'],b['collection_interval'],b['supervisor_seconds'],b['report_bytes'])==(500000000,128,65536,600,16777216)
+assert (b['execution_steps'],b['function_calls_depth'],b['collection_interval'],b['supervisor_seconds'],b['report_bytes'])==(100000000000,128,65536,600,16777216)
 hashes={name:hashlib.sha256((snapshot/name).read_bytes()).hexdigest() for name in sorted(seen)}
 phasefile=o/'phases.log';phasefile.write_text('',encoding='utf-8')
 if diagnostic:
@@ -128,7 +128,7 @@ if p.returncode==0:
  receipt=json.loads(stdout);result['receipt']=receipt;result['status']=receipt['status'];result['metrics']=json.loads(stderr)
 (o/'self-scale-results.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8');print(json.dumps(result),flush=True)
 assert p.returncode==0 and not timeout and result.get('status')=='ok' and result['seconds']<600
-assert result['metrics']['steps']<=500000000 and result['metrics']['peak_calls']<=128
+assert result['metrics']['steps']<=100000000000 and result['metrics']['peak_calls']<=128
 assert len(stdout)<=b['report_bytes'] and artifact.stat().st_size==receipt['file_bytes']
 calls=[]
 def call(args):

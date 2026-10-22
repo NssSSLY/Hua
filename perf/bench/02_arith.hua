@@ -1,0 +1,8 @@
+# Load/Binary/Store：范围 for + 整数运算
+fn main() {
+    var total = 0
+    for i in 0..2000000 {
+        total = (total + i * 3) % 1000003
+    }
+    print(total)
+}

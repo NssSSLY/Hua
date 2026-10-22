@@ -9,14 +9,61 @@
 #endif
 namespace hua {
 #ifdef HUA_GC_COST_PROFILE
-static_assert(std::variant_size_v<Value::Data> == 21,"Update GC cost Value kind schema");
+static_assert(std::variant_size_v<Value::Data> == 22,"Update GC cost Value kind schema");
 #endif
 namespace {thread_local ManagedHeap fallback;thread_local ManagedHeap* active=nullptr;}
 ManagedHeap& managed_heap(){return active?*active:fallback;}
 HeapScope::HeapScope(ManagedHeap& heap):previous(active){active=&heap;}
 HeapScope::~HeapScope(){active=previous;}
-std::size_t ManagedHeap::live() const {return std::count_if(records_.begin(),records_.end(),[](const auto& x){return !x.pointer.expired();});}
+std::size_t ManagedHeap::live() const {
+    auto count=[](const auto& records){return std::count_if(records.begin(),records.end(),[](const auto& x){return !x.pointer.expired();});};
+    return count(records_)+count(old_records_)+count(pending_records_);
+}
+void ManagedHeap::merge_pending(){
+    records_.reserve(records_.size()+pending_records_.size());
+    for(auto& record:pending_records_)records_.push_back(std::move(record));
+    pending_records_.clear();
+}
 std::size_t ManagedHeap::collect(){
+    if(collecting_)return 0;
+    merge_pending();
+    // Reserve before transferring either partition. A failed allocation leaves
+    // every weak record in its original partition and every root unchanged.
+    records_.reserve(records_.size()+old_records_.size());
+    for(auto& record:old_records_)records_.push_back(std::move(record));
+    old_records_.clear();
+    CollectionGuard guard(collecting_);
+    auto count=collect_records(records_);
+    minor_since_major_=0;
+    major_record_goal_=records_.size()+std::max(records_.size(),collection_interval_);
+    ++collection_work_.majors;
+    return count;
+}
+std::size_t ManagedHeap::poll(){
+    if(collecting_)return 0;
+    merge_pending();
+    if(minor_since_major_>=7 || old_records_.size()+records_.size()>std::max(major_record_goal_,collection_interval_))return collect();
+    // Promotion must not fail after clear() has run. Record moves are noexcept.
+    old_records_.reserve(old_records_.size()+records_.size());
+    CollectionGuard guard(collecting_);
+    auto count=collect_records(records_);
+    for(auto& record:records_)old_records_.push_back(std::move(record));
+    records_.clear();
+    ++minor_since_major_;++collection_work_.minors;
+    return count;
+}
+struct ManagedHeap::Scratch {
+    std::vector<std::shared_ptr<const void>> objects;
+    gc_detail::AddressIndex<> index;
+    gc_detail::EdgeTable edges;
+    std::vector<std::size_t> incoming,work;
+    std::vector<bool> marked;
+};
+std::size_t ManagedHeap::collect_records(std::vector<Record>& records_){
+    if(!scratch_)scratch_=std::make_shared<Scratch>();
+    auto& scratch=*scratch_;
+    // Pins must not outlive this collection, including on unwind.
+    struct Release {std::vector<std::shared_ptr<const void>>& pins;~Release(){pins.clear();}} release{scratch.objects};
 #ifdef HUA_GC_COST_PROFILE
     gc_cost::Collection cost;
     if(cost.enabled()){cost.data.allocated=allocated_;cost.data.records_before=records_.size();cost.data.record_capacity_bytes=records_.capacity()*sizeof(Record);cost.data.record_size_bytes=sizeof(Record);}
@@ -30,11 +77,11 @@ std::size_t ManagedHeap::collect(){
 #ifdef HUA_GC_COST_PROFILE
     if(cost.enabled()){cost.data.live_before=records_.size();cost.data.expired_before=cost.data.records_before-records_.size();}cost.phase(0);
 #endif
-    std::vector<std::shared_ptr<const void>> objects;
+    auto& objects=scratch.objects;objects.clear();objects.reserve(records_.size());
 #ifdef HUA_GC_COST_PROFILE
     gc_detail::AddressIndex<gc_detail::AddressHash,true> index(records_.size());
 #else
-    gc_detail::AddressIndex<> index(records_.size());
+    auto& index=scratch.index;index.reset(records_.size());
 #endif
     for(const auto& r:records_){auto p=r.pointer.lock();
 #ifdef HUA_GC_COST_PROFILE
@@ -45,14 +92,14 @@ std::size_t ManagedHeap::collect(){
 #ifdef HUA_GC_COST_PROFILE
     cost.phase(1);
 #endif
-    gc_detail::EdgeTable edges(objects.size());std::vector<std::size_t> incoming(objects.size());
+    auto& edges=scratch.edges;edges.reset(objects.size());auto& incoming=scratch.incoming;incoming.assign(objects.size(),0);
 #ifdef HUA_GC_COST_PROFILE
     cost.phase(2);
 #endif
     // One synchronous, non-owning visitor per collection. Its single state
     // pointer fits std::function's inline storage in both diagnostic modes.
     struct EdgeState {
-        decltype(index)& addresses;gc_detail::EdgeTable& graph;decltype(incoming)& counts;
+        std::remove_reference_t<decltype(index)>& addresses;gc_detail::EdgeTable& graph;std::vector<std::size_t>& counts;
 #ifdef HUA_GC_COST_PROFILE
         gc_cost::Collection& cost;
 #endif
@@ -61,7 +108,9 @@ std::size_t ManagedHeap::collect(){
         ,cost
 #endif
     };
-    const HeapVisitor visitor=[&state](const void* p){
+    std::size_t emitted_edges=0;
+    const auto visit_edge=[&state,&emitted_edges](const void* p){
+        ++emitted_edges;
 #ifdef HUA_GC_COST_PROFILE
         auto& cost=state.cost;if(cost.enabled()){++cost.data.emitted_edges;if(!p)++cost.data.null_edges;}
 #endif
@@ -78,15 +127,17 @@ std::size_t ManagedHeap::collect(){
 #ifdef HUA_GC_COST_PROFILE
     if(cost.enabled())cost.data.edge_visitor_builds=1;
 #endif
+    const HeapVisitor visitor(visit_edge);
     for(std::size_t i=0;i<objects.size();++i){edges.begin_vertex(i);if(records_[i].edges)records_[i].edges(objects[i].get(),visitor);}
     edges.finish();
+    collection_work_.objects+=objects.size();collection_work_.edges+=emitted_edges;
 #ifdef HUA_GC_COST_PROFILE
     cost.phase(3);
 #endif
 #ifdef HUA_INTERNAL_PROFILE
     for(std::size_t i=0;i<objects.size();++i){HUA_PROFILE_ADD(gc_edges,edges.offsets[i+1]-edges.offsets[i]);}
 #endif
-    std::vector<bool> marked(objects.size());std::vector<std::size_t> work;
+    auto& marked=scratch.marked;marked.assign(objects.size(),false);auto& work=scratch.work;work.clear();
     for(std::size_t i=0;i<objects.size();++i)if(objects[i].use_count()>static_cast<long>(incoming[i]+1)){
 #ifdef HUA_GC_COST_PROFILE
         if(cost.enabled()){++cost.data.roots;++cost.data.marked;cost.data.external_excess+=objects[i].use_count()-(incoming[i]+1);}cost.push(work,cost.data.work_growths);

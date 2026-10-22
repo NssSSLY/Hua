@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDirectory = 'build-python-off',
+    [string]$BuildDirectory = 'tests/build',
     [string]$Destination = (Join-Path $env:LOCALAPPDATA 'Hua\bin'),
     [switch]$AddToUserPath
 )
@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
 $taskFiles = @('hua.exe', 'wasmtime.dll', 'wasmtime-LICENSE.txt')
 if (!$PSBoundParameters.ContainsKey('BuildDirectory')) {
-    $taskCandidates = @('build-python-off', 'build')
+    $taskCandidates = @('tests/build', 'tests/build-python-off')
     $taskFound = $false
     foreach ($taskCandidate in $taskCandidates) {
         $taskCandidatePath = Join-Path $taskRoot $taskCandidate

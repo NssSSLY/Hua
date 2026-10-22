@@ -17,17 +17,17 @@ D002-c/E5已接入可恢复Task、共享FIFO计算域、定时器及Task内文�
 
 ```powershell
 .\scripts\build.ps1
-.\build\hua.exe version
-.\build\hua.exe check .\examples\hello.hua
-.\build\hua.exe ast .\examples\hello.hua
-.\build\hua.exe run .\examples\hello.hua
-.\build\hua.exe run .\examples\fibonacci.hua
-.\build\hua.exe run .\examples\struct.hua
-.\build\hua.exe run .\examples\binary_search.hua
-.\build\hua.exe run .\examples\modules\main.hua
-.\build\hua.exe run .\examples\comments.hua
-.\build\hua.exe bytecode .\examples\modules\main.hua
-.\build\hua.exe interpret .\examples\modules\main.hua
+.\tests\build\hua.exe version
+.\tests\build\hua.exe check .\examples\hello.hua
+.\tests\build\hua.exe ast .\examples\hello.hua
+.\tests\build\hua.exe run .\examples\hello.hua
+.\tests\build\hua.exe run .\examples\fibonacci.hua
+.\tests\build\hua.exe run .\examples\struct.hua
+.\tests\build\hua.exe run .\examples\binary_search.hua
+.\tests\build\hua.exe run .\examples\modules\main.hua
+.\tests\build\hua.exe run .\examples\comments.hua
+.\tests\build\hua.exe bytecode .\examples\modules\main.hua
+.\tests\build\hua.exe interpret .\examples\modules\main.hua
 ```
 
 `run hello.hua` 输出 `Hua`；`run struct.hua` 输出 `5`；fibonacci 输出前十个斐波那契数。
@@ -41,9 +41,9 @@ D002-c/E5已接入可恢复Task、共享FIFO计算域、定时器及Task内文�
 C++20 + CMake 3.20+ + Wasmtime C API SDK。Wasmtime SDK 与编译工具包不提交到 Git。克隆后请从 [官方 Release](https://github.com/bytecodealliance/wasmtime/releases/tag/v49.0.2) 获取对应平台 C API SDK，解压到 `.tools/` 的默认目录，或用 `-DWASMTIME_ROOT=...` 指定。
 
 ```powershell
-cmake -S . -B build
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
+cmake -S . -B tests/build
+cmake --build tests/build --config Release
+ctest --test-dir tests/build -C Release --output-on-failure
 ```
 
 本机的 `scripts/build.ps1` 复用既有 Android SDK CMake/Ninja 和 `.tools/` 便携式 LLVM-MinGW。
@@ -57,7 +57,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ```powershell
 .\scripts\build.ps1 -PythonBridge -PythonHome 'C:\Users\liqia\AppData\Local\Programs\Python\Python312'
-.\build\hua.exe run .\build\python_bridge\main.hua
+.\tests\build\hua.exe run .\tests\build\python_bridge\main.hua
 ```
 
 输出 `Python sqrt: 9`、`missing package: true`、`handles: 0`。
@@ -89,9 +89,9 @@ ctest --test-dir build -C Release --output-on-failure
 已提供 std.os、std.io、std.fs、std.strings、std.json、std.bytes、std.buffer、std.list，共 73 个函数。文件/输入/JSON 的可恢复错误返回 Result。
 
 ```powershell
-'hello' | .\build\hua.exe run .\examples\standard_library.hua -- .\examples\data\profile.json
-.\build\hua.exe build .\examples\standard_library.hua -o .\build\standard_library.huab
-'hello' | .\build\hua.exe run .\build\standard_library.huab -- .\examples\data\profile.json
+'hello' | .\tests\build\hua.exe run .\examples\standard_library.hua -- .\examples\data\profile.json
+.\tests\build\hua.exe build .\examples\standard_library.hua -o .\tests\build\standard_library.huab
+'hello' | .\tests\build\hua.exe run .\tests\build\standard_library.huab -- .\examples\data\profile.json
 ```
 
 输出 `HUA:3:hello`。参数在 `--` 后，文件相对路径基于工作目录，导入相对入口目录；check/build 不执行 I/O。
@@ -103,13 +103,13 @@ ctest --test-dir build -C Release --output-on-failure
 Bytes 保存任意字节，Buffer 支持追加文本/小端整数，List<T> 支持 append/extend/pop 与快照。修改需 var 或 mut 参数，clone 获得独立内容。
 
 ```powershell
-.\build\hua.exe run .\examples\binary_collections.hua -- .\build\bootstrap.bin
-.\build\hua.exe build .\examples\binary_collections.hua -o .\build\binary_collections.huab
-.\build\hua.exe run .\build\binary_collections.huab -- .\build\bootstrap.bin
+.\tests\build\hua.exe run .\examples\binary_collections.hua -- .\tests\build\bootstrap.bin
+.\tests\build\hua.exe build .\examples\binary_collections.hua -o .\tests\build\binary_collections.huab
+.\tests\build\hua.exe run .\tests\build\binary_collections.huab -- .\tests\build\bootstrap.bin
 ```
 
 示例写入 17 字节并读回验证，输出与解释器对照见 [字节与容器合同](docs/标准库与内建接口.md)。
-本阶段补齐自举基础设施，Hua 版本编译器与自举闭环仍未实现。
+2026-10-22：Hua编写的完整编译器（[selfhost/archive_main.hua](selfhost/archive_main.hua)）已在Windows本机编译自身并到达代际不动点（第二、第三代HUAB逐字节相同，当前约474秒）；复现步骤见[开发指南](docs/开发与运行指南.md)，现状与边界见[项目概览](docs/项目概览与进度.md#current-bootstrap-evidence)。
 
 ## 本地模块
 
@@ -129,12 +129,12 @@ print(p.length())
 ## HUAB 与扩展
 
 ```powershell
-.\build\hua.exe build .\examples\modules\main.hua -o .\build\modules.huab
-.\build\hua.exe check .\build\modules.huab
-.\build\hua.exe run .\build\modules.huab
-.\build\hua.exe run .\build\extensions\main.hua
-.\build\hua.exe build .\build\extensions\main.hua
-.\build\hua.exe run .\build\extensions\main.huab
+.\tests\build\hua.exe build .\examples\modules\main.hua -o .\tests\build\modules.huab
+.\tests\build\hua.exe check .\tests\build\modules.huab
+.\tests\build\hua.exe run .\tests\build\modules.huab
+.\tests\build\hua.exe run .\tests\build\extensions\main.hua
+.\tests\build\hua.exe build .\tests\build\extensions\main.hua
+.\tests\build\hua.exe run .\tests\build\extensions\main.huab
 ```
 
 `.huab` 保存整个程序的指令、声明与诊断源码；WASM 字节也嵌入文件。运行时无需原源码。
@@ -189,14 +189,18 @@ Lexer 用 depth 计数处理嵌套，并记录各层普通/文档闭合标记；
 新增`std.path.join/normalize/basename/dirname/ext/relative`和`std.fs.stat/rename/replace/temp_file`；当前15模块/125函数。路径为宿主纯词法处理；rename不覆盖，replace同卷普通文件改名，temp排他创建并关闭，由调用者删除。
 
 ```powershell
-.\build\hua.exe check .\examples\local_paths.hua
-.\build\hua.exe run .\examples\local_paths.hua
-.\build\hua.exe interpret .\examples\local_paths.hua
-.\build\hua.exe build .\examples\local_paths.hua -o .\build\local_paths.huab
-.\build\hua.exe run .\build\local_paths.huab
+.\tests\build\hua.exe check .\examples\local_paths.hua
+.\tests\build\hua.exe run .\examples\local_paths.hua
+.\tests\build\hua.exe interpret .\examples\local_paths.hua
+.\tests\build\hua.exe build .\examples\local_paths.hua -o .\tests\build\local_paths.huab
+.\tests\build\hua.exe run .\tests\build\local_paths.huab
 ```
 
 输出`b demo.txt .txt`和`file 8`。错误、资源和平台边界见 [S1a合同](docs/标准库与内建接口.md#s1a路径与文件状态详细合同)。本次Windows验收；POSIX/第二卷未实测，不承诺断电持久提交。下一切片S1b JSON/配置。
+
+## 工程目录
+
+源码与正式模块保留在根目录；所有测试、诊断工具、构建输出和历史实验集中到 `tests/`。当前构建为 `tests/build/`，旧构建原样保存在 `tests/artifacts/`，不能直接复用其CMake缓存。职责、运行命令及旧路径对照见 [项目目录与迁移](docs/开发与运行指南.md#project-layout) 和 [测试目录说明](tests/目录说明.md)。
 
 ## 文件与验证
 
@@ -220,7 +224,7 @@ HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
 ## 仓库与许可证
 
 项目仓库：[NssSSLY/Hua](https://github.com/NssSSLY/Hua)。沿用仓库已有的 [Apache 2.0 许可证](LICENSE)。
-`.tools/`、`build*/`、`.hua/` 缓存和生成的 `.huab` 不提交，源码 `.huam` 接口清单正常保存。
+`.tools/`、`tests/build*/`、`tests/artifacts/`、`.hua/` 缓存和生成的 `.huab` 不提交，源码 `.huam` 接口清单正常保存。
 
 ## Phase 9 语言与类型示例
 
@@ -228,9 +232,9 @@ HUAB 写入 v6、读取 v1–v6；Native ABI 仍为 1。
 精确数值和固定数组支持范围/溢出检查及 sizeof/alignof；已知调用图推断容器返回写能力。
 
 ```powershell
-.\build\hua.exe run .\examples\language_features.hua
-.\build\hua.exe build .\examples\language_features.hua -o .\build\language_features.huab
-.\build\hua.exe run .\build\language_features.huab
+.\tests\build\hua.exe run .\examples\language_features.hua
+.\tests\build\hua.exe build .\examples\language_features.hua -o .\tests\build\language_features.huab
+.\tests\build\hua.exe run .\tests\build\language_features.huab
 ```
 
 97 个新增用例、549 项检查通过。语法、复制/捕获/布局规则和未开放项见 [语言与类型规则](docs/语言设计与类型规则.md)。
@@ -242,10 +246,10 @@ parallel for支持独立数组计算，最多8线程块；simd for为受检查�
 标准库125接口、HUAB writer6/reader1–6；Native ABI1与可选Python接口不变。任务采用私有深复制快照，禁止跨任务可变借用/全局写入、stdin和后台Native/WASM/Python调用。事件循环、async方法、Channel、通用自动SIMD仍待完成。
 
 ```powershell
-.\build\hua.exe run .\examples\concurrency.hua
-.\build\hua.exe interpret .\examples\concurrency.hua
-.\build\hua.exe build .\examples\concurrency.hua -o .\build\concurrency.huab
-.\build\hua.exe run .\build\concurrency.huab
+.\tests\build\hua.exe run .\examples\concurrency.hua
+.\tests\build\hua.exe interpret .\examples\concurrency.hua
+.\tests\build\hua.exe build .\examples\concurrency.hua -o .\tests\build\concurrency.huab
+.\tests\build\hua.exe run .\tests\build\concurrency.huab
 ```
 
 完整规则和输出见 [GC与并发合同](docs/运行时与扩展设计.md)。新增68用例、409项检查和当时完整CTest16/16通过（当前最新结果见项目概览）；GC根/循环、真实线程屏障/64上限、取消清理、SSE2指令和独立关闭Python构建均已核对。
@@ -253,17 +257,17 @@ parallel for支持独立数组计算，最多8线程块；simd for为受检查�
 
 ## 本地安装、VS Code 与自举起步
 
-现在可把核心安装到用户目录并配置PATH；未指定构建目录时，优先使用完整的build-python-off，再使用build中的运行文件。不需要为运行普通Hua程序安装C++工具链或Python。
+现在可把核心安装到用户目录并配置PATH；未指定构建目录时，优先使用完整的tests/build，再使用tests/build-python-off中的运行文件。不需要为运行普通Hua程序安装C++工具链或Python。
 
 ```powershell
 .\scripts\install-local.ps1 -AddToUserPath
 hua run .\examples\hello.hua
-hua build .\examples\hello.hua -o .\build\hello.huab
-hua run .\build\hello.huab
-code --install-extension .\build\hua-language-0.1.0.vsix
+hua build .\examples\hello.hua -o .\tests\build\hello.huab
+hua run .\tests\build\hello.huab
+code --install-extension .\tests\build\hua-language-0.1.0.vsix
 ```
 
-安装包不存在时运行 `python .\scripts\package-vscode.py`。首次构建请先用build.ps1（默认生成build，可指定-BuildDirectory build-python-off）或前文CMake方式生成核心；其他构建可传安装脚本-BuildDirectory，例如 `.\scripts\install-local.ps1 -BuildDirectory build -AddToUserPath`。配置用户PATH后重新打开其他终端/VS Code。安装目录选择、缺文件处理与本机验证见 [开发与运行指南](docs/开发与运行指南.md#安装入口验证2026-10-07)。
+安装包不存在时运行 `python .\scripts\package-vscode.py`。首次构建请先用build.ps1（默认生成tests/build，可指定-BuildDirectory tests/build-python-off）或前文CMake方式生成核心；其他构建可传安装脚本-BuildDirectory，例如 `.\scripts\install-local.ps1 -BuildDirectory tests/build -AddToUserPath`。配置用户PATH后重新打开其他终端/VS Code。安装目录选择、缺文件处理与本机验证见 [开发与运行指南](docs/开发与运行指南.md#安装入口验证2026-10-07)。
 基础插件源码在 [editors/vscode](editors/vscode/README.md)：高亮、片段、保存检查和检查/运行/构建命令；无LSP、定义跳转或调试器。
 Hua编写的 [词法器](selfhost/lexer.hua) 已能扫描自身源码；135输入、541项进程检查对照C++/解释器/VM/移除源码后的HUAB。插件6项针对性测试及真实VS Code隔离安装通过。
 
@@ -274,20 +278,20 @@ hua run .\selfhost\main.hua -- .\selfhost\lexer.hua
 A05节点池、P1/P2 Hua Parser、N1名称/模块和C04-T1类型/能力已通过对照；A11显式compiler预算已验证20个完整源文件及自身前端闭包。普通run/interpret仍是百万步；仅显式--execution-profile compiler选择编译任务预算。新命令与限制见[前端类型检查与预算](docs/开发与运行指南.md#a11-c04-usage)。
 
 ```powershell
-python .\tools\hua_frontend.py check .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.types.json
+python .\tools\hua_frontend.py check .\examples\frontend_modules\main.hua --hua .\tests\build\hua.exe -o .\tests\build\frontend.types.json
 ```
 
-上述check由Hua分析、不执行输入，输出类型JSON；公共hua.exe check继续用C++前端。C05-L1已生成可校验VM核心树；C06-BC1已由Hua生成/验证指令，C07已提供当前子集完整HUAB容器编码；新完整自身预算尚未通过，连续代际仍需C08，现有C++ Runtime保留。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
+上述check由Hua分析、不执行输入，输出类型JSON；公共hua.exe check继续用C++前端。C05-L1已生成可校验VM核心树；C06-BC1已由Hua生成/验证指令，C07已提供当前子集完整HUAB容器编码；当前源码完整自举已在本机跑通（C2=C3逐字节相同），C09覆盖与正式验收待补，现有C++ Runtime保留。安装、限制与分阶段路线见 [开发与自举指南](docs/开发与运行指南.md)。
 
-错误基础新增Result<void,E>与只读std.error.Value，默认string错误保持。当前16标准模块/141函数。运行`.\build\hua.exe run .\examples\error_foundation.hua`；[Error接口与逐接口盘点](docs/标准库与内建接口.md#standard-error-contract)、[本轮验收与边界](docs/项目概览与进度.md#er-foundation-verification)。普通HUAB写6，新错误能力写7，读1–7；Native ABI1保持。
+错误基础新增Result<void,E>与只读std.error.Value，默认string错误保持。当前16标准模块/141函数。运行`.\tests\build\hua.exe run .\examples\error_foundation.hua`；[Error接口与逐接口盘点](docs/标准库与内建接口.md#standard-error-contract)、[本轮验收与边界](docs/项目概览与进度.md#er-foundation-verification)。普通HUAB写6，新错误能力写7，读1–7；Native ABI1保持。
 
 同步文件句柄已完成D002-b：新增std.file的File/IOFailure与12接口，当前17模块/153函数。
-运行 `.\build\hua.exe run .\examples\file_stream.hua`（在当前目录创建/覆盖hua-file-demo.bin）；[File接口](docs/标准库与内建接口.md#standard-file-contract)、[所有权/GC/额度](docs/运行时与扩展设计.md#d002-file-runtime)、[验收](docs/项目概览与进度.md#d002-b-verification)。普通HUAB6、Error7、File8，读取1–8；已有安装应部署新版核心。异步/E5和其他公开资源后置。
+运行 `.\tests\build\hua.exe run .\examples\file_stream.hua`（在当前目录创建/覆盖hua-file-demo.bin）；[File接口](docs/标准库与内建接口.md#standard-file-contract)、[所有权/GC/额度](docs/运行时与扩展设计.md#d002-file-runtime)、[验收](docs/项目概览与进度.md#d002-b-verification)。普通HUAB6、Error7、File8，读取1–8；已有安装应部署新版核心。异步/E5和其他公开资源后置。
 
 Hua最小降级命令（先分析输入，再输出核心JSON，不运行输入）：
 
 ```powershell
-python .\tools\hua_frontend.py lower .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.core.json
+python .\tools\hua_frontend.py lower .\examples\frontend_modules\main.hua --hua .\tests\build\hua.exe -o .\tests\build\frontend.core.json
 ```
 
 查看 [C05使用与测试适配](docs/开发与运行指南.md#c05-usage) 和 [核心树合同](docs/设计决策与未决事项.md#c05-minimal-lowering)。测试适配的字节码/HUAB仍由C++生成，生产CLI保持现有路径。
@@ -295,7 +299,7 @@ python .\tools\hua_frontend.py lower .\examples\frontend_modules\main.hua --hua 
 Hua指令生成命令（不执行输入；输出已回填/验证的指令JSON）：
 
 ```powershell
-python .\tools\hua_frontend.py emit .\examples\frontend_modules\main.hua --hua .\build\hua.exe -o .\build\frontend.bytecode.json
+python .\tools\hua_frontend.py emit .\examples\frontend_modules\main.hua --hua .\tests\build\hua.exe -o .\tests\build\frontend.bytecode.json
 ```
 
 查看[C06命令与指令加载器](docs/开发与运行指南.md#c06-usage)。Hua已生成指令，C07完整容器/样例已验，完整自身预算及C08代际仍待；[A/B阶段仍未整体验收](docs/设计决策与未决事项.md#abc-current-status)，基础库可独立推进。
@@ -304,8 +308,8 @@ python .\tools\hua_frontend.py emit .\examples\frontend_modules\main.hua --hua .
 Hua完整HUAB构建（当前SB1/BC1，不执行输入）：
 
 ```powershell
-python tools/hua_frontend.py build examples/frontend_modules/main.hua --hua build/hua.exe -o build/frontend-hua.huab
-.\build\hua.exe run .\build\frontend-hua.huab
+python tools/hua_frontend.py build examples/frontend_modules/main.hua --hua tests/build/hua.exe -o tests/build/frontend-hua.huab
+.\tests\build\hua.exe run .\tests\build\frontend-hua.huab
 ```
 
-示例输出`2 2`。Hua完成分析、降级、指令与二进制编码，Python监督/独立读取/安全发布；[用法](docs/开发与运行指南.md#c07-usage)。当前完整自身预算未通过，不能视为完整自举，[实测与下一步](docs/项目概览与进度.md#c07-verification)。
+示例输出`2 2`。Hua完成分析、降级、指令与二进制编码，Python监督/独立读取/安全发布；[用法](docs/开发与运行指南.md#c07-usage)。完整自身已在本机跑通（见[自举现状](docs/项目概览与进度.md#current-bootstrap-evidence)），正式C08/C09验收待补。

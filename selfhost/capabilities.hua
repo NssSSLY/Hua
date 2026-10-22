@@ -39,6 +39,9 @@ pub struct Function { target string
     node int
     parameters []Parameter
     result string }
+struct WriteArgument { destination string
+    parameter bool
+    writable bool }
 struct Summary { returned Value
     unknown bool
     saw_return bool
@@ -55,6 +58,8 @@ struct State { units map[string]modules.Unit
     members map[string]map[string]string
     shapes map[string]map[string]View
     shape_prefixes map[string]map[string]map[string]bool
+    parameter_fields map[string]map[string]View
+    parameter_field_count int
     functions map[string]Function
     variants map[string]string
     summaries map[string]Summary
@@ -80,6 +85,7 @@ struct Environment { unit modules.Unit
     writes map[string]bool
     visible map[string]bool
     required map[string]bool
+    callees map[string]bool
     exits []map[string]Value
     deferred bool }
 fn view(type string, writable bool) View { return View{type_name:type,writable:writable,readonly_children:false,deep_owned:false,record_copy:false,origins:map[string]bool{}} }
@@ -200,6 +206,24 @@ fn seeded(s mut State, type string, writable bool, owner string) Value {
     out.prefixes=unwrap(s.shape_prefixes[type])
     return out
 }
+# Parameter type, write capability and owner are fixed for one analyzed graph.
+# Cache complete immutable origin tables across body revisits, not summaries or
+# evolving argument values. put()/editable()/copied() keep their detach rules.
+fn parameter_seeded(s mut State, type string, writable bool, owner string) Value {
+    let identity=str(len(owner))+":"+owner+str(len(type))+":"+type+":"+str(writable)
+    if !has(s.parameter_fields,identity) { let out=seeded(s,type,writable,owner)
+        # Admission limits internal retained metadata, never language semantics.
+        # Bypass caching when full; the ordinary exact path remains available.
+        if len(s.parameter_fields)<4096 && s.parameter_field_count+len(out.fields)<=4096 {
+            s.parameter_fields[identity]=out.fields
+            s.parameter_field_count+=len(out.fields) }
+        return out }
+    var out=value(type,writable)
+    out.root.origins[owner+"|"]=!writable
+    out.fields=unwrap(s.parameter_fields[identity])
+    out.prefixes=unwrap(s.shape_prefixes[type])
+    return out
+}
 fn copy_view(input View) View { var out=input
     if record(out.type_name) { if !out.writable { out.deep_owned=false }
         out.readonly_children=out.readonly_children || !out.writable
@@ -260,20 +284,32 @@ fn field_fact(input Value, path string, type string) View {
         if input.readonly_fields { fact.writable=false
             fact.readonly_children=true }
         return fact }
-    return projected(input.root,path,type)
+    # Same rule as field_shape(): a record member of a copied record is copied too.
+    var out=projected(input.root,path,type)
+    if record(type) && input.root.record_copy { out=copy_view(out) }
+    return out
 }
 fn merge(a Value, b Value) Value { let left=materialized(a)
     let right=materialized(b)
     var out=clone(left)
     if !has(out.prefixes,"@types") { out.prefixes=prefix_index(out.fields) }
     out.root=merge_view(a.root,b.root)
+    # Count unmatched left keys while visiting the right table. Materialization
+    # has already applied inherited readonly flags and removed the view cursor.
+    # A unique matching key can discharge one left key exactly once.
+    var remaining=len(left.fields)
     for path, item in right.fields {
-        let previous=field_fact(left,path,item.type_name)
-        if !has(left.fields,path) || !same_view(previous,item) { let combined=merge_view(previous,item)
+        if has(left.fields,path) { remaining-=1
+            let previous=unwrap(left.fields[path])
+            if !same_view(previous,item) { let combined=merge_view(previous,item)
+                out.fields[path]=combined
+                note_prefix(out.prefixes,path)
+                note_type(out.prefixes,path,combined.type_name) }
+        } else { let combined=merge_view(projected(left.root,path,item.type_name),item)
             out.fields[path]=combined
             note_prefix(out.prefixes,path)
             note_type(out.prefixes,path,combined.type_name) } }
-    for path, item in left.fields { if !has(right.fields,path) { out.fields[path]=merge_view(item,projected(b.root,path,item.type_name)) } }
+    if remaining>0 { for path, item in left.fields { if !has(right.fields,path) { out.fields[path]=merge_view(item,projected(b.root,path,item.type_name)) } } }
     for i in 0..len(out.positions) { if i<len(b.positions) { out.positions[i]=merge(out.positions[i],b.positions[i]) } }
     return out
 }
@@ -482,7 +518,7 @@ fn bind(declarations map[string]string, e mut Environment, n ast.Node, input Val
     next.root.writable=mutable && (!rules.shared(next.root.type_name) || input.root.writable)
     store(e,name,next)
 }
-fn instantiate_view(caller string, module string, node int, source View, actual map[string]Value) View {
+fn instantiate_view_at(site string, source View, actual map[string]Value) View {
     var out=source
     out.origins=map[string]bool{}
     for origin, readonly in source.origins { let parts=split_origin(origin)
@@ -500,7 +536,7 @@ fn instantiate_view(caller string, module string, node int, source View, actual 
             var path=parts[1]
             if strings.contains(owner,"!") {
                 if !strings.starts_with(path,"@") { path="@"+owner+path }
-                owner=caller+"!"+key(module,node)
+                owner=site
             }
             out.origins[owner+"|"+path]=readonly }
     }
@@ -509,22 +545,26 @@ fn instantiate_view(caller string, module string, node int, source View, actual 
 # Root and every field are rebuilt below; avoid deep-cloning their discarded
 # source values first. Positions still clone their slice before indexed updates.
 # Keep prefixes independent too, so the result retains the old clone isolation.
-fn instantiate(caller string, module string, node int, source Value, actual map[string]Value) Value {
+fn instantiate_at(site string, source Value, actual map[string]Value) Value {
     let logical=materialized(source)
-    var out=Value{root:instantiate_view(caller,module,node,source.root,actual),fields:map[string]View{},prefixes:clone(logical.prefixes),prefix:"",readonly_fields:false,positions:clone(source.positions)}
-    for path, fact in logical.fields { out.fields[path]=instantiate_view(caller,module,node,fact,actual) }
-    for i in 0..len(source.positions) { out.positions[i]=instantiate(caller,module,node,source.positions[i],actual) }
+    var out=Value{root:instantiate_view_at(site,source.root,actual),fields:map[string]View{},prefixes:clone(logical.prefixes),prefix:"",readonly_fields:false,positions:clone(source.positions)}
+    for path, fact in logical.fields { out.fields[path]=instantiate_view_at(site,fact,actual) }
+    for i in 0..len(source.positions) { out.positions[i]=instantiate_at(site,source.positions[i],actual) }
     return out
 }
+# Keep the isolated helper entry points; production calls bind the immutable
+# site once and pass three arguments through the entire value/position tree.
+fn instantiate_view(caller string, module string, node int, source View, actual map[string]Value) View {
+    return instantiate_view_at(caller+"!"+key(module,node),source,actual)
+}
+fn instantiate(caller string, module string, node int, source Value, actual map[string]Value) Value {
+    return instantiate_at(caller+"!"+key(module,node),source,actual)
+}
 fn invoke(s mut State, e mut Environment, n ast.Node, f Function, args []Value) Result<Value> {
-    # A body depends on summaries only through resolved calls. Record reverse
-    # edges during probing, including aliases and self-recursion.
-    if s.probing && e.function!="" {
-        var callers=map[string]bool{}
-        if has(s.dependents,f.target) { callers=unwrap(s.dependents[f.target]) }
-        if !has(callers,e.function) { callers=clone(callers)
-            callers[e.function]=true
-            s.dependents[f.target]=callers } }
+    # Summaries cannot change during a body traversal. Collect each consulted
+    # target once, including aliases/self-recursion and invalid-argument calls.
+    # Publish these edges before the body's new summary can invalidate callers.
+    if s.probing && e.function!="" && !has(e.callees,f.target) { e.callees[f.target]=true }
     if len(args)!=len(f.parameters) { return ok(value(f.result,false)) }
     for i in 0..len(args) { if !rules.compatible(f.parameters[i].type_name,args[i].root.type_name) { return ok(value(f.result,false)) } }
     # Snapshot exactly the parameter/global bindings before writes. Their
@@ -558,18 +598,27 @@ fn invoke(s mut State, e mut Environment, n ast.Node, f Function, args []Value) 
             if parts[1]!="" { fact=field_fact(root,parts[1],"") }
             if readonly || !fact.writable { denied(s,e,n,"callee writes through a read-only member/view")? }
             if !fact.record_copy { for name, flag in fact.origins { e.required[name]=flag || unwrap_or(e.required[name],false) } } } }
+    let site=e.function+"!"+key(e.unit.id,n.id.index)
     if len(summary.writes)>0 { begin_updates(e) }
+    # Argument syntax and resolved names are immutable within this call. Cache
+    # owner resolution only; preserve ordered effects and the pre-write actuals.
+    var write_arguments=map[string]WriteArgument{}
     for origin, fact in summary.writes { let parts=split_origin(origin)
-        var destination=parts[0]
-        var parameter=false
-        var mutable=false
-        for i in 0..len(f.parameters) { if f.parameters[i].target==parts[0] { parameter=true
-            mutable=f.parameters[i].writable
-            if i+1<len(n.children) { destination=projection(s.refs,e.unit.id,e.unit.tree.pool,get(e.unit.tree.pool,n.children[i+1])) } } }
+        if !has(write_arguments,parts[0]) {
+            var argument=WriteArgument{destination:parts[0],parameter:false,writable:false}
+            for i in 0..len(f.parameters) { if f.parameters[i].target==parts[0] {
+                argument.parameter=true
+                argument.writable=f.parameters[i].writable
+                if i+1<len(n.children) { argument.destination=projection(s.refs,e.unit.id,e.unit.tree.pool,get(e.unit.tree.pool,n.children[i+1])) } } }
+            write_arguments[parts[0]]=argument }
+        let argument=unwrap(write_arguments[parts[0]])
+        let destination=argument.destination
+        let parameter=argument.parameter
+        let mutable=argument.writable
         if parameter && !mutable { continue }
         if (destination=="" && (!parameter || !strings.contains(parts[1],"#@[]"))) || (e.deferred && parameter && record(unwrap(actual[parts[0]]).root.type_name) && !strings.contains(parts[1],"#@[]")) { continue }
         var changed=value(fact.type_name,false)
-        changed.root=instantiate_view(e.function,e.unit.id,n.id.index,fact,actual)
+        changed.root=instantiate_view_at(site,fact,actual)
         if parts[1]=="" { put(e,destination,changed,false,false) }
         else { let path=destination+parts[1]
             # Install the summary fact as-is before weakly updating shared aliases.
@@ -588,7 +637,7 @@ fn invoke(s mut State, e mut Environment, n ast.Node, f Function, args []Value) 
             } }
     }
     if len(summary.writes)>0 { end_updates(e) }
-    var result=instantiate(e.function,e.unit.id,n.id.index,summary.returned,actual)
+    var result=instantiate_at(site,summary.returned,actual)
     result.root.type_name=f.result
     return ok(result)
 }
@@ -642,6 +691,10 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         out.root.type_name="[]"+element.root.type_name
         if k=="MapLiteral" { out.root.type_name=type_name(s.refs,e.unit.id,e.unit.tree.pool,n.children[0]) }
         if seen { attach(out,"#@[]",element,false) }
+        # Like the native checker's fields(): an empty map still has its fresh,
+        # writable element shape, so a callee's element write stays writable.
+        else if k=="MapLiteral" { out.fields=field_defaults(s,out.root,0)
+            out.prefixes=prefix_index(out.fields) }
         return ok(out) }
     if k=="Member" || k=="Index" || k=="Slice" { let base=expression(s,e,n.children[0])?
         let base_node=get(e.unit.tree.pool,n.children[0])
@@ -660,7 +713,9 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
             out.root.type_name="[]"+typ
             return ok(out) }
         var out=select_cached(e,base,path,typ,owner,version)
-        out.root.record_copy=false
+        # Like the native checker, a member keeps its copied-record view; only
+        # an element reached by index is a shared location of its container.
+        if k=="Index" { out.root.record_copy=false }
         if k=="Index" && len(rules.arguments(base.root.type_name,"map"))==2 { out.root.type_name=typ+"?" }
         return ok(out) }
     if k=="Propagate" { var out=expression(s,e,n.children[0])?
@@ -718,6 +773,9 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
                 out.root.readonly_children=true
                 out.root.type_name="Result<"+out.root.type_name+",string>"
                 return ok(out) }
+            # Keep the element type: copied record elements may edit their value members.
+            if name=="builtin:std.list#snapshot" && len(args)>0 && child_type(args[0].root.type_name)!="" {
+                return ok(seeded(s,"[]"+child_type(args[0].root.type_name),false,e.function+"!"+key(e.unit.id,n.id.index))) }
             return ok(seeded(s,sig.result,sig.writable,e.function+"!"+key(e.unit.id,n.id.index))) }
         if name=="builtin:core:delete" && len(args)>0 { require_write(s,e,n,args[0].root)? }
         if strings.starts_with(name,"builtin:core:") { return ok(value("",false)) }
@@ -823,8 +881,17 @@ fn statement(s mut State, e mut Environment, id ast.NodeId) Result<void> { let n
         else { count=len(n.children)-2
             let iterable=get(e.unit.tree.pool,n.children[count])
             let input=expression(s,e,iterable.id)?
+            # Same binding types as the native checker: a map key (or slice index)
+            # first, then the item; a single map binding is its key.
+            let m=rules.arguments(input.root.type_name,"map")
+            var key_type="int"
+            var item_type=child_type(input.root.type_name)
+            if len(m)==2 { key_type=m[0]
+                if count==1 { item_type=key_type } }
             for i in 0..count { let name=declaration(s.declarations,e.unit.id,get(e.unit.tree.pool,n.children[i]))
-                if name!="" { store(e,name,value(child_type(input.root.type_name),false)) } } }
+                var typ=item_type
+                if count==2 && i==0 { typ=key_type }
+                if name!="" { store(e,name,value(typ,false)) } } }
         var changed=true
         var passes=0
         while changed && passes<32 {
@@ -874,7 +941,7 @@ fn statement(s mut State, e mut Environment, id ast.NodeId) Result<void> { let n
 fn environment(unit modules.Unit, function string, values map[string]Value) Environment {
     var visible=map[string]bool{}
     for owner, unused in values { visible[owner]=true }
-    return Environment{unit:unit,function:function,values:snapshot(values),versions:map[string]int{},next_version:0,updating:false,edited_fields:map[string]map[string]View{},edited_prefixes:map[string]map[string]map[string]bool{},alias_cache:map[string][]string{},returned:value("",false),saw_return:false,writes:map[string]bool{},visible:visible,required:map[string]bool{},exits:[],deferred:false}
+    return Environment{unit:unit,function:function,values:snapshot(values),versions:map[string]int{},next_version:0,updating:false,edited_fields:map[string]map[string]View{},edited_prefixes:map[string]map[string]map[string]bool{},alias_cache:map[string][]string{},returned:value("",false),saw_return:false,writes:map[string]bool{},visible:visible,required:map[string]bool{},callees:map[string]bool{},exits:[],deferred:false}
 }
 fn summary(e Environment) Summary { var writes=map[string]View{}
     for origin, unused in e.writes { let parts=split_origin(origin)
@@ -883,25 +950,11 @@ fn summary(e Environment) Summary { var writes=map[string]View{}
         writes[origin]=fact }
     return Summary{returned:e.returned,unknown:false,saw_return:e.saw_return,writes:writes,required:e.required}
 }
-fn same_flags(a map[string]bool, b map[string]bool) bool {
-    if len(a)!=len(b) { return false }
-    for name, flag in a { if !has(b,name) || flag!=unwrap(b[name]) { return false } }
-    return true
-}
-fn same_view(a View, b View) bool {
-    return a.type_name==b.type_name && a.writable==b.writable && a.readonly_children==b.readonly_children && a.deep_owned==b.deep_owned && a.record_copy==b.record_copy && same_flags(a.origins,b.origins)
-}
-fn same_fields(a map[string]View, b map[string]View) bool {
-    if len(a)!=len(b) { return false }
-    # These string-keyed records contain only strings/bools/maps: canonical
-    # JSON is an exact representation, without hash collisions. Preserve the
-    # element-wise path if the existing JSON depth/node/byte limits reject it.
-    if len(a)>8 { let left=json.encode(a)
-        let right=json.encode(b)
-        if is_ok(left) && is_ok(right) { return unwrap(left)==unwrap(right) } }
-    for name, input in a { if !has(b,name) || !same_view(input,unwrap(b[name])) { return false } }
-    return true
-}
+# Structural equality (language rule since 2026-10-23) compares every field and
+# map entry natively; it replaces the former loops and the JSON round-trip.
+fn same_flags(a map[string]bool, b map[string]bool) bool { return a==b }
+fn same_view(a View, b View) bool { return a==b }
+fn same_fields(a map[string]View, b map[string]View) bool { return a==b }
 fn same_value(a Value, b Value) bool {
     if !same_view(a.root,b.root) || len(a.positions)!=len(b.positions) { return false }
     var equal=false
@@ -932,6 +985,17 @@ fn conservative_value(input Value) Value {
     for i in 0..len(out.positions) { out.positions[i]=conservative_value(out.positions[i]) }
     return out
 }
+# No callee summary is published inside statement()/expression(). Registering
+# the complete body set here therefore preserves the original reverse graph,
+# declaration order, self-invalidations and the 32-round fallback boundary.
+fn record_dependencies(s mut State, e Environment) {
+    for target, unused in e.callees {
+        var callers=map[string]bool{}
+        if has(s.dependents,target) { callers=unwrap(s.dependents[target]) }
+        if !has(callers,e.function) { callers=clone(callers)
+            callers[e.function]=true
+            s.dependents[target]=callers } }
+}
 pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[string]string, fields map[string]string, functions map[string]Function, variants map[string]string) Result<Model> {
     # Index immutable declaration metadata once. Recursive projections visit only
     # the requested record's fields, never every unrelated field in the project.
@@ -945,7 +1009,7 @@ pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[str
         own[name]=typ
         members[owner]=own
     }
-    var s=State{units:map[string]modules.Unit{},refs:refs,declarations:declarations,fields:fields,members:members,shapes:map[string]map[string]View{},shape_prefixes:map[string]map[string]map[string]bool{},functions:functions,variants:variants,summaries:map[string]Summary{},dependents:map[string]map[string]bool{},dirty:map[string]bool{},facts:map[string]Fact{},global_symbols:map[string]bool{},errors:map[string]string{},probing:true,work:0,error:""}
+    var s=State{units:map[string]modules.Unit{},refs:refs,declarations:declarations,fields:fields,members:members,shapes:map[string]map[string]View{},shape_prefixes:map[string]map[string]map[string]bool{},parameter_fields:map[string]map[string]View{},parameter_field_count:0,functions:functions,variants:variants,summaries:map[string]Summary{},dependents:map[string]map[string]bool{},dirty:map[string]bool{},facts:map[string]Fact{},global_symbols:map[string]bool{},errors:map[string]string{},probing:true,work:0,error:""}
     for unit in list.snapshot(graph.units) { s.units[unit.id]=unit }
     var globals=map[string]Value{}
     for module in list.snapshot(graph.order) { var e=environment(unwrap(s.units[module]),"",globals)
@@ -964,10 +1028,11 @@ pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[str
             delete(s.dirty,name)
             delete(s.errors,name)
             var e=environment(unwrap(s.units[f.module]),name,globals)
-            for p in f.parameters { store(e,p.target,seeded(s,p.type_name,p.writable,p.target))
+            for p in f.parameters { store(e,p.target,parameter_seeded(s,p.type_name,p.writable,p.target))
                 if p.writable { e.visible[p.target]=true } }
             let n=get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:f.node})
             statement(s,e,n.children[1])?
+            record_dependencies(s,e)
             let next=summary(e)
             if !has(s.summaries,name) || !same_summary(next,unwrap(s.summaries[name])) { changed=true
                 s.summaries[name]=next
@@ -987,7 +1052,7 @@ pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[str
         # Only invalidated bodies need another visit; globals/parameters are fixed.
         if has(s.dirty,name) { delete(s.errors,name)
             var e=environment(unwrap(s.units[f.module]),name,globals)
-            for p in f.parameters { store(e,p.target,seeded(s,p.type_name,p.writable,p.target))
+            for p in f.parameters { store(e,p.target,parameter_seeded(s,p.type_name,p.writable,p.target))
                 if p.writable { e.visible[p.target]=true } }
             let n=get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:f.node})
             statement(s,e,n.children[1])? }

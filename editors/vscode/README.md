@@ -2,7 +2,7 @@
 
 支持 .hua 语法高亮（# 注释与嵌套块注释）、括号/注释切换、片段、保存后检查和 Hua: Check/Run/Build Current File 命令。
 
-安装 build/hua-language-0.1.0.vsix；设置 hua.compilerPath 为已安装的 hua.exe，或先将安装 bin 加入 PATH 并重启 VS Code。程序参数在 hua.runArguments 配置。
+安装 tests/build/hua-language-0.1.0.vsix；设置 hua.compilerPath 为已安装的 hua.exe，或先将安装 bin 加入 PATH 并重启 VS Code。程序参数在 hua.runArguments 配置。
 
 检查使用已保存源码，诊断定位包含导入模块，UTF-8 字节列转换为编辑器 UTF-16 列。修改后清除旧检查，保存后重查。运行在 VS Code 任务终端，stdin 可交互；参数以进程参数传递。未信任项目只提供声明式编辑功能。
 
@@ -21,7 +21,7 @@ hua run .\main.hua
 终端找不到hua时，本机可用：
 
 ```powershell
-& "C:\file\project\hua\build-python-off\hua.exe" run .\main.hua
+& "C:\file\project\hua\tests\build\hua.exe" run .\main.hua
 ```
 
 hua.compilerPath仅配置插件，不设置终端PATH。安装步骤、Hello Hua示例及字节码运行见 [第一个程序怎么运行](../../docs/开发与运行指南.md)。

@@ -36,7 +36,7 @@ result = run(["check", root / "tests/spec/101_invalid_binding.hua"], 1,
              stderr="101_invalid_binding.hua:1:5")
 assert not result.stdout and "let = 1" in result.stderr and "^" in result.stderr
 assert "error[E2001]" in result.stderr
-with tempfile.TemporaryDirectory(prefix="hua-cli-", dir=root / "build") as temp:
+with tempfile.TemporaryDirectory(prefix="hua-cli-", dir=root / "tests" / "build") as temp:
     path = Path(temp) / "中文路径 测试.hua"
     path.write_bytes(b"\xef\xbb\xbffn main() {\r\n    print(\"Hua\")\r\n}\r\n")
     run(["check", path], 0, "OK\n")

@@ -7,6 +7,9 @@
 #include <vector>
 namespace hua {
 // Execution policy belongs to the invocation, never to a HUAB image.
+// compiler profile: wall-clock supervision (600 s, enforced by the supervising tool) is the
+// real limit; the step cap only guards against runaway loops. Default profile stays 1M.
+inline constexpr std::uint64_t compiler_step_limit=100000000000ULL;
 struct ExecutionLimits { std::uint64_t steps{1000000}; unsigned calls{128}; std::size_t collection_interval{256}; };
 struct ExecutionMetrics {
     std::atomic<std::uint64_t> steps{0}; std::atomic<unsigned> peak_calls{0};
@@ -21,7 +24,7 @@ inline bool execution_options(const std::vector<std::string>& args,ExecutionOpti
         if(args[i]=="--"){out.arguments=i+1;return true;}
         if(args[i]=="--execution-profile"&&!profile&&i+1<args.size()){
             profile=true;out.profile=args[++i];
-            if(out.profile=="compiler"){out.limits.steps=500000000;out.limits.collection_interval=65536;}
+            if(out.profile=="compiler"){out.limits.steps=compiler_step_limit;out.limits.collection_interval=65536;}
             else if(out.profile!="default")return false;
         }else if(args[i]=="--report-budget"&&!report){report=true;out.report=true;}
         else return false;

@@ -5,13 +5,17 @@
 #include "hua/vm.hpp"
 #include "hua/runtime.hpp"
 #include "hua/tasks.hpp"
+#include "hua/file.hpp"
 #include <limits>
 #include <unordered_set>
 namespace hua {
+#ifdef HUA_INTERNAL_PROFILE
+static_assert(performance::op_count==static_cast<std::size_t>(Op::Defer)+1,"performance::op_names must follow Op");
+#endif
 namespace {
 using N=NodeKind;using I=std::int64_t;
 [[noreturn]] void invalid(const SourceSpan& s){runtime_error(s,"invalid VM instruction/stack state","E6001");}
-bool writable(const Value& v){if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
+bool writable(const Value& v){if(auto p=std::get_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
 
 }
 const VirtualMachine::FunctionLayout& VirtualMachine::function_layout(const Node& fn) {
@@ -35,6 +39,87 @@ const std::string& VirtualMachine::field_type(const std::string& owner,const std
     }
     auto type=found->second.find(field);if(type==found->second.end())runtime_error(span,"unknown struct field","E4003");return type->second;
 }
+namespace {
+// Activation leases allocate one shared_ptr control block per scope/call. Reuse
+// those fixed-size blocks through a small per-thread free list; a block freed on
+// another thread simply joins that thread's list. After the list is destroyed at
+// thread exit, late releases go straight back to the global allocator.
+// lease_state: 0 not created, 1 alive, 2 destroyed (a trivially destructible flag
+// stays readable after the list itself is gone).
+template<std::size_t Size> int& lease_state(){thread_local int state=0;return state;}
+template<std::size_t Size> struct LeaseBlocks {
+    std::vector<void*> free;
+    LeaseBlocks(){free.reserve(256);lease_state<Size>()=1;} // capacity covers the cap: release never allocates
+    ~LeaseBlocks(){lease_state<Size>()=2;for(auto* p:free)::operator delete(p);free.clear();}
+};
+template<std::size_t Size> LeaseBlocks<Size>& lease_blocks(){thread_local LeaseBlocks<Size> blocks;return blocks;}
+// Binary fast path: same-type int/bool/string comparisons and int +/- give the
+// same result as binary_value; every other case (and overflow, which must raise
+// E4002 there) returns nullopt and takes the general path.
+std::optional<Value> fast_binary(const std::string& op,const Value& left,const Value& right){
+    const auto index=left.data.index();if(index!=right.data.index()||op.empty()||op.size()>2)return std::nullopt;
+    const char c0=op[0],c1=op.size()==2?op[1]:'\0';
+    const bool eq=c0=='='&&c1=='=',ne=c0=='!'&&c1=='=',lt=c0=='<'&&!c1,le=c0=='<'&&c1=='=',gt=c0=='>'&&!c1,ge=c0=='>'&&c1=='=';
+    if(index==2){auto x=std::get<std::int64_t>(left.data),y=std::get<std::int64_t>(right.data);
+        if(eq)return Value(x==y);if(ne)return Value(x!=y);if(lt)return Value(x<y);if(le)return Value(x<=y);if(gt)return Value(x>y);if(ge)return Value(x>=y);
+        std::int64_t out;
+        if(c0=='+'&&!c1&&!__builtin_add_overflow(x,y,&out))return Value(out);
+        if(c0=='-'&&!c1&&!__builtin_sub_overflow(x,y,&out))return Value(out);
+        if(c0=='*'&&!c1&&!__builtin_mul_overflow(x,y,&out))return Value(out);
+        // Floor division/modulo exactly as binary_value; zero divisor and MIN/-1 keep their errors there.
+        if(((c0=='%'&&!c1)||(c0=='/'&&c1=='/'))&&y!=0&&!(x==std::numeric_limits<std::int64_t>::min()&&y==-1)){
+            std::int64_t q=x/y,r=x%y;if(r&&((r<0)!=(y<0))){--q;r+=y;}return Value(c0=='%'?r:q);}
+        return std::nullopt;}
+    if(index==1){auto x=std::get<bool>(left.data),y=std::get<bool>(right.data);if(eq)return Value(x==y);if(ne)return Value(x!=y);return std::nullopt;}
+    if(index==4){const auto& x=std::get<std::string>(left.data);const auto& y=std::get<std::string>(right.data);
+        if(eq)return Value(x==y);if(ne)return Value(x!=y);if(lt)return Value(x<y);if(le)return Value(x<=y);if(gt)return Value(x>y);if(ge)return Value(x>=y);}
+    return std::nullopt;
+}
+template<class T> struct LeaseAllocator {
+    using value_type=T;
+    LeaseAllocator()=default;
+    template<class U> LeaseAllocator(const LeaseAllocator<U>&) noexcept {}
+    T* allocate(std::size_t n){
+        if(n==1&&lease_state<sizeof(T)>()!=2){auto& blocks=lease_blocks<sizeof(T)>();
+            if(!blocks.free.empty()){auto* p=blocks.free.back();blocks.free.pop_back();return static_cast<T*>(p);}}
+        return static_cast<T*>(::operator new(n*sizeof(T)));
+    }
+    void deallocate(T* p,std::size_t n) noexcept {
+        if(n==1&&lease_state<sizeof(T)>()==1){auto& blocks=lease_blocks<sizeof(T)>();
+            if(blocks.free.size()<256){blocks.free.push_back(p);return;}}
+        ::operator delete(p);
+    }
+    template<class U> bool operator==(const LeaseAllocator<U>&) const noexcept {return true;}
+};
+}
+std::shared_ptr<VirtualMachine::Environment> VirtualMachine::FrameArena::acquire(const ScopeLayout* shape,const std::shared_ptr<FrameArena>& arena){
+    std::unique_ptr<Environment> item;
+    for(auto i=free.size();i>0;--i)if(free[i-1]->layout==shape){
+        item=std::move(free[i-1]);free.erase(free.begin()+static_cast<std::ptrdiff_t>(i-1));++work.reused;break;
+    }
+    if(!item){item=std::make_unique<Environment>(shape);++work.created;}
+    // Transfer ownership before constructing the lease: shared_ptr invokes its
+    // deleter if allocating the control block fails.
+    auto* pointer=item.release();++work.activations;++work.active;work.peak=std::max(work.peak,work.active);
+    return std::shared_ptr<Environment>(pointer,[weak=std::weak_ptr<FrameArena>(arena)](Environment* environment) noexcept {
+        if(auto owner=weak.lock())owner->retire(environment);else delete environment;
+    },LeaseAllocator<Environment>{});
+}
+void VirtualMachine::FrameArena::retire(Environment* environment) noexcept {
+    // No Value, parent, deferred argument or resource is retained in the cache.
+    // Closures never capture these activation environments: Closure snapshots
+    // into a separately managed Environment before exposing the function value.
+    environment->clear();environment->parent.reset();++work.retired;--work.active;
+    std::unique_ptr<Environment> item(environment);
+    // Bounded empty capacity, not a language quota. Large/dynamic frames simply
+    // fall back to ordinary destruction after their final lease disappears.
+    if(item->slots.capacity()<=256 && item->bindings.bucket_count()<=256 && item->deferred.capacity()<=32){
+        // Keep recently retired storage, rather than permanently pinning the
+        // first 64 shapes and starving every later hot activation.
+        if(free.size()==64)free.erase(free.begin());
+        free.push_back(std::move(item)); // constructor reserved all 64 entries
+    }
+}
 VirtualMachine::Binding* VirtualMachine::Environment::own(const std::string& name) {
     if(layout){auto found=layout->indices.find(name);if(found!=layout->indices.end()&&slots[found->second])return &*slots[found->second];}
     auto found=bindings.find(name);return found==bindings.end()?nullptr:&found->second;
@@ -49,6 +134,9 @@ VirtualMachine::CodeLayout& VirtualMachine::code_layout(const Code& code,const N
     auto [where,inserted]=code_layouts_.try_emplace(&code);
     if(!inserted)return *where->second;
     where->second=std::make_unique<CodeLayout>();auto& result=*where->second;result.accesses.resize(code.instructions.size());
+    result.negated_jump.resize(code.instructions.size());
+    for(std::size_t pc=0;pc+1<code.instructions.size();++pc){const auto& op=code.instructions[pc];const auto next=code.instructions[pc+1].op;
+        result.negated_jump[pc]=op.op==Op::Unary&&op.text=="!"&&(next==Op::JumpFalse||next==Op::JumpTrue);}
     HUA_PROFILE_COUNT(vm_code_layouts);HUA_PROFILE_ADD(vm_access_index_bytes,result.accesses.size()*sizeof(std::unique_ptr<AccessCache>));
     if(function){const auto& f=function_layout(*function);for(const auto& p:f.parameters)result.root.add(p.name);
         if(model_.nested.contains(function))result.root.add(f.name);
@@ -132,6 +220,10 @@ std::vector<Value> VirtualMachine::arguments(std::size_t count,const SourceSpan&
     if(count>stack_.size() || (!frames_.empty() && count>stack_.size()-frames_.back().base))invalid(span);std::vector<Value> args(count);
     for(std::size_t i=count;i>0;--i)args[i-1]=pop(span);return args;
 }
+void VirtualMachine::pop_arguments(std::size_t count,const SourceSpan& span,std::vector<Value>& out) {
+    if(count>stack_.size() || (!frames_.empty() && count>stack_.size()-frames_.back().base))invalid(span);out.resize(count);
+    for(std::size_t i=count;i>0;--i)out[i-1]=pop(span);
+}
 void VirtualMachine::bind(const Instruction& op,Value value) {
     if(std::holds_alternative<MultiValue>(value.data))runtime_error(op.span,"multiple values require positional binding","E4003");
     auto type=op.type.empty()?value_type(value):op.type;value=copy_value(std::move(value));
@@ -146,6 +238,7 @@ EntryResult VirtualMachine::run(const Bytecode& bytecode){
 Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
     bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();function_layouts_.clear();field_types_.clear();enum_layouts_.clear();record_layouts_.clear();code_layouts_.clear();builtin_layout_={};
+    frame_arena_=std::make_shared<FrameArena>();
     auto& initial_layout=code_layout(bytecode.initializer);
     for(const auto& name:builtin_names()){builtin_layout_.add(name);builtin_layout_.add(std::string("$core$")+name);}
     for(const auto& [name,fn]:model_.functions)if(!model_.nested.contains(fn))initial_layout.root.add(name);
@@ -173,11 +266,17 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
 Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
     if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));co_return;}
     if(callable.builtin=="parallel_map"){stack_.emplace_back(co_await parallel(args,site));co_return;}
-    if(!callable.builtin.empty()){HUA_PROFILE_COUNT(builtin_calls);stack_.emplace_back(co_await invoke_resumable(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));co_return;}
+    if(!callable.builtin.empty()){HUA_PROFILE_COUNT(builtin_calls);HUA_PROFILE_BUILTIN(callable.builtin);stack_.emplace_back(co_await invoke_resumable(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));co_return;}
+    enter_function(callable,args,site);
+    co_return;
+}
+void VirtualMachine::enter_function(const Callable& callable,const std::vector<Value>& args,const Instruction& site,FunctionRoute* route) {
     if(!callable.function)invalid(site.span);
     HUA_PROFILE_COUNT(user_calls);
-    const auto& fn=*callable.function;const auto& layout=function_layout(fn);const auto& key=layout.name;
-    if(layout.external){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));co_return;}
+    const auto& fn=*callable.function;
+    if(route&&route->function!=&fn)*route={&fn,&function_layout(fn),nullptr,nullptr};
+    const auto& layout=route?*route->layout:function_layout(fn);const auto& key=layout.name;
+    if(layout.external){if(context_&&context_->in_task)runtime_error(site.span,"Native/WASM calls cannot run in tasks","E4104");stack_.emplace_back(model_.external->call(key,args,site.contextual,site.span));return;}
     if(layout.unsafe)runtime_error(site.span,"unsafe function execution/FFI is not implemented","E4008");
     const auto user_calls=frames_.size()-(!frames_.empty() && !frames_.front().function?1:0);
     if(user_calls>=context_->execution_limits.calls)runtime_error(site.span,"function call depth limit exceeded ("+std::to_string(context_->execution_limits.calls)+")","E4099");
@@ -185,8 +284,9 @@ Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Va
     const auto& ps=layout.parameters;
     if(ps.size()!=args.size())runtime_error(site.span,"function argument count mismatch","E4003");
     if(context_&&context_->in_task&&callable.closure)std::static_pointer_cast<Environment>(callable.closure)->parent=global_;
-    auto code=bytecode_->functions.find(&fn);auto* slots=code==bytecode_->functions.end()?nullptr:&code_layout(code->second,&fn);
-    auto local=managed<Environment>(slots?&slots->root:nullptr);local->parent=callable.closure?std::static_pointer_cast<Environment>(callable.closure):global_;
+    const Code* body=route?route->code:nullptr;CodeLayout* slots=route?route->slots:nullptr;
+    if(!body){auto code=bytecode_->functions.find(&fn);if(code!=bytecode_->functions.end()){body=&code->second;slots=&code_layout(code->second,&fn);if(route){route->code=body;route->slots=slots;}}}
+    auto local=activation(slots?&slots->root:nullptr);local->parent=callable.closure?std::static_pointer_cast<Environment>(callable.closure):global_;
     if(callable.closure)local->insert(key,Binding{Value(callable),"fn:"+key,false});
     if(callable.receiver) {
         if(model_.mutating.at(key) && !callable.receiver->writable)runtime_error(site.span,"mutating method requires mutable receiver","E4007");
@@ -199,21 +299,33 @@ Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Va
         auto v=mut?enforce_borrow(args[i],type,site.span):enforce_type(copy_value(args[i]),type,site.span,i<site.contextual.size()&&site.contextual[i]);
         if(!mut)v=read_only(std::move(v));local->insert(p.name,Binding{std::move(v),type,false});
     }
-    if(code==bytecode_->functions.end())invalid(site.span);
-    if(observer_)observer_->enter(&fn,frames_.empty()?nullptr:frames_.back().function,args);
-    frames_.push_back({&code->second,&fn,0,stack_.size(),site.span,std::move(local),{},slots});
-    co_return;
+    if(!body)invalid(site.span);
+    if(observer_){flush_metrics();observer_->enter(&fn,frames_.empty()?nullptr:frames_.back().function,args);}
+    frames_.push_back({body,&fn,0,stack_.size(),site.span,std::move(local),{},slots});
+}
+bool VirtualMachine::has_pending_defers(const Frame& f) const {
+    for(auto* env=f.environment.get();env&&env!=global_.get();env=env->parent.get())if(!env->deferred.empty())return true;
+    return !f.function&&!global_->deferred.empty();
 }
 Routine<void> VirtualMachine::finish_return(Value value,const Instruction& op,bool early) {
     // Save the language value before deferred calls can mutate its source.
     value=copy_value(std::move(value));
     auto f=frames_.back();
-    for(auto env=f.environment;env&&env!=global_;env=env->parent)(co_await drain(env));if(!f.function)(co_await drain(global_));if(early&&!f.function)invalid(op.span);if(f.function)value=enforce_return(std::move(value),function_layout(*f.function).returns,f.site,op.flag);
-    auto base=f.base;if(!early&&stack_.size()!=base)invalid(op.span);frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
-    if(!f.function)value=copy_value(value);
-    if(!frames_.empty())stack_.emplace_back(std::move(value));else completed_=std::move(value);
-    if(observer_)observer_->leave(f.function,frames_.empty()?(completed_?&*completed_:nullptr):std::get_if<Value>(&stack_.back()));
+    for(auto env=f.environment;env&&env!=global_;env=env->parent)(co_await drain(env));if(!f.function)(co_await drain(global_));
+    complete_return(std::move(value),op,early);
     co_return;
+}
+// Shared tail of finish_return: the caller has already copied the value and drained
+// every deferred call of the returning frame (or proved there were none).
+void VirtualMachine::complete_return(Value value,const Instruction& op,bool early) {
+    auto& top=frames_.back();const Node* function=top.function;
+    if(early&&!function)invalid(op.span);if(function)value=enforce_return(std::move(value),function_layout(*function).returns,top.site,op.flag);
+    auto base=top.base;if(!early&&stack_.size()!=base)invalid(op.span);
+    auto environment=std::move(top.environment); // released after the frame is popped, as before
+    frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
+    if(!function)value=copy_value(value);
+    if(!frames_.empty())stack_.emplace_back(std::move(value));else completed_=std::move(value);
+    if(observer_){flush_metrics();observer_->leave(function,frames_.empty()?(completed_?&*completed_:nullptr):std::get_if<Value>(&stack_.back()));}
 }
 Routine<void> VirtualMachine::drain(const std::shared_ptr<Environment>& env){
     struct Cleanup {bool& flag;bool previous;Cleanup(bool& f):flag(f),previous(f){flag=true;}~Cleanup(){flag=previous;}} cleanup(context_->cleanup);
@@ -238,30 +350,53 @@ Routine<void> VirtualMachine::cleanup_error(){
     co_return;
 }
 Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
+    struct Flush {VirtualMachine& vm;~Flush(){vm.flush_metrics();}} flush{*this};
+    poll_countdown_=1;
     while(frames_.size()>stop_depth) {
         auto& f=frames_.back();if(f.pc>=f.code->instructions.size())invalid(f.site);
         const auto& op=f.code->instructions[f.pc++];const auto& s=op.span;
-        HUA_PROFILE_COUNT(vm_steps);co_await Yield{};task_checkpoint(context_,s);if(context_->execution_metrics)++context_->execution_metrics->steps;if(++steps_>context_->execution_limits.steps)runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");
+        HUA_PROFILE_COUNT(vm_steps);HUA_PROFILE_OP(op.op);
+        // Exact per-step work: budget and pending File pumps. Cancellation and the
+        // cooperative yield are polled every poll_interval steps (and on the first
+        // step after entering dispatch or resuming from a suspension).
+        if(--poll_countdown_==0){poll_countdown_=poll_interval;flush_metrics();co_await Yield{false,poll_interval};cancellation_checkpoint(context_,s);}
+        if(file_pump_pending(context_))file_checkpoint(context_);
+        ++pending_metric_steps_;if(++steps_>context_->execution_limits.steps){flush_metrics();runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");}
         try{
         switch(op.op) {
         case Op::Closure:{auto fn=model_.functions.find(op.text);if(fn==model_.functions.end())invalid(s);auto captured=managed<Environment>();captured->parent=global_;for(auto env=f.environment;env&&env!=global_;env=env->parent)env->each([&](const auto& name,const auto& binding){if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});});Callable callable{fn->second,"",{},captured};std::weak_ptr<Environment> weak=captured;callable.resource_guard=[weak](unsigned d){if(auto env=weak.lock())for(const auto& [_,b]:env->bindings)if(contains_file(b.value,d+1))return true;return false;};stack_.emplace_back(Value(std::move(callable)));break;}
         case Op::Defer:{auto args=arguments(op.argument,s);auto value=pop(s);auto fn=std::get_if<Callable>(&value.data);if(!fn)runtime_error(s,"defer requires a callable","E4003");for(auto& arg:args)arg=copy_value(arg);f.environment->deferred.push_back({*fn,std::move(args),op});break;}
         case Op::ExternalInit:if(context_&&context_->in_task)runtime_error(s,"Native/WASM initialization cannot run in tasks","E4104");model_.external->initialize(op.text,s);break;
-        case Op::Constant:stack_.emplace_back(op.constant);break;
-        case Op::Load:stack_.emplace_back(lookup(f,op).value);break;
+        case Op::Constant:HUA_PROFILE_KIND(constant_kinds,op.constant);stack_.emplace_back(op.constant);break;
+        case Op::Load:{auto& value=lookup(f,op).value;HUA_PROFILE_KIND(load_kinds,value);if(auto p=std::get_if<PlainRecord>(&value.data);p&&p->writable)materialize_record(value);stack_.emplace_back(value);break;}
         case Op::Bind:{HUA_PROFILE_CONSTRAINT_SOURCE(binding);auto v=enforce_type(pop(s),op.type,s,!op.contextual.empty()&&op.contextual[0]);bind(op,std::move(v));break;}
         case Op::Pop:pop(s);break;
-        case Op::Unary:stack_.emplace_back(unary_value(op.text,pop(s),s));break;
-        case Op::Binary:{auto right=pop(s),left=pop(s);stack_.emplace_back(binary_value(op.text,left,right,s,op.flag));break;}
+        case Op::Unary:{
+            // `!` on a bool is the hottest unary form; anything else takes the general path.
+            if(op.text=="!"&&stack_.size()>f.base)if(auto* v=std::get_if<Value>(&stack_.back()))if(auto* b=std::get_if<bool>(&v->data)){
+                // Fused `!` + conditional jump. The jump is still one counted step; fuse only
+                // when that step could not yield, pump files or exceed the step limit.
+                if(f.layout&&f.layout->negated_jump[f.pc-1]&&poll_countdown_>1&&!file_pump_pending(context_)&&steps_<context_->execution_limits.steps){
+                    const auto& jump=f.code->instructions[f.pc];
+                    --poll_countdown_;++pending_metric_steps_;++steps_;HUA_PROFILE_COUNT(vm_steps);HUA_PROFILE_OP(jump.op);HUA_PROFILE_ADD(fused_steps,1);
+                    const bool condition=!*b;stack_.pop_back();++f.pc;
+                    if(condition==(jump.op==Op::JumpTrue)){if(jump.target>=f.code->instructions.size())invalid(jump.span);f.pc=jump.target;}
+                    break;}
+                *b=!*b;break;}
+            stack_.emplace_back(unary_value(op.text,pop(s),s));break;}
+        case Op::Binary:{
+            if(stack_.size()>=f.base+2)if(auto* r=std::get_if<Value>(&stack_.back()))if(auto* l=std::get_if<Value>(&stack_[stack_.size()-2]))
+                if(auto fast=fast_binary(op.text,*l,*r)){stack_.pop_back();std::get<Value>(stack_.back())=std::move(*fast);break;}
+            auto right=pop(s),left=pop(s);stack_.emplace_back(binary_value(op.text,left,right,s,op.flag));break;}
         case Op::Jump:if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;break;
         case Op::JumpFalse:case Op::JumpTrue: {
             auto condition=as_bool(pop(s),s);
             if(condition==(op.op==Op::JumpTrue)){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;}break;
         }
-        case Op::EnterScope:{auto env=managed<Environment>(&f.layout->scopes.at(f.pc-1));HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);break;}
+        case Op::EnterScope:{auto env=activation(&f.layout->scopes.at(f.pc-1));HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);break;}
         case Op::LeaveScope:case Op::Unwind: {
             auto count=op.op==Op::LeaveScope?1:op.argument;
-            for(std::size_t i=0;i<count;++i){if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;(co_await drain(env));frames_.back().environment=env->parent;}break;
+            for(std::size_t i=0;i<count;++i){if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;if(!env->deferred.empty())(co_await drain(env));frames_.back().environment=env->parent;}break;
         }
         case Op::LocateName: {
             if(op.text=="_"){stack_.emplace_back(Location{});break;}
@@ -269,7 +404,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             stack_.emplace_back(Location{&b.value,b.type,true,f.environment,{},{}});break;
         }
         case Op::LocateField: {
-            auto value=pop(s);auto object=std::get_if<StructValue>(&value.data);
+            auto value=pop(s);auto object=materialize_record(value);
             if(!object)runtime_error(s,"field assignment requires a struct","E4003");
             if(object->data->enumeration)runtime_error(s,"enum fields are private","E4003");
             auto& cache=access(f).field;auto* item=field(cache,*object,op.text);if(!item)runtime_error(s,"unknown struct field","E4003");
@@ -339,8 +474,9 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::Member: {
             auto value=pop(s);
             if(op.text=="len"&&(std::holds_alternative<SliceValue>(value.data)||std::holds_alternative<MapValue>(value.data)||std::holds_alternative<std::string>(value.data))){stack_.emplace_back(aggregate_member(value,op.text,s));break;}
-            auto object=std::get_if<StructValue>(&value.data);if(!object)runtime_error(s,"member access requires a struct","E4003");
-            if(auto* item=field(access(f).field,*object,op.text)){stack_.emplace_back(object->writable?*item:read_only(*item));break;}
+            if(auto p=std::get_if<PlainRecord>(&value.data)){if(auto item=plain_record_field(*p,op.text)){stack_.emplace_back(std::move(*item));break;}}
+            auto object=materialize_record(value);if(!object)runtime_error(s,"member access requires a struct","E4003");
+            if(auto* item=field(access(f).field,*object,op.text)){retain_record_alias(*item);stack_.emplace_back(object->writable?*item:read_only(*item));break;}
             auto method=model_.functions.find(object->data->name+"."+op.text);
             if(method==model_.functions.end())runtime_error(s,"unknown struct member","E4003");
             if(method->second->span.file_id!=s.file_id && method->second->text.find(" pub")==std::string::npos)
@@ -348,10 +484,18 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             stack_.emplace_back(Value(Callable{method->second,"",*object}));break;
         }
         case Op::Call: {
-            auto args=arguments(op.argument,s);auto callee=pop(s);auto p=std::get_if<Callable>(&callee.data);
-            if(!p)runtime_error(s,"value is not callable","E4003");(co_await call(*p,args,op));break;
+            ArgumentLease lease(*this);auto& args=lease.values;pop_arguments(op.argument,s,args);auto callee=pop(s);auto p=std::get_if<Callable>(&callee.data);
+            if(!p)runtime_error(s,"value is not callable","E4003");
+            if(p->builtin.empty()){enter_function(*p,args,op,&access(f).function);break;}
+            HUA_PROFILE_BUILTIN(p->builtin);
+            auto& route=access(f).builtin;
+            if(route.name!=&p->builtin.str()){route.name=&p->builtin.str();route.info=&builtin_info(p->builtin);}
+            const auto& info=*route.info;
+            if(info.core!=CoreBuiltin::task_start&&info.core!=CoreBuiltin::parallel_map&&!builtin_may_suspend(info,context_)){
+                HUA_PROFILE_COUNT(builtin_calls);stack_.emplace_back(invoke_builtin(info,p->builtin,args,s,output_,op.contextual,op.type,context_));break;}
+            (co_await call(*p,args,op));poll_countdown_=1;break;
         }
-        case Op::Return:co_await finish_return(pop(s),op);break;
+        case Op::Return:{auto value=pop(s);if(!has_pending_defers(f)){complete_return(copy_value(std::move(value)),op,false);break;}co_await finish_return(std::move(value),op);poll_countdown_=1;break;}
         case Op::RangeInit: {
             I step=as_int(pop(s),s),end=as_int(pop(s),s),start=as_int(pop(s),s);
             if(!step)runtime_error(s,"range step cannot be zero","E4005");
@@ -378,7 +522,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             }
             if(!has){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;break;}
             if(it.index==std::numeric_limits<I>::max())it.done=true;else ++it.index;
-            auto env=managed<Environment>(&f.layout->scopes.at(f.pc-1));HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);
+            auto env=activation(&f.layout->scopes.at(f.pc-1));HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);
             Instruction binding=op;binding.flag=false;binding.type="int";
             Value key(index);if(it.map){auto parts=unpack_multi(item,2,s);key=parts[0];item=op.names.size()==1?key:parts[1];binding.type="";}
             if(op.names.size()==2){binding.text=op.names[0];bind(binding,key);}

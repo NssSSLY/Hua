@@ -2,18 +2,24 @@
 #include "hua/ast.hpp"
 #include "hua/gc.hpp"
 #include <cstdint>
+#include <atomic>
+#include <mutex>
+#include <array>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <set>
+#include <unordered_set>
 #include <vector>
 namespace hua {
 using TypeRelations=std::map<std::string,std::set<std::string>>;
 struct TypeRelationScope { const TypeRelations* previous;explicit TypeRelationScope(const TypeRelations& relations);~TypeRelationScope(); };
 std::vector<std::pair<std::string,std::vector<std::string>>> enum_cases(const Node& structure);
 struct Value;
+struct PlainRecordLayout;
 struct VoidValue {};
 struct TaskState;
 struct TaskValue {std::shared_ptr<TaskState> data;};
@@ -55,12 +61,28 @@ struct SliceValue {
     SliceValue()=default;
     SliceValue(std::shared_ptr<std::vector<Value>> values,std::size_t offset,std::size_t count,bool write,std::string element):storage(std::move(values)),start(offset),length(count),writable(write),element_type(std::move(element)){}
 };
+// Eight scalar cells cover common identifier/span records without widening
+// the existing SliceValue-sized Value storage. Nominal/type metadata is owned.
+struct PlainRecord {std::shared_ptr<const PlainRecordLayout> layout;std::array<std::uint64_t,8> cells{};bool writable{true};};
 struct StructValue { std::shared_ptr<StructData> data; bool writable{true}; };
-struct Callable { const Node* function{}; std::string builtin; std::optional<StructValue> receiver; std::shared_ptr<void> closure;std::function<bool(unsigned)> resource_guard;
+// Builtin names are interned for the process lifetime: function values are
+// loaded and copied very often, and copying the name is then a pointer copy.
+class BuiltinName {
+    const std::string* text_;
+    static const std::string* intern(std::string text);
+public:
+    BuiltinName();
+    explicit BuiltinName(std::string text):text_(intern(std::move(text))){}
+    const std::string& str() const {return *text_;}
+    operator const std::string&() const {return *text_;}
+    bool empty() const {return text_->empty();}
+    friend bool operator==(const BuiltinName& a,std::string_view b){return *a.text_==b;}
+};
+struct Callable { const Node* function{}; BuiltinName builtin; std::optional<StructValue> receiver; std::shared_ptr<void> closure;std::function<bool(unsigned)> resource_guard;
     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
 };
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord>;
     Data data;
     Value() = default;
     template<class T> explicit Value(T value) : data(std::move(value)) {}
@@ -68,10 +90,23 @@ struct Value {
 // Names and field positions are immutable and own their storage independently of a model.
 struct RecordLayout {
     const std::vector<std::string> names;
-    explicit RecordLayout(std::vector<std::string> fields);
+    const std::string nominal_name;
+    const std::map<std::string,std::string> annotations;
+    mutable std::mutex plain_mutex;
+    mutable std::weak_ptr<const PlainRecordLayout> plain_cache;
+    mutable std::atomic<bool> plain_rejected{false};
+    explicit RecordLayout(std::vector<std::string> fields,std::string name={},std::map<std::string,std::string> types={});
     static constexpr std::size_t missing=static_cast<std::size_t>(-1);
     std::size_t index(const std::string& name) const;
 };
+struct PlainRecordLayout {
+    struct Field {std::string name,type;unsigned offset{},tag{};std::shared_ptr<const PlainRecordLayout> child;};
+    std::string name;std::shared_ptr<const RecordLayout> shape;std::vector<Field> fields;unsigned slots{},depth{};
+};
+bool pack_plain_record(const StructValue&,PlainRecord&,unsigned depth=0);
+std::optional<Value> plain_record_field(const PlainRecord&,const std::string&);
+StructValue* materialize_record(Value&);
+void retain_record_alias(Value&);
 std::shared_ptr<const RecordLayout> record_layout(const Node& declaration);
 class RecordFields {
     using Tree=std::map<std::string,Value>;
@@ -175,6 +210,8 @@ struct ValueLocation {
 };
 std::optional<std::size_t> packed_width(std::string_view type);
 Value sequence_read(const SliceValue& slice,std::size_t index);
+// Internal copy/scanner source: does not publish a borrowed aggregate alias.
+Value sequence_copy_source(const SliceValue& slice,std::size_t index);
 void sequence_write(const SliceValue& slice,std::size_t index,const Value& value);
 SliceValue fixed_array(SliceValue slice,const std::string& element,const SourceSpan& span,bool contextual);
 std::size_t value_size(const Value& value,const SourceSpan& span);

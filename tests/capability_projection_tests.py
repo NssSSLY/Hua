@@ -1,9 +1,10 @@
 # Immutable capability projection width controls.
 from pathlib import Path
 import argparse,re,json,sys,shutil
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'tools'))
 from audit_bootstrap_phases import command,save
 from capability_instantiation_tests import view,value,literal
+from capability_fixture_support import adapt_fixture
 
 def make(cap,width):
     text=cap.read_text(encoding='utf-8');decl=text[text.index('pub struct View {'):text.index('# Node consumers')]
@@ -28,7 +29,7 @@ print(original==unwrap(json.encode(input)))
 }'''.replace('INPUT',literal(raw,'Value'))
     result='import type_rules as rules\nimport std.strings as strings\nimport std.json as json\n'+decl+'\n'.join(functions)+main
     if 'readonly_fields bool' not in decl:result=result.replace(',prefix:"",readonly_fields:false','')
-    return result
+    return adapt_fixture(result,text)
 
 def execute(exe,root,out,reference):
     assert not out.exists();out.mkdir();shutil.copy2(root/'selfhost/type_rules.hua',out/'type_rules.hua');rows=[]

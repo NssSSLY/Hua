@@ -1,0 +1,26 @@
+# 集合相等/合并：复刻 C04 same_flags 与 merge_view 的写法
+fn same_flags(a map[string]bool, b map[string]bool) bool {
+    if len(a)!=len(b) { return false }
+    for name, flag in a { if !has(b,name) || flag!=unwrap(b[name]) { return false } }
+    return true
+}
+fn merged(a map[string]bool, b map[string]bool) map[string]bool {
+    var out = clone(a)
+    for origin, readonly in b { out[origin] = readonly || unwrap_or(out[origin], false) }
+    return out
+}
+fn main() {
+    var a = map[string]bool{}
+    var b = map[string]bool{}
+    for i in 0..400 { a["m|#@f"+str(i)] = false
+        b["m|#@f"+str(i)] = i % 3 == 0 }
+    var same = 0
+    var size = 0
+    for round in 0..300 {
+        if same_flags(a, a) { same += 1 }
+        if same_flags(a, b) { same += 1 }
+        let c = merged(a, b)
+        size += len(c)
+    }
+    print(same, size)
+}

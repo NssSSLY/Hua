@@ -204,14 +204,19 @@ std::string text_utf8_error(std::string_view s) {
 }
 Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,const SourceSpan& s,std::ostream& output,RuntimeContext* context) {
     if(input.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
-    std::vector<std::string> types;for(const auto& v:input)types.push_back(value_type(v));auto signature=standard_signature(f,types);
+    // Only alg/simd/task/list signatures depend on argument types, and only on the
+    // first argument's type (simd also on the count); others are the declaration.
+    const bool typed=f.module=="alg"||f.module=="simd"||f.module=="task"||f.module=="list";
+    std::vector<std::string> types;if(typed&&!input.empty()){types.resize(input.size());types[0]=value_type(input[0]);}
+    const auto signature=typed?standard_signature(f,types):StandardSignature{};
+    const auto& parameters=typed?signature.parameters:f.parameters;
     if(f.module=="math"){
         for(const auto& value:input)if(value_type(value)!="float")runtime_error(s,"math requires explicit default float arguments","E4003");
         return invoke_algorithm_standard(f,input,s,context);
     }
-    if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=signature.parameters[1])
+    if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=parameters[1])
         runtime_error(s,"algorithm target requires identical element type","E4003");
-    std::vector<Value> args;for(std::size_t i=0;i<input.size();++i){if(signature.parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(signature.parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],signature.parameters[i],s));}
+    std::vector<Value> args;args.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],parameters[i],s));}
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data))writable=p->writable;if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
     if(f.module=="file")return invoke_file_standard(f,args,s,context);
     if(f.module=="error")return invoke_error_standard(f,args,s);

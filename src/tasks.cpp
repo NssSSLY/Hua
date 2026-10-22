@@ -17,6 +17,15 @@ TaskRuntime::TaskRuntime(RuntimeContext& c,std::ostream& o):context(c),output(o)
 TaskState::~TaskState(){result={};if(heap)heap->collect();}
 void release_task_admission()noexcept{--running;}
 TaskRuntime::~TaskRuntime(){try{finish(true);}catch(...) {}}
+void cancellation_checkpoint(RuntimeContext* c,const SourceSpan& s){if(c&&!c->cleanup&&c->cancellation&&c->cancellation->stopped())runtime_error(s,"task canceled","E4101");}
+bool file_pump_pending(const RuntimeContext* c) noexcept{return c&&(!c->resumable||!c->in_task)&&c->files&&c->files->created->load(std::memory_order_acquire);}
+bool builtin_may_suspend(const std::string& name,const RuntimeContext* c){
+    if(name=="task_await"||name=="task_group_end")return true;
+    auto f=standard_function(name);if(!f)return false;
+    if(f->module=="task"&&(f->name=="timeout"||f->name=="yield"||f->name=="sleep"))return true;
+    if(c&&c->in_task&&((f->module=="gc"&&f->name=="collect")||f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process"))return true;
+    return false;
+}
 void task_checkpoint(RuntimeContext* c,const SourceSpan& s){if(!c||!c->resumable||!c->in_task)file_checkpoint(c);if(c&&!c->cleanup&&c->cancellation&&c->cancellation->stopped())runtime_error(s,"task canceled","E4101");}
 Value TaskRuntime::start(TaskJob job,std::string type,const SourceSpan& span,std::shared_ptr<ManagedHeap> heap){
     TaskResumeJob resumable=[job=std::move(job)](RuntimeContext& child,std::ostream& out)->Routine<Value>{

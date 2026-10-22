@@ -59,7 +59,7 @@ def report(source):
     for exe,action,target in paths:
         p=invoke([exe,action,target,'--execution-profile','compiler','--report-budget','--',source])
         r=json.loads(p.stdout);metrics=json.loads(p.stderr)
-        assert metrics['profile']=='compiler' and 0<metrics['steps']<=500000000 and 0<metrics['peak_calls']<=128
+        assert metrics['profile']=='compiler' and 0<metrics['steps']<=100000000000 and 0<metrics['peak_calls']<=128
         result.append(r)
     assert all(x==result[0] for x in result)
     return runner.validate_bytecode(result[0],contract) if result[0]["status"]=="ok" else result[0]

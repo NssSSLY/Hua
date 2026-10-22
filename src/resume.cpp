@@ -133,7 +133,7 @@ void Suspend::await_suspend(std::coroutine_handle<> h){
     if(!active_frame)throw std::logic_error("suspension outside Hua execution frame");
     active_frame->next=h;active_frame->ready=std::move(ready);active_frame->deadline=deadline;
 }
-bool Yield::await_ready()const{return !force&&(!active_frame||(++active_frame->ticks%1024)!=0);}
+bool Yield::await_ready()const{if(force)return false;if(!active_frame)return true;auto before=active_frame->ticks;active_frame->ticks+=weight;return before/1024==active_frame->ticks/1024;}
 void Yield::await_suspend(std::coroutine_handle<> h){Suspend{[]{return true;},Clock::now()}.await_suspend(h);}
 Blocking::Blocking(std::function<Value()> f):job(std::move(f)),state(std::make_shared<BlockingState>()){}
 void Blocking::await_suspend(std::coroutine_handle<> h){

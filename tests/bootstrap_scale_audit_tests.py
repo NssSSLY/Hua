@@ -1,7 +1,7 @@
 """Regression of BO-11 admission safety; no compiler/VM workloads."""
 from pathlib import Path
 import sys,unittest
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'tools'))
 from audit_bootstrap_scale import decide,phase_values,estimate,feature
 
 class AdmissionTests(unittest.TestCase):

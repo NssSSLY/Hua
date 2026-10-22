@@ -1,7 +1,7 @@
 """Independent numerical and freeze precondition checks; no compiler/VM workloads."""
 from pathlib import Path
 import sys,unittest,math
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'tools'))
 from audit_bootstrap_readmission import fit,predict
 class ModelTests(unittest.TestCase):
  def test_known_nonnegative_linear_system(self):

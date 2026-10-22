@@ -1,0 +1,4 @@
+{
+  "08_real_type_rules": "selfhost/type_rules.hua",
+  "09_real_ast_pool": "selfhost/ast_pool.hua"
+}

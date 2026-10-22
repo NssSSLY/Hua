@@ -5,6 +5,7 @@
 #include "hua/tasks.hpp"
 #include "hua/entry.hpp"
 namespace hua {
+struct BuiltinInfo;
 // Optional diagnostics borrow values only for the duration of a boundary callback.
 // They do not change bytecode, instruction budgets, or child Task executors.
 struct VMCallObserver {
@@ -50,6 +51,19 @@ private:
         }
 
     };
+    // A shared_ptr control block is the activation lease. The environment's
+    // stable slots are recycled only by its final lease deleter; a Location or
+    // suspended continuation therefore prevents reuse without special cases.
+    struct FrameArena {
+        struct Work {std::uint64_t activations{},created{},reused{},retired{},active{},peak{};};
+        Work work;
+        std::vector<std::unique_ptr<Environment>> free;
+        FrameArena(){free.reserve(64);}
+        std::shared_ptr<Environment> acquire(const ScopeLayout*,const std::shared_ptr<FrameArena>&);
+        void retire(Environment*) noexcept;
+    };
+    std::shared_ptr<FrameArena> frame_arena_;
+    std::shared_ptr<Environment> activation(const ScopeLayout* shape){if(!frame_arena_)frame_arena_=std::make_shared<FrameArena>();return frame_arena_->acquire(shape,frame_arena_);}
     using Location = ValueLocation;
     using Entry = std::variant<Value, Location>;
     struct Iterator {
@@ -72,11 +86,18 @@ private:
         std::string type_owner;
         const std::string* type{};
     };
-    struct AccessCache { NameRoute name;FieldAccess field;std::optional<std::vector<std::string>> multi_types; };
+    // Call sites remember the resolved builtin; interned names make the key a pointer.
+    struct BuiltinRoute { const std::string* name{};const BuiltinInfo* info{}; };
+    struct FunctionLayout;struct CodeLayout;
+    // Call sites remember the callee's layouts (all owned by stable VM/bytecode tables).
+    struct FunctionRoute { const Node* function{};const FunctionLayout* layout{};const Code* code{};CodeLayout* slots{}; };
+    struct AccessCache { NameRoute name;FieldAccess field;std::optional<std::vector<std::string>> multi_types;BuiltinRoute builtin;FunctionRoute function; };
     struct CodeLayout {
         ScopeLayout root;
         std::map<std::size_t,ScopeLayout> scopes;
         std::vector<std::unique_ptr<AccessCache>> accesses;
+        // Load-time fusion (bytecode unchanged): `!` directly followed by JumpFalse/JumpTrue.
+        std::vector<bool> negated_jump;
     };
     struct Frame {
         const Code* code{};
@@ -113,8 +134,29 @@ private:
     std::optional<Value> completed_;
     Value pop(const SourceSpan& span);
     std::vector<Value> arguments(std::size_t count, const SourceSpan& span);
+    // Call argument vectors are recycled through a small pool. A lease (not one
+    // shared buffer) keeps re-entrant calls, e.g. from external functions, safe.
+    std::vector<std::vector<Value>> argument_pool_;
+    struct ArgumentLease {
+        VirtualMachine& vm; std::vector<Value> values;
+        explicit ArgumentLease(VirtualMachine& owner):vm(owner){if(!vm.argument_pool_.empty()){values=std::move(vm.argument_pool_.back());vm.argument_pool_.pop_back();}}
+        ~ArgumentLease(){values.clear();if(vm.argument_pool_.size()<16&&values.capacity()<=64)vm.argument_pool_.push_back(std::move(values));}
+        ArgumentLease(const ArgumentLease&)=delete;ArgumentLease& operator=(const ArgumentLease&)=delete;
+    };
+    void pop_arguments(std::size_t count, const SourceSpan& span, std::vector<Value>& out);
     void bind(const Instruction& op, Value value);
     Routine<void> call(const Callable& callable, const std::vector<Value>& args, const Instruction& site);
+    // Synchronous part of call(): user/external functions never suspend while entering.
+    void enter_function(const Callable& callable, const std::vector<Value>& args, const Instruction& site, FunctionRoute* route=nullptr);
+    // Return without deferred work anywhere in the returning frame: no coroutine needed.
+    bool has_pending_defers(const Frame& frame) const;
+    void complete_return(Value value,const Instruction& op,bool early);
+    // Safe-point polling: steps are exact, cancellation/yield are checked every
+    // poll_interval steps, and shared metrics are flushed in batches.
+    static constexpr unsigned poll_interval=256;
+    unsigned poll_countdown_{1};
+    std::uint64_t pending_metric_steps_{};
+    void flush_metrics(){if(pending_metric_steps_&&context_&&context_->execution_metrics)context_->execution_metrics->steps+=pending_metric_steps_;pending_metric_steps_=0;}
     Value isolated(const Value& value,unsigned depth=0);
     Routine<Value> launch(const Callable&,const std::vector<Value>&,const Instruction&,std::vector<std::int64_t> batch={},std::string element={},bool contextual=false);
     Routine<Value> parallel(const std::vector<Value>&,const Instruction&);

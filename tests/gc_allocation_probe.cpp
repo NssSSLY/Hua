@@ -27,8 +27,11 @@ void run(std::size_t n){
     auto count=heap.collect();auto end=snapshot();check(count==0&&heap.live()==n,"rooted graph");
     std::cout<<"{\"vertices\":"<<n<<",\"track_calls\":"<<tracked.calls-begin.calls<<",\"track_requested\":"<<tracked.requested-begin.requested<<",\"track_live\":"<<tracked.live-begin.live<<",\"collect_calls\":"<<end.calls-tracked.calls<<",\"collect_requested\":"<<end.requested-tracked.requested<<",\"collect_live_delta\":"<<std::int64_t(end.live)-std::int64_t(tracked.live)<<"}\n";
     if(n){auto weak=std::weak_ptr(nodes.front());auto address=nodes.front().get();
-        for(unsigned point=0;point<5;++point){hua::native_allocation::fail_after(point);bool failed=false;try{heap.collect();}catch(const std::bad_alloc&){failed=true;}hua::native_allocation::clear_failure();
-            check(failed&&heap.live()==n&&weak.lock().get()==address,"collector allocation failure preserves roots");check(heap.collect()==0,"collector recovers after allocation failure");}
+        // Fail each allocation point of a collection in turn until one completes
+        // (reused work storage means later collections allocate less).
+        for(unsigned point=0;;++point){hua::native_allocation::fail_after(point);bool failed=false;try{heap.collect();}catch(const std::bad_alloc&){failed=true;}hua::native_allocation::clear_failure();
+            check(heap.live()==n&&weak.lock().get()==address,"collector allocation failure preserves roots");check(heap.collect()==0,"collector recovers after allocation failure");
+            if(!failed)break;check(point<64,"collection allocation points are bounded");}
         nodes.clear();check(heap.collect()==n&&weak.expired()&&heap.live()==0,"cycle collected after failures");
     }
 }

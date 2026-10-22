@@ -1,0 +1,34 @@
+struct Inner { name string
+    tags []string }
+struct Box { id int
+    inner Inner
+    flags map[string]bool }
+struct Point { x int
+    y int }
+fn main() {
+    let a = Box{id:1, inner:Inner{name:"n", tags:["a","b"]}, flags:map[string]bool{"k":true}}
+    var b = a
+    print(a == b, a != b)
+    b.inner.name = "m"
+    print(a == b)
+    var c = a
+    c.flags = map[string]bool{"k":true}
+    print(a == c)
+    c.flags = map[string]bool{"k":false}
+    print(a == c)
+    let p = Point{x:1, y:2}
+    let q = Point{x:1, y:2}
+    print(p == q, p == Point{x:2, y:1})
+    print([1,2,3] == [1,2,3], [1,2] == [1,2,3], ["x"] != ["y"])
+    let m1 = map[string]int{"a":1, "b":2}
+    let m2 = map[string]int{"b":2, "a":1}
+    print(m1 == m2, m1 == map[string]int{"a":1})
+    let r1 Result<Point> = ok(Point{x:1, y:2})
+    let r2 Result<Point> = ok(Point{x:1, y:2})
+    let r3 Result<Point> = err("no")
+    print(r1 == r2, r1 == r3)
+    var o Point? = nil
+    print(o == nil)
+    o = Point{x:1, y:2}
+    print(o == p, o == nil)
+}

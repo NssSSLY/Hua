@@ -1,0 +1,163 @@
+{
+  "status": "experiment-withdrawn",
+  "default": {
+    "capability_sha256": "6d6a4a2accb33b4cf31f0b8e2bc23d4eea2aade527367642636038302266266b",
+    "source_files_restored": 32,
+    "seed_sha256": "e3f8a429b0ddbccf555fa921f0793d425f29785b7d0537f2329f7d4ff61119fb"
+  },
+  "experimental": {
+    "capability_sha256": "f8e0f30edc1676afaf58b4ea71a1da761b901aaca5f4b7ed0a0876f704005b0b",
+    "seed_sha256": "fd6c7394c9fd129ff0ed009603611c35af5804c9626b74c3c1e3622ae1688e9b",
+    "source_bytes": 297329,
+    "source_hashes": {
+      "archive.hua": "b99c09b006a8613a183c5183b1dd1637092fbbabe6d8eb1885a72b5d6b171f23",
+      "archive_main.hua": "864e55563119868c7be43d8caf1f4657074dc246df516679a442ef9f812dd522",
+      "ast_pool.hua": "6cbe5f78816f533f14b6ecedd86256f844125ee97b87550fddf8234c44ed5c14",
+      "bytecode.hua": "3514e1853fd142e814c5aff9b10a4bf22c91efeddb8e306f4f30ca6e756da712",
+      "bytecode_verify.hua": "8cbb9a77e51d701deb8bf5ff86ea4b1b18c1d12aacb45fe3919e14639ac5e1db",
+      "capabilities.hua": "f8e0f30edc1676afaf58b4ea71a1da761b901aaca5f4b7ed0a0876f704005b0b",
+      "catalog.hua": "77f747fd4df0b57744f905ccf5bb18921cb7676fc29857f81e2cb5529c0e2fad",
+      "lexer.hua": "08bf282c6aea386a2ce72caad3f999ade361afe6a708dfe4a98997f2f469953d",
+      "lowering.hua": "c442ca0a52da125d7eca28d94e36392cf64ab35f1fcaddbc9b5cc7594e89d6f5",
+      "modules.hua": "452c7a3945e7351ce7cc1aee727bcf6418f33d6c2774becc2e4fbd0652cdbff6",
+      "parser.hua": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28",
+      "signatures.hua": "f79c4d86d0dd76ead202401d56813d6117db2929fc05aa1f0997b1dff20af40d",
+      "type_rules.hua": "5d92c454c4f99ad97eff2335207c57424f93d10d3da1fd74d257f03c28f182ab",
+      "types.hua": "1732165c82aa76e20bb69a4c9a9c7b50486fb282d4a150cb5ca584dcf6d77c33"
+    }
+  },
+  "runtime_sha256": "3afa32e1121d3677e73be9fb5467aabeb132ad1e700c011870643f02e7e33e85",
+  "pairs": {
+    "parser": {
+      "before": {
+        "steps": 125645339,
+        "seconds": 27.0,
+        "cpu_seconds": 26.609375,
+        "peak_working_bytes": 285814784,
+        "huab_sha256": "2c6b2f13fbe2ade559825477af3ddf2cef152b8f6eff5b83ce5044a1bec50d6f"
+      },
+      "after": {
+        "steps": 126598665,
+        "seconds": 29.04699999996228,
+        "cpu_seconds": 28.40625,
+        "peak_working_bytes": 280076288,
+        "huab_sha256": "2c6b2f13fbe2ade559825477af3ddf2cef152b8f6eff5b83ce5044a1bec50d6f"
+      }
+    },
+    "modules": {
+      "before": {
+        "steps": 161029257,
+        "seconds": 34.15600000001723,
+        "cpu_seconds": 33.859375,
+        "peak_working_bytes": 326500352,
+        "huab_sha256": "95b9c088788893ec01dd8a001c3a5d54780fbd05fb867d0ca4dce070dd36da8f"
+      },
+      "after": {
+        "steps": 162742331,
+        "seconds": 39.57800000003772,
+        "cpu_seconds": 38.8125,
+        "peak_working_bytes": 339759104,
+        "huab_sha256": "95b9c088788893ec01dd8a001c3a5d54780fbd05fb867d0ca4dce070dd36da8f"
+      }
+    },
+    "wide": {
+      "before": {
+        "steps": 7656280,
+        "seconds": 1.5320000000065193,
+        "cpu_seconds": 1.5,
+        "peak_working_bytes": 75284480,
+        "huab_sha256": "80596d77747480e63f25a6eff45e866597909c82afc055832f58297b3ce72de4"
+      },
+      "after": {
+        "steps": 6969576,
+        "seconds": 1.6089999999967404,
+        "cpu_seconds": 1.609375,
+        "peak_working_bytes": 79040512,
+        "huab_sha256": "80596d77747480e63f25a6eff45e866597909c82afc055832f58297b3ce72de4"
+      }
+    }
+  },
+  "correctness": {
+    "cases": 190,
+    "checks": 1000,
+    "complete_reports_equal": true,
+    "work_passes_preserved": true,
+    "body_visits_preserved": true,
+    "private_instantiation_checks": 48,
+    "metadata_checks": 279,
+    "parameter_contract_checks_per_path": 17,
+    "transforms_checks_per_path": 13,
+    "flow_checks_per_path": 13,
+    "supervisor_checks": 3
+  },
+  "work": {
+    "C04_steps_before": 31826348,
+    "C04_steps_after": 32779674,
+    "before_volumes": {
+      "snapshot-bindings": 27190,
+      "snapshot-fields": 195126,
+      "actual-passes": 5,
+      "logical-work": 30833
+    },
+    "after_volumes": {
+      "snapshot-bindings": 1508,
+      "snapshot-fields": 31858,
+      "actual-passes": 5,
+      "logical-work": 30833
+    },
+    "after_counts": {
+      "join_candidate_bindings": 1934,
+      "journal_first_writes": 2437,
+      "journal_saved_bindings": 2113,
+      "materialization_backing_slots": 32559,
+      "materializations": 1538,
+      "queried_deferred_fields": 4628,
+      "queried_fields": 6159,
+      "return_backing_slots": 5366,
+      "returned_values": 1753,
+      "substitution_origin_visits": 10408,
+      "view_substitutions": 9436
+    }
+  },
+  "formal": {
+    "status": "failed",
+    "error": "E4099",
+    "phase": "C04",
+    "location": "capabilities.hua:819",
+    "executed_once": true,
+    "generated": false,
+    "seconds": 162.68699999997625,
+    "cpu_seconds": 158.765625,
+    "peak_working_bytes": 697614336,
+    "budget": {
+      "schema": "hua.execution.budget.v1",
+      "profile": "compiler",
+      "per_executor_step_limit": 500000000,
+      "call_depth_limit": 128,
+      "collection_interval": 65536,
+      "steps": 500000001,
+      "peak_calls": 52
+    }
+  },
+  "audit": {
+    "status": "passed",
+    "protected_files_unchanged": 122,
+    "history_files_unchanged": 39,
+    "default_selfhost_files_restored": 32,
+    "encyclopedia_confirmation_blocks_unchanged": 207,
+    "ER_RS_rows_unchanged": 22,
+    "active_docs": 9,
+    "links_checked": 540,
+    "issues": [],
+    "default_runtime_core_changed": false,
+    "full_trial_runs": 1,
+    "trial_status": "failed-500M-withdrawn",
+    "committed_or_pushed": false,
+    "raw_receipts_byte_equal": 3,
+    "observed_receipt_byte_equal": true,
+    "default_harness_cases": 2,
+    "default_harness_checks": 20,
+    "default_adapter_checks": 48,
+    "experimental_location_ctest": "3/3 passed"
+  }
+}

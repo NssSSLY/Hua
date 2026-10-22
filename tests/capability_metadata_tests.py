@@ -3,9 +3,10 @@ No input program, compiler own source, or generations are executed.
 """
 from pathlib import Path
 import argparse,json,re,shutil,sys,time
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'tools'))
 from audit_bootstrap_phases import command,save,digest
 from capability_instantiation_tests import literal,view,value
+from capability_fixture_support import adapt_fixture
 
 def extract(text,name):
     match=re.search(r'(?ms)^fn '+name+r'\(.*?(?=^(?:pub )?fn |\Z)',text)
@@ -101,14 +102,30 @@ var projected=environment(0,"projected",map[string]Value{"part":left})
 let selected=field_fact(left,"#@f0","[]int")
 let selected_aliases=unwrap(storage_aliases(projected,selected))
 print(len(old_aliases)==1 && old_aliases[0]=="box#@item",len(stale)==0,len(fresh)==1 && fresh[0]=="box#@item",len(legacy_aliases)==1 && legacy_aliases[0]=="box#@item",len(selected_aliases)==1 && selected_aliases[0]=="part#@f0")
+# Root-only differences cannot discard equal fields or share mutable results.
+var changed_root=clone(input)
+changed_root.root.readonly_children=true
+let same_keys=merge(input,changed_root)
+print(same_fields(same_keys.fields,input.fields),same_keys.root.readonly_children)
+# A superset on the right discharges every left key; the reverse merge must
+# still conservatively project the missing right fact for the extra left key.
+var superset=clone(input)
+superset.fields["#@extra"]=view("[]int",false)
+superset.prefixes=prefix_index(superset.fields)
+let added=merge(input,superset)
+let removed=merge(superset,input)
+print(has(added.fields,"#@extra") && !unwrap(added.fields["#@extra"]).writable,has(removed.fields,"#@extra") && !unwrap(removed.fields["#@extra"]).writable)
+let normalized=merge(left,left)
+print(normalized.prefix=="" && !normalized.readonly_fields,same_value(normalized,materialized(left)))
+
 }'''
-    return 'import type_rules as rules\nimport std.list as list\nimport std.strings as strings\nimport std.json as json\n'+decl+env+functions+main.replace('INPUT',literal(raw,'Value'))
+    return adapt_fixture('import type_rules as rules\nimport std.list as list\nimport std.strings as strings\nimport std.json as json\n'+decl+env+functions+main.replace('INPUT',literal(raw,'Value')),text)
 
 def execute(exe,root,out,cap,tag):
     dest=out/tag;dest.mkdir(parents=True,exist_ok=False)
     shutil.copyfile(root/'selfhost/type_rules.hua',dest/'type_rules.hua')
     rows=[]
-    expected=['true true true true','true true','true true true','true true true','true true true','true','true true','true true','true true true true true']
+    expected=['true true true true','true true','true true true','true true true','true true true','true','true true','true true','true true true true true','true true','true true','true true']
     for width in (1,9,32):
         p=dest/('width'+str(width)+'.hua');p.write_text(source(cap,width),encoding='utf-8',newline='\n');artifact=p.with_suffix('.huab')
         outputs=[]
@@ -121,7 +138,7 @@ def execute(exe,root,out,cap,tag):
             outputs.append(stdout.decode('utf-8').splitlines());assert outputs[-1]==expected,outputs[-1]
         finally:hidden.rename(p)
         rows.append(dict(width=width,source_sha256=digest(p),artifact_sha256=digest(artifact),output=expected))
-    result=dict(status='passed',cases=len(rows),paths=['AST','source VM','source-free HUAB'],assertions=3*3*25,rows=rows)
+    result=dict(status='passed',cases=len(rows),paths=['AST','source VM','source-free HUAB'],assertions=3*3*31,rows=rows)
     save(dest/'result.json',result);print(json.dumps({k:v for k,v in result.items() if k!='rows'}))
 if __name__=='__main__':
     a=argparse.ArgumentParser();a.add_argument('exe',type=Path);a.add_argument('root',type=Path);a.add_argument('output',type=Path);a.add_argument('--source',type=Path);a.add_argument('--tag',default='metadata-'+str(time.time_ns()));v=a.parse_args()

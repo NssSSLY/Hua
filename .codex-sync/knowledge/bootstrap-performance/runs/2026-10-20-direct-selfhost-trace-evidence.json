@@ -1,0 +1,1179 @@
+{
+  "schema": "hua.bootstrap.direct-trace-evidence.v1",
+  "status": "full-own-source-failed-step-budget",
+  "manifest": {
+    "schema": "hua.bootstrap.direct-trace.v1",
+    "authorization": "User requests one full own-source run, tracking and cause summary; no optimization edits.",
+    "head": "67faab1348be730327601a7ee14e73ccfd15eb3d",
+    "runtime": {
+      "path": "C:\\file\\project\\hua\\tests\\artifacts\\build-bo11-body-20261019-r3\\hua.exe",
+      "sha256": "3afa32e1121d3677e73be9fb5467aabeb132ad1e700c011870643f02e7e33e85"
+    },
+    "compiler": {
+      "path": "C:\\file\\project\\hua\\tests\\artifacts\\build\\c04-call-20261020\\compiler-after.huab",
+      "sha256": "e3f8a429b0ddbccf555fa921f0793d425f29785b7d0537f2329f7d4ff61119fb"
+    },
+    "source_files": {
+      "archive.hua": {
+        "sha256": "b99c09b006a8613a183c5183b1dd1637092fbbabe6d8eb1885a72b5d6b171f23",
+        "bytes": 7882
+      },
+      "archive_main.hua": {
+        "sha256": "864e55563119868c7be43d8caf1f4657074dc246df516679a442ef9f812dd522",
+        "bytes": 1980
+      },
+      "ast_pool.hua": {
+        "sha256": "6cbe5f78816f533f14b6ecedd86256f844125ee97b87550fddf8234c44ed5c14",
+        "bytes": 14852
+      },
+      "bytecode.hua": {
+        "sha256": "3514e1853fd142e814c5aff9b10a4bf22c91efeddb8e306f4f30ca6e756da712",
+        "bytes": 25362
+      },
+      "bytecode_verify.hua": {
+        "sha256": "8cbb9a77e51d701deb8bf5ff86ea4b1b18c1d12aacb45fe3919e14639ac5e1db",
+        "bytes": 16157
+      },
+      "capabilities.hua": {
+        "sha256": "6d6a4a2accb33b4cf31f0b8e2bc23d4eea2aade527367642636038302266266b",
+        "bytes": 57056
+      },
+      "catalog.hua": {
+        "sha256": "77f747fd4df0b57744f905ccf5bb18921cb7676fc29857f81e2cb5529c0e2fad",
+        "bytes": 2757
+      },
+      "lexer.hua": {
+        "sha256": "08bf282c6aea386a2ce72caad3f999ade361afe6a708dfe4a98997f2f469953d",
+        "bytes": 9474
+      },
+      "lowering.hua": {
+        "sha256": "c442ca0a52da125d7eca28d94e36392cf64ab35f1fcaddbc9b5cc7594e89d6f5",
+        "bytes": 17422
+      },
+      "modules.hua": {
+        "sha256": "452c7a3945e7351ce7cc1aee727bcf6418f33d6c2774becc2e4fbd0652cdbff6",
+        "bytes": 20091
+      },
+      "parser.hua": {
+        "sha256": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28",
+        "bytes": 37855
+      },
+      "signatures.hua": {
+        "sha256": "f79c4d86d0dd76ead202401d56813d6117db2929fc05aa1f0997b1dff20af40d",
+        "bytes": 15464
+      },
+      "type_rules.hua": {
+        "sha256": "5d92c454c4f99ad97eff2335207c57424f93d10d3da1fd74d257f03c28f182ab",
+        "bytes": 4912
+      },
+      "types.hua": {
+        "sha256": "1732165c82aa76e20bb69a4c9a9c7b50486fb282d4a150cb5ca584dcf6d77c33",
+        "bytes": 56856
+      }
+    },
+    "input_bytes": 288120,
+    "host": {
+      "platform": "Windows-11-10.0.26200-SP0",
+      "python": "3.12.0 (tags/v3.12.0:0fb18b0, Oct  2 2023, 13:03:39) [MSC v.1935 64 bit (AMD64)]",
+      "logical_processors": 8,
+      "processor": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+      "memory_bytes": 16983347200,
+      "cpu_name": "11th Gen Intel(R) Core(TM) i5-11300H @ 3.10GHz"
+    },
+    "limits": {
+      "seconds": 600,
+      "steps": 500000000,
+      "calls": 128,
+      "gc_interval": 65536,
+      "report_bytes": 16777216
+    },
+    "observer": "Read-only call boundaries; exact VM step partition and source metadata volumes, observed timing includes overhead.",
+    "source_edits": false,
+    "attempts": 1,
+    "command": [
+      "C:\\file\\project\\hua\\tests\\artifacts\\selfhost-trace-20261020-run\\trace-selfhost.exe",
+      "C:\\file\\project\\hua\\tests\\artifacts\\build\\c04-call-20261020\\compiler-after.huab",
+      "C:\\file\\project\\hua\\selfhost\\archive_main.hua",
+      "C:\\file\\project\\hua\\tests\\artifacts\\selfhost-trace-20261020-run\\compiler1.huab",
+      "C:\\file\\project\\hua\\tests\\artifacts\\selfhost-trace-20261020-run\\events.jsonl",
+      "C:\\file\\project\\hua\\tests\\artifacts\\selfhost-trace-20261020-run\\trace-summary.json"
+    ],
+    "observer_binary_sha256": "f2e05aff3c7de25e61c0223fecabad9828e36cf303f1744fdb64d792f7f9cddc",
+    "observer_source_sha256": "9c20daff0f94b4754fbee58479cc4e72166cd576205903c4a98752ce0ed23189",
+    "instrumentation_setup_failure": {
+      "path": "C:\\file\\project\\hua\\tests\\artifacts\\selfhost-trace-20261020",
+      "reason": "observer must ignore initializer leave(nullptr); no compiler main entered",
+      "corrected": true
+    }
+  },
+  "result": {
+    "schema": "hua.bootstrap.formal-result.v1",
+    "status": "process-failed",
+    "timeout": false,
+    "seconds": 165.06300000002375,
+    "returncode": 1,
+    "pid": 21160,
+    "cpu_seconds": 161.59375,
+    "working_bytes": 32768,
+    "peak_working_bytes": 581738496,
+    "private_bytes": 77824,
+    "artifact_exists": false,
+    "attempts": 1,
+    "automatic_retry": false,
+    "stdout_bytes": 0,
+    "stderr_bytes": 104,
+    "sources_unchanged": true
+  },
+  "analysis": {
+    "phases": {
+      "execution": {
+        "inclusive_steps": 500000001,
+        "inclusive_seconds": 164.3086757,
+        "entries": 1,
+        "complete_entries": 0
+      },
+      "types": {
+        "inclusive_steps": 499999962,
+        "inclusive_seconds": 164.3072573,
+        "entries": 1,
+        "complete_entries": 0
+      },
+      "names": {
+        "inclusive_steps": 126940752,
+        "inclusive_seconds": 22.2918807,
+        "entries": 1,
+        "complete_entries": 1
+      },
+      "parse": {
+        "inclusive_steps": 105557406,
+        "inclusive_seconds": 18.024351199999998,
+        "entries": 14,
+        "complete_entries": 14
+      },
+      "return-infer": {
+        "inclusive_steps": 10503406,
+        "inclusive_seconds": 2.3736999999999995,
+        "entries": 1,
+        "complete_entries": 1
+      },
+      "capabilities": {
+        "inclusive_steps": 361030109,
+        "inclusive_seconds": 139.2399,
+        "entries": 1,
+        "complete_entries": 0
+      }
+    },
+    "total_steps": 500000001,
+    "c04_inclusive_steps": 361030109,
+    "c04_total_percent": 72.20602165558796,
+    "capability_helper_exclusive_steps": 322570765,
+    "analyzed_body_visits": 595,
+    "body_steps": 339880136,
+    "revisited_steps": 294975382,
+    "revisited_c04_percent": 81.70381767244793,
+    "body_setup_summary_other_steps": 21149973,
+    "top_bodies": [
+      {
+        "target": "capabilities.hua#statement",
+        "visits": 4,
+        "steps": 63014721,
+        "per_visit_steps": [
+          1804832,
+          7482531,
+          32721338,
+          21006020
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          false
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 18.129852529210474
+      },
+      {
+        "target": "capabilities.hua#expression_body",
+        "visits": 4,
+        "steps": 53979753,
+        "per_visit_steps": [
+          2733153,
+          5983354,
+          17282323,
+          27980923
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 10.237598480582683
+      },
+      {
+        "target": "capabilities.hua#analyze",
+        "visits": 4,
+        "steps": 44074473,
+        "per_visit_steps": [
+          1181995,
+          6855989,
+          14566284,
+          21470205
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 18.164378867930914
+      },
+      {
+        "target": "capabilities.hua#invoke",
+        "visits": 4,
+        "steps": 28431477,
+        "per_visit_steps": [
+          2150196,
+          8195644,
+          8961732,
+          9123905
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 4.243289914035744
+      },
+      {
+        "target": "types.hua#statement",
+        "visits": 3,
+        "steps": 18846223,
+        "per_visit_steps": [
+          3872120,
+          7001422,
+          7972681
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.058996363749057
+      },
+      {
+        "target": "types.hua#expression_body",
+        "visits": 3,
+        "steps": 11638835,
+        "per_visit_steps": [
+          1620109,
+          4755196,
+          5263530
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 3.2488739955151167
+      },
+      {
+        "target": "types.hua#analyze",
+        "visits": 3,
+        "steps": 8045893,
+        "per_visit_steps": [
+          1211447,
+          3372122,
+          3462324
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.858006994940761
+      },
+      {
+        "target": "capabilities.hua#put",
+        "visits": 4,
+        "steps": 5614188,
+        "per_visit_steps": [
+          991301,
+          1532946,
+          1544110,
+          1545831
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 1.5593961874344926
+      },
+      {
+        "target": "types.hua#matching",
+        "visits": 3,
+        "steps": 5461380,
+        "per_visit_steps": [
+          1300364,
+          2315196,
+          1845820
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 1.7804214819850441
+      },
+      {
+        "target": "modules.hua#walk",
+        "visits": 3,
+        "steps": 4701004,
+        "per_visit_steps": [
+          930562,
+          1861971,
+          1908471
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.0508800058459298
+      },
+      {
+        "target": "capabilities.hua#assign",
+        "visits": 4,
+        "steps": 4334098,
+        "per_visit_steps": [
+          44095,
+          1338773,
+          1465191,
+          1486039
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 33.70085043655743
+      },
+      {
+        "target": "bytecode.hua#generate_verified",
+        "visits": 4,
+        "steps": 4098054,
+        "per_visit_steps": [
+          684032,
+          1046122,
+          1183299,
+          1184601
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 1.7317917875187125
+      },
+      {
+        "target": "bytecode.hua#expression",
+        "visits": 4,
+        "steps": 4060326,
+        "per_visit_steps": [
+          405375,
+          958803,
+          1321879,
+          1374269
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 3.390117792167746
+      },
+      {
+        "target": "bytecode.hua#statement",
+        "visits": 4,
+        "steps": 3880380,
+        "per_visit_steps": [
+          530904,
+          1050476,
+          1148818,
+          1150182
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.166459472899055
+      },
+      {
+        "target": "bytecode.hua#match_statement",
+        "visits": 4,
+        "steps": 3019066,
+        "per_visit_steps": [
+          433651,
+          741399,
+          919321,
+          924695
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.1323483630846
+      },
+      {
+        "target": "capabilities.hua#merge",
+        "visits": 4,
+        "steps": 2722693,
+        "per_visit_steps": [
+          525270,
+          719698,
+          734802,
+          742923
+        ],
+        "complete": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 1.4143640413501628
+      },
+      {
+        "target": "lowering.hua#enumeration",
+        "visits": 3,
+        "steps": 2304629,
+        "per_visit_steps": [
+          237598,
+          1007676,
+          1059355
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 4.458602345137585
+      },
+      {
+        "target": "parser.hua#match_statement",
+        "visits": 3,
+        "steps": 2045285,
+        "per_visit_steps": [
+          361175,
+          837734,
+          846376
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.343395860732332
+      },
+      {
+        "target": "parser.hua#statement",
+        "visits": 3,
+        "steps": 1831600,
+        "per_visit_steps": [
+          477832,
+          674012,
+          679756
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 1.4225836695742438
+      },
+      {
+        "target": "lowering.hua#lower",
+        "visits": 3,
+        "steps": 1814936,
+        "per_visit_steps": [
+          326841,
+          734908,
+          753187
+        ],
+        "complete": [
+          true,
+          true,
+          true
+        ],
+        "probing": [
+          true,
+          true,
+          true
+        ],
+        "max_over_first": 2.3044446688145
+      }
+    ],
+    "top_helpers": [
+      {
+        "helper": "capabilities.hua#instantiate_view_at",
+        "entered": 94109,
+        "completed": 94109,
+        "inclusive_steps": 47748317,
+        "exclusive_steps": 42247683,
+        "exclusive_total_percent": 8.449536583100926,
+        "exclusive_c04_percent": 11.701983282507886
+      },
+      {
+        "helper": "capabilities.hua#merge_view",
+        "entered": 152315,
+        "completed": 152315,
+        "inclusive_steps": 27992126,
+        "exclusive_steps": 27992126,
+        "exclusive_total_percent": 5.59842518880315,
+        "exclusive_c04_percent": 7.75340485521666
+      },
+      {
+        "helper": "capabilities.hua#note_prefix",
+        "entered": 176620,
+        "completed": 176620,
+        "inclusive_steps": 24055442,
+        "exclusive_steps": 24055442,
+        "exclusive_total_percent": 4.811088390377823,
+        "exclusive_c04_percent": 6.663001616854067
+      },
+      {
+        "helper": "capabilities.hua#same_flags",
+        "entered": 340742,
+        "completed": 340742,
+        "inclusive_steps": 22507792,
+        "exclusive_steps": 22507792,
+        "exclusive_total_percent": 4.501558390996883,
+        "exclusive_c04_percent": 6.234325458988242
+      },
+      {
+        "helper": "capabilities.hua#same_view",
+        "entered": 360436,
+        "completed": 360436,
+        "inclusive_steps": 40718837,
+        "exclusive_steps": 18217107,
+        "exclusive_total_percent": 3.643421392713157,
+        "exclusive_c04_percent": 5.045869179847268
+      },
+      {
+        "helper": "capabilities.hua#storage_aliases",
+        "entered": 36226,
+        "completed": 36226,
+        "inclusive_steps": 25424094,
+        "exclusive_steps": 15397835,
+        "exclusive_total_percent": 3.0795669938408663,
+        "exclusive_c04_percent": 4.264972537235115
+      },
+      {
+        "helper": "capabilities.hua#merge",
+        "entered": 43552,
+        "completed": 43552,
+        "inclusive_steps": 82704467,
+        "exclusive_steps": 15024837,
+        "exclusive_total_percent": 3.004967393990065,
+        "exclusive_c04_percent": 4.161657608451709
+      },
+      {
+        "helper": "capabilities.hua#put",
+        "entered": 77602,
+        "completed": 77602,
+        "inclusive_steps": 91588978,
+        "exclusive_steps": 14903188,
+        "exclusive_total_percent": 2.9806375940387246,
+        "exclusive_c04_percent": 4.127962634828332
+      },
+      {
+        "helper": "capabilities.hua#expression_body",
+        "entered": 123986,
+        "completed": 123984,
+        "inclusive_steps": 507636498,
+        "exclusive_steps": 14839866,
+        "exclusive_total_percent": 2.9679731940640535,
+        "exclusive_c04_percent": 4.110423377458527
+      },
+      {
+        "helper": "capabilities.hua#invoke",
+        "entered": 8550,
+        "completed": 8549,
+        "inclusive_steps": 179853827,
+        "exclusive_steps": 10936071,
+        "exclusive_total_percent": 2.1872141956255713,
+        "exclusive_c04_percent": 3.029129905616819
+      },
+      {
+        "helper": "capabilities.hua#same_storage",
+        "entered": 369017,
+        "completed": 369017,
+        "inclusive_steps": 9233588,
+        "exclusive_steps": 9233588,
+        "exclusive_total_percent": 1.8467175963065647,
+        "exclusive_c04_percent": 2.5575672969702365
+      },
+      {
+        "helper": "capabilities.hua#field_fact",
+        "entered": 342819,
+        "completed": 342819,
+        "inclusive_steps": 10262319,
+        "exclusive_steps": 8421512,
+        "exclusive_total_percent": 1.684302396631395,
+        "exclusive_c04_percent": 2.332634256828701
+      },
+      {
+        "helper": "capabilities.hua#materialized",
+        "entered": 309105,
+        "completed": 309105,
+        "inclusive_steps": 8682153,
+        "exclusive_steps": 6563866,
+        "exclusive_total_percent": 1.3127731973744536,
+        "exclusive_c04_percent": 1.8180937922825708
+      },
+      {
+        "helper": "capabilities.hua#value",
+        "entered": 363942,
+        "completed": 363942,
+        "inclusive_steps": 11282202,
+        "exclusive_steps": 6187014,
+        "exclusive_total_percent": 1.2374027975251944,
+        "exclusive_c04_percent": 1.7137113625057792
+      },
+      {
+        "helper": "capabilities.hua#view",
+        "entered": 424262,
+        "completed": 424262,
+        "inclusive_steps": 5939668,
+        "exclusive_steps": 5939668,
+        "exclusive_total_percent": 1.187933597624133,
+        "exclusive_c04_percent": 1.6452001791351978
+      },
+      {
+        "helper": "capabilities.hua#expression",
+        "entered": 123986,
+        "completed": 123984,
+        "inclusive_steps": 526234304,
+        "exclusive_steps": 5331352,
+        "exclusive_total_percent": 1.0662703978674593,
+        "exclusive_c04_percent": 1.4767056450685114
+      },
+      {
+        "helper": "capabilities.hua#note_type",
+        "entered": 176620,
+        "completed": 176620,
+        "inclusive_steps": 4769310,
+        "exclusive_steps": 4769310,
+        "exclusive_total_percent": 0.953861998092276,
+        "exclusive_c04_percent": 1.321028324537885
+      },
+      {
+        "helper": "capabilities.hua#statement",
+        "entered": 26899,
+        "completed": 26893,
+        "inclusive_steps": 1949728456,
+        "exclusive_steps": 4595720,
+        "exclusive_total_percent": 0.919143998161712,
+        "exclusive_c04_percent": 1.2729464622021318
+      },
+      {
+        "helper": "capabilities.hua#select",
+        "entered": 125945,
+        "completed": 125945,
+        "inclusive_steps": 15632962,
+        "exclusive_steps": 4593237,
+        "exclusive_total_percent": 0.9186473981627052,
+        "exclusive_c04_percent": 1.2722587079295373
+      },
+      {
+        "helper": "capabilities.hua#field_defaults",
+        "entered": 4211,
+        "completed": 4211,
+        "inclusive_steps": 5907785,
+        "exclusive_steps": 4125472,
+        "exclusive_total_percent": 0.8250943983498111,
+        "exclusive_c04_percent": 1.1426947218964498
+      },
+      {
+        "helper": "capabilities.hua#projected",
+        "entered": 60320,
+        "completed": 60320,
+        "inclusive_steps": 5050360,
+        "exclusive_steps": 3965230,
+        "exclusive_total_percent": 0.793045998413908,
+        "exclusive_c04_percent": 1.0983100581231577
+      },
+      {
+        "helper": "capabilities.hua#attach",
+        "entered": 50379,
+        "completed": 50379,
+        "inclusive_steps": 23462436,
+        "exclusive_steps": 3849903,
+        "exclusive_total_percent": 0.7699805984600387,
+        "exclusive_c04_percent": 1.066366184987635
+      },
+      {
+        "helper": "capabilities.hua#value_path",
+        "entered": 105749,
+        "completed": 105749,
+        "inclusive_steps": 26286158,
+        "exclusive_steps": 3592730,
+        "exclusive_total_percent": 0.718545998562908,
+        "exclusive_c04_percent": 0.9951330679735634
+      },
+      {
+        "helper": "capabilities.hua#select_root",
+        "entered": 125945,
+        "completed": 125945,
+        "inclusive_steps": 11039725,
+        "exclusive_steps": 3578745,
+        "exclusive_total_percent": 0.715748998568502,
+        "exclusive_c04_percent": 0.9912594298333163
+      },
+      {
+        "helper": "capabilities.hua#join",
+        "entered": 8229,
+        "completed": 8229,
+        "inclusive_steps": 66108082,
+        "exclusive_steps": 3229481,
+        "exclusive_total_percent": 0.6458961987082076,
+        "exclusive_c04_percent": 0.8945184679873888
+      }
+    ],
+    "failure_stderr": "E4099: execution step limit exceeded (500000000)\nC:\\file\\project\\hua\\selfhost\\capabilities.hua:626:63\n",
+    "active_stack": [
+      "archive_main.hua#main",
+      "types.hua#analyze",
+      "capabilities.hua#analyze",
+      "capabilities.hua#statement",
+      "capabilities.hua#statement",
+      "capabilities.hua#statement",
+      "capabilities.hua#statement",
+      "capabilities.hua#statement",
+      "capabilities.hua#statement",
+      "capabilities.hua#expression",
+      "capabilities.hua#expression_body",
+      "capabilities.hua#expression",
+      "capabilities.hua#expression_body",
+      "capabilities.hua#invoke"
+    ],
+    "active_target": "capabilities.hua#statement",
+    "volumes": {
+      "field-defaults-output-entries": 69700,
+      "instantiate-input-field-entries": 49846,
+      "instantiate-input-origin-entries": 365648
+    },
+    "global_body_visits": 14,
+    "global_body_steps": 101597,
+    "function_body_visits": 581,
+    "unique_function_body_targets": 280,
+    "first_function_visits_steps": 44803157,
+    "repeated_function_visits": 301,
+    "inferred_rounds": [
+      {
+        "inferred_round": 1,
+        "visits": 280,
+        "steps": 44803157,
+        "complete_visits": 280
+      },
+      {
+        "inferred_round": 2,
+        "visits": 166,
+        "steps": 79462752,
+        "complete_visits": 166
+      },
+      {
+        "inferred_round": 3,
+        "visits": 103,
+        "steps": 122987262,
+        "complete_visits": 103
+      },
+      {
+        "inferred_round": 4,
+        "visits": 32,
+        "steps": 92525368,
+        "complete_visits": 31
+      }
+    ],
+    "source_identity_verified_after": true,
+    "execution_point": {
+      "file": "selfhost/capabilities.hua",
+      "line": 626,
+      "column": 63,
+      "function": "invoke",
+      "statement": "let suffix=rules.cut(parts[1],start,len(parts[1]))",
+      "interpretation": "budget exhaustion location; not a proof that this string slice dominates total cost"
+    },
+    "non_causes_confirmed": {
+      "wall_timeout": false,
+      "call_depth_limit": false,
+      "artifact_loader_or_native_compile_wait": false
+    },
+    "causal_limits": [
+      "A function body revisit is not automatically invalid; consulted summary deltas were not captured.",
+      "Body metadata/transfer cost grows sharply; the specific fact channel or origin responsible was not captured.",
+      "Native samples cover only the final 66.85 seconds and are sample shares, not full process CPU fractions.",
+      "Full timing includes read-only call tracing and external stack sampling; not an ordinary unobserved benchmark."
+    ]
+  },
+  "representative_visits": {
+    "capabilities.hua#statement": [
+      {
+        "target": "capabilities.hua#statement",
+        "probing": true,
+        "ordinal": 1,
+        "begin_step": 160250405,
+        "end_step": 162055237,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 20477,
+        "logical_tick_delta_to_next_entry": 958
+      },
+      {
+        "target": "capabilities.hua#statement",
+        "probing": true,
+        "ordinal": 2,
+        "begin_step": 227755160,
+        "end_step": 235237691,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 70507,
+        "logical_tick_delta_to_next_entry": 1170
+      },
+      {
+        "target": "capabilities.hua#statement",
+        "probing": true,
+        "ordinal": 3,
+        "begin_step": 332449767,
+        "end_step": 365171105,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 113975,
+        "logical_tick_delta_to_next_entry": 1502
+      },
+      {
+        "target": "capabilities.hua#statement",
+        "probing": true,
+        "ordinal": 4,
+        "begin_step": 478993981,
+        "end_step": 500000001,
+        "complete": false,
+        "values": 4,
+        "logical_work_at_entry": 150251
+      }
+    ],
+    "capabilities.hua#expression_body": [
+      {
+        "target": "capabilities.hua#expression_body",
+        "probing": true,
+        "ordinal": 1,
+        "begin_step": 150194454,
+        "end_step": 152927607,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 14100,
+        "logical_tick_delta_to_next_entry": 1675
+      },
+      {
+        "target": "capabilities.hua#expression_body",
+        "probing": true,
+        "ordinal": 2,
+        "begin_step": 207102214,
+        "end_step": 213085568,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 63959,
+        "logical_tick_delta_to_next_entry": 1751
+      },
+      {
+        "target": "capabilities.hua#expression_body",
+        "probing": true,
+        "ordinal": 3,
+        "begin_step": 299786401,
+        "end_step": 317068724,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 107908,
+        "logical_tick_delta_to_next_entry": 1891
+      },
+      {
+        "target": "capabilities.hua#expression_body",
+        "probing": true,
+        "ordinal": 4,
+        "begin_step": 434768722,
+        "end_step": 462749645,
+        "complete": true,
+        "values": 4,
+        "logical_work_at_entry": 144678,
+        "logical_tick_delta_to_next_entry": 1942
+      }
+    ],
+    "capabilities.hua#analyze": [
+      {
+        "target": "capabilities.hua#analyze",
+        "probing": true,
+        "ordinal": 1,
+        "begin_step": 146621853,
+        "end_step": 147803848,
+        "complete": true,
+        "values": 7,
+        "logical_work_at_entry": 11954,
+        "logical_tick_delta_to_next_entry": 1092
+      },
+      {
+        "target": "capabilities.hua#analyze",
+        "probing": true,
+        "ordinal": 2,
+        "begin_step": 196715704,
+        "end_step": 203571693,
+        "complete": true,
+        "values": 7,
+        "logical_work_at_entry": 61849,
+        "logical_tick_delta_to_next_entry": 1232
+      },
+      {
+        "target": "capabilities.hua#analyze",
+        "probing": true,
+        "ordinal": 3,
+        "begin_step": 281092230,
+        "end_step": 295658514,
+        "complete": true,
+        "values": 7,
+        "logical_work_at_entry": 105711,
+        "logical_tick_delta_to_next_entry": 1410
+      },
+      {
+        "target": "capabilities.hua#analyze",
+        "probing": true,
+        "ordinal": 4,
+        "begin_step": 409351510,
+        "end_step": 430821715,
+        "complete": true,
+        "values": 7,
+        "logical_work_at_entry": 142702,
+        "logical_tick_delta_to_next_entry": 1410
+      }
+    ]
+  },
+  "native_sampling": {
+    "samples": 260,
+    "errors": 0,
+    "suspend_seconds": 0.25257040000000003,
+    "sample_window_seconds": 66.8464,
+    "group_priority_counts": {
+      "other-vm-runtime-or-crt": 115,
+      "type-constraint": 8,
+      "gc": 64,
+      "value-copy": 34,
+      "builtin": 38,
+      "observer": 1
+    },
+    "image_base": 5368709120
+  },
+  "control": {
+    "status": "passed",
+    "same_full_receipt": true,
+    "same_artifact_bytes": true,
+    "steps": 64348,
+    "same_steps": true,
+    "peak_calls": 21,
+    "same_peak_calls": true,
+    "outside_function_steps": 4,
+    "reader": true,
+    "executed_output": "3",
+    "scope": "small successful control only; full failed run was not retried"
+  },
+  "production_changes": false,
+  "full_own_source_main_entries": 1,
+  "instrumentation_failures_before_main": 1,
+  "automatic_retries": 0,
+  "default_or_experimental": "default",
+  "committed_or_pushed": false,
+  "audit": {
+    "status": "passed",
+    "protected_files_unchanged": 148,
+    "default_files": 32,
+    "default_hua_files": 31,
+    "history_files": 39,
+    "confirmation_blocks": 207,
+    "fixed_er_rs_rows": 22,
+    "active_docs": 9,
+    "local_paths_checked": 1238,
+    "step_partition": true,
+    "source_unchanged": true,
+    "full_own_source_main_entries": 1,
+    "automatic_full_retries": 0,
+    "instrumentation_setup_failures": 1,
+    "control_calibration": true,
+    "production_edits": false,
+    "committed_or_pushed": false
+  },
+  "raw_evidence_files": {
+    "manifest.json": {
+      "sha256": "d50e7bd607e537f1b6eb2ea6ffd6e5d73900cc6026cad4c3f8f440d179cc0bae",
+      "bytes": 19722
+    },
+    "result.json": {
+      "sha256": "d00c21c940decaa67a37c5979a7e588cd14a99e467d0194e06f0d6de46a8ddd0",
+      "bytes": 446
+    },
+    "events.jsonl": {
+      "sha256": "7cc4eb678fb65f04266fc93e7901ba11f89db20c73dc6587f5bdc44d1c4909e0",
+      "bytes": 18146
+    },
+    "progress.jsonl": {
+      "sha256": "b78a97ba0d375ccae41d82bbf05dc8bd241c45bba3b119ce9807a0cb01ea36c7",
+      "bytes": 2131
+    },
+    "stderr.txt": {
+      "sha256": "9f4c2585b9f24f26dddf49611ff4df4f9c49f3c0ac2348edfb2e49aaec781cf4",
+      "bytes": 104
+    },
+    "trace-summary.json": {
+      "sha256": "9a47b055a7f0283cbd712e58f7c40520680d6ee510459aa575a68d50a917203d",
+      "bytes": 122764
+    },
+    "analysis.json": {
+      "sha256": "501316146a68dd54a4a101a805464528095bd54d271b596cc7a70dc7174ed855",
+      "bytes": 235275
+    },
+    "native-stacks.jsonl": {
+      "sha256": "01d2db05787972bbd42e3b41dd5409f460a5423318260c9425117ea5522a8d57",
+      "bytes": 82305
+    },
+    "native-sampling.json": {
+      "sha256": "16bd4f2cce667416812b2cb1d098a40dbc2d94d93899f96c37053198f3f68188",
+      "bytes": 782725
+    },
+    "control-result.json": {
+      "sha256": "ab2e4fd06c753776366f8aeedb13a0867baba6189ec822b31e2dac316dc41550",
+      "bytes": 2144
+    },
+    "trace_selfhost.cpp": {
+      "sha256": "9c20daff0f94b4754fbee58479cc4e72166cd576205903c4a98752ce0ed23189",
+      "bytes": 9291
+    },
+    "trace_selfhost.py": {
+      "sha256": "5ef14cdb3f6d6f4bbc9dc7804ca88df5a4950237274c6b7ef010ae7dedfd7d03",
+      "bytes": 5327
+    },
+    "sample_running_selfhost.cpp": {
+      "sha256": "87d3d97fda0e5eb9b4410570788f3a853ffdc2933402436f5393a8a9c42084a1",
+      "bytes": 3506
+    }
+  }
+}

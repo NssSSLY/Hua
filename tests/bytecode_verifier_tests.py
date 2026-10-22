@@ -1,7 +1,7 @@
 """C06 verifier metadata: independent expectations and frozen-reference equivalence."""
 from pathlib import Path
 import argparse,ast,json,shutil,sys,time
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+sys.path.insert(0,str(Path(__file__).resolve().parent/'tools'))
 from audit_bootstrap_phases import command,save
 
 def hx(x):

@@ -108,6 +108,7 @@ std::optional<std::size_t> packed_width(std::string_view type) {
 Value sequence_read(const SliceValue &s, std::size_t index) {
   if (index >= s.length)
     runtime_error({}, "array index out of bounds", "E4006");
+  if(!s.packed)retain_record_alias(s.storage->at(s.start+index));
   auto value = s.packed
                    ? load(s.packed,
                           s.byte_offset + (s.start + index) *
@@ -115,6 +116,11 @@ Value sequence_read(const SliceValue &s, std::size_t index) {
                           s.element_type)
                    : s.storage->at(s.start + index);
   return s.writable ? value : read_only(std::move(value));
+}
+Value sequence_copy_source(const SliceValue& s,std::size_t index){
+  if(s.packed)return sequence_read(s,index);
+  if(index>=s.length)runtime_error({},"array index out of bounds","E4006");
+  auto value=s.storage->at(s.start+index);return s.writable?value:read_only(std::move(value));
 }
 void sequence_write(const SliceValue &s, std::size_t index,
                     const Value &value) {

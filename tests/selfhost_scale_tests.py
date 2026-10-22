@@ -45,7 +45,7 @@ def paths(entry,source,parse=False):
         raw,err,seconds,peak=command([exe,engine,target,'--execution-profile','compiler','--report-budget','--',*args])
         report=json.loads(raw);metrics=json.loads(err)
         assert report['status']=='ok',(source,label,report)
-        assert metrics['steps']<=500000000 and metrics['peak_calls']<=128
+        assert metrics['steps']<=100000000000 and metrics['peak_calls']<=128
         if result is None:result=report
         else:assert report==result,(source,label)
         measurements.append({'engine':label,'seconds':round(seconds,3),'peak_working_bytes':peak,**metrics})

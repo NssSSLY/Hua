@@ -471,7 +471,7 @@ def main(argv=None):
     args.add_argument("source",type=Path)
     args.add_argument("-o","--output",type=Path)
     args.add_argument("--profile",choices=["C02-P1","C02-P2"],default="C02-P1")
-    args.add_argument("--hua",type=Path,default=ROOT/"build"/("hua.exe" if os.name=="nt" else "hua"))
+    args.add_argument("--hua",type=Path,default=ROOT/"tests"/"build"/("hua.exe" if os.name=="nt" else "hua"))
     args.add_argument("--budget",choices=["slice","compiler"],default=None)
     options=args.parse_args(argv)
     compiler=options.budget=="compiler" or options.command in ("check","lower","emit","build")

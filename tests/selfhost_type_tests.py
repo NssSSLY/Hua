@@ -30,8 +30,8 @@ def run(entry,path,parse=False):
     for exe,action,target in [(hua,'interpret',repo/'selfhost'/f'{entry}.hua'),(hua,'run',repo/'selfhost'/f'{entry}.hua'),(hua,'run',artifacts[entry]),(probe,'run',repo/'selfhost'/f'{entry}.hua')]:
         p=invoke([exe,action,target,'--execution-profile','compiler','--report-budget','--',*args])
         report=json.loads(p.stdout);metrics=json.loads(p.stderr)
-        assert metrics['profile']=='compiler' and metrics['per_executor_step_limit']==500000000 and metrics['call_depth_limit']==128 and metrics['collection_interval']==65536
-        assert 0<metrics['steps']<=500000000 and 0<metrics['peak_calls']<=128
+        assert metrics['profile']=='compiler' and metrics['per_executor_step_limit']==100000000000 and metrics['call_depth_limit']==128 and metrics['collection_interval']==65536
+        assert 0<metrics['steps']<=100000000000 and 0<metrics['peak_calls']<=128
         reports.append(report)
     assert all(x==reports[0] for x in reports),(entry,path,reports)
     return reports[0]

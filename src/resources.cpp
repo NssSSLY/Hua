@@ -436,6 +436,7 @@ Outcome<CloseTicket> ResourceDomain::close(const Handle& h, TaskId actor) {
     for (auto& p : operations) cancel(Event(p));
     return {CloseTicket(std::move(record)), {}};
 }
+const std::atomic<bool>& ResourceDomain::created_flag()const noexcept{return impl_->has_created_resource;}
 Failure ResourceDomain::pump() {
     HUA_PROFILE_COUNT(resource_pumps);
     if (impl_->affine && std::this_thread::get_id() != impl_->executor) return fail(Code::wrong_executor, "wrong close executor");

@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDirectory = 'build',
+    [string]$BuildDirectory = 'tests/build',
     [switch]$PythonBridge,
     [string]$PythonHome = ''
 )

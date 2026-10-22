@@ -54,6 +54,13 @@ void release_task_admission()noexcept;
 void enqueue_task(const std::shared_ptr<TaskState>&,TaskResumeJob,RuntimeContext);
 Routine<Value> invoke_resumable(std::string name,std::vector<Value> args,SourceSpan,std::ostream&,std::vector<bool> contextual,std::string inferred,RuntimeContext*);
 void task_checkpoint(RuntimeContext*,const SourceSpan&);
+// task_checkpoint split for the VM hot path: the file pump part is exact (only when a
+// resource was ever created), cancellation is polled by the caller every few hundred steps.
+void cancellation_checkpoint(RuntimeContext*,const SourceSpan&);
+bool file_pump_pending(const RuntimeContext*) noexcept;
+// False when invoke_resumable(name,...) would complete without suspending; the VM then
+// calls invoke_builtin synchronously and avoids a coroutine frame per builtin call.
+bool builtin_may_suspend(const std::string& name,const RuntimeContext*);
 Value task_standard(std::string_view operation,const std::vector<Value>& args,const SourceSpan&,RuntimeContext*);
 Value task_combine(std::string_view operation,const std::vector<Value>& args,const SourceSpan&,RuntimeContext*);
 std::string task_result_type(const Callable&);

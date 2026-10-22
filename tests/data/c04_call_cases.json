@@ -1,0 +1,62 @@
+[
+  {
+    "name": "call_cached_outer_projection",
+    "expected": "ok",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R}\nfn update(r mut R){r.a=[]\nr.b=[]}\nfn main(){var b=Box{r:R{a:[],b:[]}}\nupdate(b.r)\nupdate(b.r)}\n"
+  },
+  {
+    "name": "call_cached_temporary_shared",
+    "expected": "ok",
+    "source": "struct R{a int\nb int}\nfn update(r mut R){r.a=1\nr.b=2}\nfn main(){var xs=[R{a:0,b:0}]\nupdate(xs[0])}\n"
+  },
+  {
+    "name": "call_cached_global_effects",
+    "expected": "ok",
+    "source": "struct R{a int\nb int}\nvar state=R{a:0,b:0}\nfn update(){state.a=1\nstate.b=2}\nfn main(){update()\nupdate()}\n"
+  },
+  {
+    "name": "call_deferred_dependency_branches",
+    "expected": "ok",
+    "source": "fn a(x int) int{return x}\nfn b(x int) int{return a(x)}\nfn main(){var x=0\nif true{x=b(a(x))}else{x=a(b(x))}\nfor i in 0..2{x=b(a(x))}\nprint(x)}\n"
+  },
+  {
+    "name": "call_cached_readonly_alias",
+    "expected": "E3003",
+    "source": "struct R{a []int\nb []int}\nfn update(r mut R){r.a=[1]\nr.b=[2]}\nfn main(){let r=R{a:[],b:[]}\nupdate(r)}\n"
+  },
+  {
+    "name": "call_cached_deferred_record",
+    "expected": "ok",
+    "source": "struct R{a int\nb int}\nfn update(r mut R){r.a=1\nr.b=2}\nfn run(){var r=R{a:0,b:0}\ndefer update(r)}\nfn main(){run()}\n"
+  },
+  {
+    "name": "symbolic_subtree_replace_refresh",
+    "expected": "ok",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R\ns R}\nfn update(x mut Box){x.r=R{a:[1],b:[2]}\nx.r.a=[3]}\nfn main(){let ro=[0]\nvar x=Box{r:R{a:ro,b:ro},s:R{a:[2],b:[3]}}\nupdate(x)\nx.r.a[0]=8\nx.s.a[0]=9}\n"
+  },
+  {
+    "name": "symbolic_subtree_replace_readonly",
+    "expected": "E3003",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R\ns R}\nfn update(x mut Box,ro []int){x.r=R{a:ro,b:[2]}}\nfn main(){var x=Box{r:R{a:[1],b:[2]},s:R{a:[3],b:[4]}}\nupdate(x,[0])\nx.r.a[0]=9}\n"
+  },
+  {
+    "name": "symbolic_subtree_alias_old_snapshot",
+    "expected": "E3003",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R\ns R}\nfn main(){let ro=[0]\nvar x=Box{r:R{a:ro,b:[2]},s:R{a:[3],b:[4]}}\nvar old=x.r\nx.r=R{a:[1],b:[2]}\nold.a[0]=9}\n"
+  },
+  {
+    "name": "symbolic_subtree_sibling_preserved",
+    "expected": "ok",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R\ns R}\nfn update(x mut Box,ro []int){x.r=R{a:ro,b:ro}}\nfn main(){var x=Box{r:R{a:[1],b:[2]},s:R{a:[3],b:[4]}}\nupdate(x,[0])\nx.s.a[0]=9}\n"
+  },
+  {
+    "name": "symbolic_subtree_deferred_snapshot",
+    "expected": "ok",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R\ns R}\nfn update(x mut Box){x.r=R{a:[1],b:[2]}\nx.r.b=[3]}\nfn run(){var x=Box{r:R{a:[1],b:[2]},s:R{a:[3],b:[4]}}\ndefer update(x)}\nfn main(){run()}\n"
+  },
+  {
+    "name": "symbolic_subtree_join_conservative",
+    "expected": "E3003",
+    "source": "struct R{a []int\nb []int}\nstruct Box{r R\ns R}\nfn main(){var x=Box{r:R{a:[1],b:[2]},s:R{a:[3],b:[4]}}\nlet ro=[0]\nif true{x.r=R{a:ro,b:[2]}}else{x.r.a=[4]}\nx.r.a[0]=9}\n"
+  }
+]

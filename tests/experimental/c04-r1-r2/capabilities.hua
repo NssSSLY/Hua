@@ -1,0 +1,1237 @@
+# C04 internal capability flow. The input program is never executed.
+import modules as modules
+import ast_pool as ast
+import type_rules as rules
+import signatures as signatures
+import std.list as list
+import std.strings as strings
+import std.alg as alg
+import std.json as json
+pub struct View { type_name string
+    writable bool
+    readonly_children bool
+    deep_owned bool
+    record_copy bool
+    origins map[string]bool }
+pub struct Value { root View
+    fields map[string]View
+    prefixes map[string]map[string]bool
+    prefix string
+    readonly_fields bool
+    positions []Value
+    plan int }
+struct Transform { actual map[string]Actual
+    site string
+ }
+struct Actual { root View
+    fields map[string]View
+    prefix string
+    readonly bool
+    copy int }
+struct Delta { before map[string]Value
+    before_versions map[string]int
+    touched map[string]bool
+    after map[string]Value
+    after_versions map[string]int }
+# Node consumers use the root view (including write origins) and positional
+# roots only. Keep full member tables in values/environments/summaries, where
+# projection and alias analysis need them, without retaining them at every AST node.
+pub struct Fact { root View
+    positions []Fact }
+fn node_fact(input Value) Fact { var out=Fact{root:input.root,positions:[]}
+    if len(input.positions)>0 { var empty []Fact=[]
+        var positions=list.from_slice(empty)
+        for item in input.positions { unwrap(list.append(positions,node_fact(item))) }
+        out.positions=list.snapshot(positions) }
+    return out
+}
+pub struct Parameter { target string
+    type_name string
+    writable bool }
+pub struct Function { target string
+    module string
+    node int
+    parameters []Parameter
+    result string }
+struct WriteArgument { destination string
+    parameter bool
+    writable bool }
+struct Summary { returned Value
+    unknown bool
+    saw_return bool
+    writes map[string]View
+    required map[string]bool
+    owners map[string]bool
+    deferred bool }
+pub struct Model { facts map[string]Fact
+    passes int
+    work int
+    error string }
+struct State { units map[string]modules.Unit
+    refs map[string]string
+    declarations map[string]string
+    fields map[string]string
+    members map[string]map[string]string
+    plans map[int]Transform
+    shapes map[string]map[string]View
+    shape_prefixes map[string]map[string]map[string]bool
+    parameter_fields map[string]map[string]View
+    parameter_field_count int
+    functions map[string]Function
+    variants map[string]string
+    summaries map[string]Summary
+    dependents map[string]map[string]bool
+    dirty map[string]bool
+    facts map[string]Fact
+    global_symbols map[string]bool
+    errors map[string]string
+    probing bool
+    work int
+    error string }
+struct Environment { unit modules.Unit
+    function string
+    values map[string]Value
+    versions map[string]int
+    next_version int
+    journals map[int]Delta
+    next_journal int
+    updating bool
+    edited_fields map[string]map[string]View
+    edited_prefixes map[string]map[string]map[string]bool
+    alias_cache map[string][]string
+    returned Value
+    saw_return bool
+    writes map[string]bool
+    visible map[string]bool
+    required map[string]bool
+    callees map[string]bool
+    exits []map[string]Value
+    deferred bool }
+fn view(type string, writable bool) View { return View{type_name:type,writable:writable,readonly_children:false,deep_owned:false,record_copy:false,origins:map[string]bool{}} }
+fn value(type string, writable bool) Value { return Value{root:view(type,writable),fields:map[string]View{},prefixes:map[string]map[string]bool{},prefix:"",readonly_fields:false,positions:[],plan:0} }
+fn key(module string, node int) string { return module+":"+str(node) }
+fn get(pool ast.Pool, id ast.NodeId) ast.Node { return unwrap(ast.get(pool,id)) }
+fn target(refs map[string]string, module string, n ast.Node) string { return unwrap_or(refs[key(module,n.id.index)],"") }
+fn declaration(declarations map[string]string, module string, n ast.Node) string { return unwrap_or(declarations[key(module,n.id.index)],"") }
+fn record(type string) bool { return strings.contains(rules.optional(type),"#") && !rules.shared(type) && !strings.starts_with(type,"fn:") && !strings.starts_with(type,"variant:") }
+fn split_origin(origin string) []string { return strings.split(origin,"|") }
+fn depth(path string) int { return len(strings.split(path,"#@"))-1 }
+fn tick(s mut State, span ast.SourceSpan) Result<void> {
+    if s.work >= 1048576 { return err("E8202@"+str(span.line)+":"+str(span.column)+" capability work budget") }
+    s.work += 1
+    return ok()
+}
+fn denied(s mut State, e Environment, n ast.Node, reason string) Result<void> {
+    # Preserve the first capability error, but let C04 validate types/arity first.
+    if e.function!="" && !has(s.errors,e.function) {
+        s.errors[e.function]="E3003@"+str(n.span.line)+":"+str(n.span.column)+" ["+e.unit.id+"] "+reason }
+    return ok()
+}
+fn projected(base View, path string, type string) View {
+    var out = view(type,base.writable && !base.readonly_children)
+    out.readonly_children = base.readonly_children || !base.writable
+    out.deep_owned = base.deep_owned
+    for origin, readonly in base.origins { let parts = split_origin(origin)
+        var next = parts[1]+path
+        var flag=readonly
+        if len(next)>512 { next=""
+            flag=true }
+        out.origins[parts[0]+"|"+next] = flag }
+    return out
+}
+fn child_type(type string) string {
+    let m = rules.arguments(type,"map")
+    if len(m)==2 { return m[1] }
+    let l = rules.arguments(type,"List")
+    if len(l)==1 { return l[0] }
+    return rules.element(type)
+}
+# Sparse topology index: each proper prefix maps to its descendant field keys.
+# Deleted keys may remain in the index; select() checks the live field table.
+# Index tables are immutable after publication and detach together with fields.
+fn note_prefix(prefixes mut map[string]map[string]bool, path string) {
+    let parts=strings.split(path,"#@")
+    var prefix=""
+    let end=len(parts)-1
+    for i in 1..end { prefix+="#@"+parts[i]
+        if !has(prefixes,prefix) { prefixes[prefix]=map[string]bool{} }
+        var descendants=unwrap(prefixes[prefix])
+        descendants[path]=true }
+}
+# Type buckets share the immutable topology. Entries may become stale after
+# replacement; alias lookup always checks the live field and its actual type.
+fn note_type(prefixes mut map[string]map[string]bool, path string, type string) {
+    let bucket="@type:"+type
+    if !has(prefixes,bucket) { prefixes[bucket]=map[string]bool{} }
+    var paths=unwrap(prefixes[bucket])
+    paths[path]=true
+}
+fn prefix_index(fields map[string]View) map[string]map[string]bool {
+    var out=map[string]map[string]bool{"@types":map[string]bool{}}
+    for path, fact in fields { note_prefix(out,path)
+        note_type(out,path,fact.type_name) }
+    return out
+}
+fn field_shape(members map[string]map[string]string, base View, level int) map[string]View {
+    var result = map[string]View{}
+    if level>=8 { return result }
+    var type = rules.optional(base.type_name)
+    let wrapped = rules.arguments(type,"Result")
+    if len(wrapped)==2 { type=wrapped[0] }
+    if record(type) {
+        for name, typ in unwrap_or(members[type],map[string]string{}) {
+            let path="#@"+name
+            var item=projected(base,path,typ)
+            if record(typ) && base.record_copy { item=copy_view(item) }
+            result[path]=item
+            for suffix, nested in field_shape(members,item,level+1) { result[path+suffix]=nested }
+        }
+    } else { let typ=child_type(type)
+        if typ!="" { let item=projected(base,"#@[]",typ)
+            result["#@[]"]=item
+            for suffix, nested in field_shape(members,item,level+1) { result["#@[]"+suffix]=nested } } }
+    return result
+}
+# Cache declaration/capability shapes only. Origins belong to the current value,
+# and a fresh State discards every shape before the next analyzed program.
+fn field_defaults(s mut State, base View, level int) map[string]View {
+    let cache_key=base.type_name+"|"+str(level)+":"+str(base.writable)+str(base.readonly_children)+str(base.deep_owned)+str(base.record_copy)
+    if !has(s.shapes,cache_key) { var prototype=clone(base)
+        prototype.origins=map[string]bool{}
+        s.shapes[cache_key]=field_shape(s.members,prototype,level) }
+    var result=map[string]View{}
+    for path, fact in unwrap(s.shapes[cache_key]) { var item=clone(fact)
+        for origin, readonly in base.origins { let parts=split_origin(origin)
+            var next=parts[1]+path
+            var flag=readonly
+            if len(next)>512 { next=parts[1]
+                # A reset may be followed by more projections: replay the same
+                # segment boundaries as projected(), rather than truncate once.
+                let segments=strings.split(path,"#@")
+                for i in 1..len(segments) { next+="#@"+segments[i]
+                    if len(next)>512 { next=""
+                        flag=true } } }
+            item.origins[parts[0]+"|"+next]=flag }
+        result[path]=item }
+    return result
+}
+fn seeded(s mut State, type string, writable bool, owner string) Value {
+    var out=value(type,writable)
+    out.root.origins[owner+"|"]=!writable
+    out.fields=field_defaults(s,out.root,0)
+    if !has(s.shape_prefixes,type) { s.shape_prefixes[type]=prefix_index(out.fields) }
+    # Shape topology is immutable. Every later descendant edit detaches the
+    # value in editable()/merge(); literal construction starts with fresh maps.
+    out.prefixes=unwrap(s.shape_prefixes[type])
+    return out
+}
+# Parameter type, write capability and owner are fixed for one analyzed graph.
+# Cache complete immutable origin tables across body revisits, not summaries or
+# evolving argument values. put()/editable()/copied() keep their detach rules.
+fn parameter_seeded(s mut State, type string, writable bool, owner string) Value {
+    let identity=str(len(owner))+":"+owner+str(len(type))+":"+type+":"+str(writable)
+    if !has(s.parameter_fields,identity) { let out=seeded(s,type,writable,owner)
+        # Admission limits internal retained metadata, never language semantics.
+        # Bypass caching when full; the ordinary exact path remains available.
+        if len(s.parameter_fields)<4096 && s.parameter_field_count+len(out.fields)<=4096 {
+            s.parameter_fields[identity]=out.fields
+            s.parameter_field_count+=len(out.fields) }
+        return out }
+    var out=value(type,writable)
+    out.root.origins[owner+"|"]=!writable
+    out.fields=unwrap(s.parameter_fields[identity])
+    out.prefixes=unwrap(s.shape_prefixes[type])
+    return out
+}
+fn copy_view(input View) View { var out=input
+    if record(out.type_name) { if !out.writable { out.deep_owned=false }
+        out.readonly_children=out.readonly_children || !out.writable
+        out.writable=true
+        out.record_copy=true }
+    return out
+}
+# Projection tables and their index are immutable views. The prefix is relative
+# to that shared table; readonly_fields preserves inherited restrictions even
+# after a record root is copied. Editing first detaches a logical member table.
+# Substitution storage is analysis-local. Value carries only an integer handle;
+# Actual captures canonical or copy-only views, never another substitution.
+fn actual_fact(input Actual, path string, type string) View {
+    let full=input.prefix+path
+    if has(input.fields,full) { var fact=unwrap(input.fields[full])
+        if input.copy>0 {
+            if input.copy==2 { fact.writable=false
+                fact.readonly_children=true }
+            fact=copy_view(fact) }
+        if input.readonly { fact.writable=false
+            fact.readonly_children=true }
+        return fact }
+    return projected(input.root,path,type)
+}
+fn flat_instantiate_view(site string, source View, actual map[string]Actual) View {
+    var out=source
+    out.origins=map[string]bool{}
+    for origin, readonly in source.origins { let parts=split_origin(origin)
+        if has(actual,parts[0]) { let root=unwrap(actual[parts[0]])
+            var fact=root.root
+            if parts[1]!="" { fact=actual_fact(root,parts[1],source.type_name)
+                if !has(root.fields,root.prefix+parts[1]) && !root.root.deep_owned { fact.writable=false
+                    fact.readonly_children=true }
+                if !root.root.writable { fact.writable=false
+                    fact.readonly_children=true } }
+            if !source.record_copy { out.writable=out.writable && fact.writable && !readonly
+                out.readonly_children=out.readonly_children || fact.readonly_children || readonly }
+            for name, flag in fact.origins { out.origins[name]=flag || readonly || unwrap_or(out.origins[name],false) }
+        } else { var owner=parts[0]
+            var path=parts[1]
+            if strings.contains(owner,"!") {
+                if !strings.starts_with(path,"@") { path="@"+owner+path }
+                owner=site
+            }
+            out.origins[owner+"|"+path]=readonly }
+    }
+    return out
+}
+fn actual_view(plans map[int]Transform, input Value) Actual {
+    var item=input
+    var policy=0
+    if input.plan>=4 { item=materialized(plans,input) }
+    else { policy=input.plan }
+    return Actual{root:item.root,fields:item.fields,prefix:item.prefix,readonly:item.readonly_fields,copy:policy}
+}
+fn actuals(plans map[int]Transform, values map[string]Value) map[string]Actual {
+    var out=map[string]Actual{}
+    for owner, input in values { out[owner]=actual_view(plans,input) }
+    return out
+}
+# Low two bits encode no copy / copy / readonly-then-copy. Higher bits
+# identify an immutable substitution in the current body analysis only.
+fn raw_field(plans map[int]Transform, input Value, path string) View {
+    var fact=unwrap(input.fields[path])
+    if input.plan>=4 && len(fact.origins)>0 { let plan=unwrap(plans[input.plan//4])
+        fact=flat_instantiate_view(plan.site,fact,plan.actual) }
+    let policy=input.plan%4
+    if policy>0 {
+        if policy==2 { fact.writable=false
+            fact.readonly_children=true }
+        fact=copy_view(fact) }
+    return fact
+}
+fn materialized(plans map[int]Transform, input Value) Value {
+    if input.prefix=="" && !input.readonly_fields && input.plan==0 { return input }
+    var out=input
+    out.fields=map[string]View{}
+    if input.prefix=="" {
+        for path, fact in input.fields { var next=raw_field(plans,input,path)
+            if input.readonly_fields { next.writable=false
+                next.readonly_children=true }
+            out.fields[path]=next }
+    } else if has(input.prefixes,input.prefix) {
+        for path, unused in unwrap(input.prefixes[input.prefix]) { if has(input.fields,path) {
+            var next=raw_field(plans,input,path)
+            if input.readonly_fields { next.writable=false
+                next.readonly_children=true }
+            out.fields[unwrap(strings.slice(path,len(input.prefix),len(path)))]=next } }
+    }
+    # Transformations preserve field names/types. Reuse the immutable topology
+    # unless a projected cursor requires normalized relative keys.
+    if input.prefix!="" { out.prefixes=prefix_index(out.fields) }
+    out.prefix=""
+    out.readonly_fields=false
+    out.plan=0
+    return out
+}
+fn canonical_value(plans map[int]Transform, input Value) Value { var out=clone(materialized(plans,input))
+    if len(input.positions)>0 { out.positions=clone(input.positions)
+        for i in 0..len(input.positions) { out.positions[i]=canonical_value(plans,input.positions[i]) } }
+    return out
+}
+fn copied(plans map[int]Transform, input Value) Value { var base=input
+    if input.prefix!="" { base=materialized(plans,input) }
+    var out=base
+    out.root=copy_view(input.root)
+    if record(input.root.type_name) && len(base.fields)>0 {
+        let readonly=input.readonly_fields || !input.root.writable
+        let policy=base.plan%4
+        if readonly { out.plan=base.plan-policy+2 }
+        else if policy==0 { out.plan=base.plan+1 }
+        out.readonly_fields=false }
+    return out
+}
+fn merge_view(a View, b View) View { var out=clone(a)
+    out.writable=a.writable && b.writable
+    out.readonly_children=a.readonly_children || b.readonly_children
+    out.deep_owned=a.deep_owned && b.deep_owned
+    out.record_copy=a.record_copy && b.record_copy
+    for origin, readonly in b.origins { out.origins[origin]=readonly || unwrap_or(out.origins[origin],false) }
+    return out
+}
+# unwrap_or evaluates both arguments. Construct fallback projections only for
+# missing fields, rather than once for every field in a complete shape.
+fn field_fact(plans map[int]Transform, input Value, path string, type string) View {
+    let full=input.prefix+path
+    if has(input.fields,full) { var fact=unwrap(input.fields[full])
+        if input.plan>0 { fact=raw_field(plans,input,full) }
+        if input.readonly_fields { fact.writable=false
+            fact.readonly_children=true }
+        return fact }
+    return projected(input.root,path,type)
+}
+fn merge(plans map[int]Transform, a Value, b Value) Value { let left=materialized(plans,a)
+    let right=materialized(plans,b)
+    var out=clone(left)
+    if !has(out.prefixes,"@types") { out.prefixes=prefix_index(out.fields) }
+    out.root=merge_view(a.root,b.root)
+    # Count unmatched left keys while visiting the right table. Materialization
+    # has already applied inherited readonly flags and removed the view cursor.
+    # A unique matching key can discharge one left key exactly once.
+    var remaining=len(left.fields)
+    for path, item in right.fields {
+        if has(left.fields,path) { remaining-=1
+            let previous=unwrap(left.fields[path])
+            if !same_view(previous,item) { let combined=merge_view(previous,item)
+                out.fields[path]=combined
+                note_prefix(out.prefixes,path)
+                note_type(out.prefixes,path,combined.type_name) }
+        } else { let combined=merge_view(projected(left.root,path,item.type_name),item)
+            out.fields[path]=combined
+            note_prefix(out.prefixes,path)
+            note_type(out.prefixes,path,combined.type_name) } }
+    if remaining>0 { for path, item in left.fields { if !has(right.fields,path) { out.fields[path]=merge_view(item,projected(b.root,path,item.type_name)) } } }
+    for i in 0..len(out.positions) { if i<len(b.positions) { out.positions[i]=merge(plans,out.positions[i],b.positions[i]) } }
+    return out
+}
+fn select_root(plans map[int]Transform, input Value, path string, type string) Value { var out=value(type,false)
+    out.root=field_fact(plans,input,path,type)
+    out.root.type_name=type
+    if !input.root.writable { out.root.writable=false
+        out.root.readonly_children=true }
+    return out
+}
+fn select(plans map[int]Transform, input Value, path string, type string) Value { var out=select_root(plans,input,path,type)
+    let prefix=input.prefix+path
+    if !has(input.prefixes,prefix) { return out }
+    out.fields=input.fields
+    out.prefixes=input.prefixes
+    out.prefix=prefix
+    out.plan=input.plan
+    out.readonly_fields=input.readonly_fields || !input.root.writable
+    return out
+}
+# Projection is now constant work and retains immutable tables. A second map
+# of whole projections would duplicate bookkeeping and keep redundant snapshots.
+fn select_cached(plans map[int]Transform, e mut Environment, input Value, path string, type string, owner string, version int) Value {
+    return select(plans,input,path,type)
+}
+# Values share immutable member/origin metadata. Changes to a field table go
+# through editable(plans,)/merge(plans,) before publication; attaching or changing the root
+# flags/type does not mutate the input table. Keep explicit deep clones for
+# writable edits, branch isolation and unknown-call conservative rewrites.
+fn attach(plans map[int]Transform, out mut Value, path string, input Value, copy bool) {
+    if out.prefix!="" || out.readonly_fields || out.plan>0 { let logical=materialized(plans,out)
+        out.fields=clone(logical.fields)
+        out.prefixes=clone(logical.prefixes)
+        out.prefix=""
+        out.readonly_fields=false
+        out.plan=0 }
+    if !has(out.prefixes,"@types") { out.prefixes=prefix_index(out.fields) }
+    var item=materialized(plans,input)
+    if copy { item=materialized(plans,copied(plans,item)) }
+    if depth(path)<=8 { out.fields[path]=item.root
+        note_prefix(out.prefixes,path)
+        note_type(out.prefixes,path,item.root.type_name) }
+    for name, fact in item.fields { if depth(path+name)<=8 { out.fields[path+name]=fact
+            note_prefix(out.prefixes,path+name)
+            note_type(out.prefixes,path+name,fact.type_name) }
+        else { var parent=unwrap_or(out.fields[path],item.root)
+            if !parent.deep_owned { parent.readonly_children=true }
+            out.fields[path]=parent } }
+}
+fn projection(refs map[string]string, module string, pool ast.Pool, n ast.Node) string {
+    let k=ast.kind(n.payload)
+    if k=="Name" || (k=="Member" && target(refs,module,n)!="") { return target(refs,module,n) }
+    if k=="Member" || k=="Index" { let parent=projection(refs,module,pool,get(pool,n.children[0]))
+        if parent!="" { if k=="Index" { return parent+"#@[]" }
+            return parent+"#@"+ast.payload_text(n.payload) } }
+    return ""
+}
+fn path_owner(path string) string { return strings.split(path,"#@")[0] }
+fn path_tail(path string) string { return rules.cut(path,len(path_owner(path)),len(path)) }
+fn value_path(plans map[int]Transform, values map[string]Value, path string) Value { let owner=path_owner(path)
+    let suffix=path_tail(path)
+    # unwrap_or evaluates the fallback eagerly. Existing local facts need no
+    # new unknown Value/maps at every name/projection lookup.
+    if has(values,owner) { let root=unwrap(values[owner])
+        if suffix=="" { return root }
+        return select(plans,root,suffix,field_fact(plans,root,suffix,"").type_name) }
+    let root=value("",false)
+    if suffix=="" { return root }
+    return select(plans,root,suffix,field_fact(plans,root,suffix,"").type_name)
+}
+fn lookup_path(plans map[int]Transform, values map[string]Value, path string) Value { return value_path(plans,values,path) }
+fn same_storage(a View, b View) bool { for origin, unused in a.origins { if has(b.origins,origin) { return true } }
+    return false
+}
+# Monotonic stamps describe only immutable environment bindings. A restored
+# branch keeps the allocator monotonic, so two independent writes never compare
+# equal merely because each branch performed the same number of assignments.
+# Local journals retain only bindings written since the mark. Published values
+# are immutable; restore reinstates the old value/version without rewinding the
+# version allocator. Nested journals independently record their first write.
+fn mark(e mut Environment) int {
+    e.next_journal+=1
+    e.journals[e.next_journal]=Delta{before:map[string]Value{},before_versions:map[string]int{},touched:map[string]bool{},after:map[string]Value{},after_versions:map[string]int{}}
+    return e.next_journal
+}
+fn remember(e mut Environment, name string) {
+    for id, unused in e.journals { var journal=unwrap(e.journals[id])
+        if !has(journal.touched,name) {
+            journal.touched[name]=true
+            if has(e.values,name) { journal.before[name]=unwrap(e.values[name])
+                journal.before_versions[name]=unwrap_or(e.versions[name],0) } } }
+}
+fn saved(e Environment, id int) Delta {
+    var out=unwrap(e.journals[id])
+    out.before=snapshot(out.before)
+    out.before_versions=clone(out.before_versions)
+    out.touched=clone(out.touched)
+    out.after=map[string]Value{}
+    out.after_versions=map[string]int{}
+    for name, unused in out.touched { if has(e.values,name) {
+        out.after[name]=unwrap(e.values[name])
+        out.after_versions[name]=unwrap_or(e.versions[name],0) } }
+    return out
+}
+fn finish(e mut Environment, id int) Delta { let out=saved(e,id)
+    delete(e.journals,id)
+    return out
+}
+fn restore(e mut Environment, delta Delta) {
+    for name, unused in delta.touched {
+        if has(delta.before,name) { e.values[name]=unwrap(delta.before[name])
+            e.versions[name]=unwrap(delta.before_versions[name]) }
+        else { delete(e.values,name)
+            delete(e.versions,name) } }
+    e.alias_cache=map[string][]string{}
+    end_updates(e)
+}
+# The other branch's unchanged fact comes from this branch's first-write entry.
+# Branch-local declarations keep the old intersection/else-presence behavior.
+fn join_branches(plans map[int]Transform, e mut Environment, yes Delta, no Delta) {
+    var candidates=clone(yes.touched)
+    for name, unused in no.touched { candidates[name]=true }
+    for name, unused in candidates { if has(e.values,name) {
+        var exists=false
+        var other=value("",false)
+        var version=0
+        if has(yes.touched,name) {
+            if has(yes.after,name) { exists=true
+                other=unwrap(yes.after[name])
+                version=unwrap_or(yes.after_versions[name],0) }
+        } else if has(no.before,name) { exists=true
+            other=unwrap(no.before[name])
+            version=unwrap_or(no.before_versions[name],0) }
+        if exists && version!=unwrap_or(e.versions[name],0) && !same_value(plans,unwrap(e.values[name]),other) {
+            store(e,name,merge(plans,unwrap(e.values[name]),other)) } } }
+}
+fn join_saved(plans map[int]Transform, e mut Environment, id int) {
+    let journal=unwrap(e.journals[id])
+    join(plans,e,journal.before,journal.before_versions)
+}
+fn commit(e mut Environment, name string, input Value, keep_aliases bool) {
+    if len(e.journals)>0 { remember(e,name) }
+    if !keep_aliases && len(e.alias_cache)>0 { e.alias_cache=map[string][]string{} }
+    e.next_version+=1
+    e.values[name]=input
+    e.versions[name]=e.next_version
+}
+fn store(e mut Environment, name string, input Value) { commit(e,name,input,false) }
+# A summary write batch evaluates no input AST and publishes no intermediate
+# node/exit snapshots. Detach each changed table once, then retain private writable
+# handles until the batch ends. The caller snapshots always keep the old tables.
+fn begin_updates(e mut Environment) { e.updating=true }
+fn end_updates(e mut Environment) {
+    e.updating=false
+    if len(e.edited_fields)>0 || len(e.edited_prefixes)>0 {
+        e.edited_fields=map[string]map[string]View{}
+        e.edited_prefixes=map[string]map[string]map[string]bool{} }
+}
+fn editable(plans map[int]Transform, e mut Environment, input Value, owner string) Value {
+    var out=input
+    if e.updating && has(e.edited_fields,owner) {
+        out.fields=unwrap(e.edited_fields[owner])
+        out.prefixes=unwrap(e.edited_prefixes[owner])
+        out.prefix=""
+        out.readonly_fields=false
+        out.plan=0
+        return out }
+    out=clone(materialized(plans,input))
+    if e.updating { e.edited_fields[owner]=out.fields
+        e.edited_prefixes[owner]=out.prefixes }
+    return out
+}
+fn put(plans map[int]Transform, e mut Environment, path string, input Value, weak bool, copy bool) {
+    let owner=path_owner(path)
+    let suffix=path_tail(path)
+    if owner=="" || !has(e.values,owner) { return }
+    var root=unwrap(e.values[owner])
+    if depth(suffix)>8 {
+        root=editable(plans,e,root,owner)
+        let parts=strings.split(suffix,"#@")
+        var prefix=""
+        for i in 1..9 { prefix+="#@"+parts[i] }
+        var ancestor=field_fact(plans,root,prefix,"")
+        ancestor.readonly_children=true
+        ancestor.deep_owned=false
+        root.fields[prefix]=ancestor
+        note_prefix(root.prefixes,prefix)
+        note_type(root.prefixes,prefix,ancestor.type_name)
+        store(e,owner,root)
+        if has(e.visible,owner) { e.writes[owner+"|"+prefix]=true }
+        return
+    }
+    if suffix=="" { var next=input
+        if copy { next=copied(plans,input) }
+        next.root.type_name=root.root.type_name
+        if !rules.shared(next.root.type_name) { next.root.writable=root.root.writable }
+        # A replacement may share its immutable fields with the source value.
+        # The next descendant write must detach from that replacement again.
+        delete(e.edited_fields,owner)
+        delete(e.edited_prefixes,owner)
+        store(e,owner,next)
+        if has(e.visible,owner) { e.writes[owner+"|"]=true
+            for name, unused in materialized(plans,next).fields { e.writes[owner+"|"+name]=true } }
+        return }
+    root=materialized(plans,root)
+    var item=materialized(plans,input)
+    if copy { item=materialized(plans,copied(plans,item)) }
+    if weak { item=merge(plans,lookup_path(plans,e.values,path),item) }
+    if !has(root.prefixes,suffix) && len(item.fields)==0 && len(item.positions)==0 && has(root.fields,suffix) && same_view(unwrap(root.fields[suffix]),item.root) {
+        # The write still happened and its requirement was checked. Only the
+        # unchanged metadata table/version can stay shared with older snapshots.
+        if has(e.visible,owner) { e.writes[owner+"|"+suffix]=true }
+        return }
+    var keep_aliases=!has(root.prefixes,suffix) && len(item.fields)==0 && len(item.positions)==0 && !rules.shared(item.root.type_name)
+    if has(root.fields,suffix) && rules.shared(unwrap(root.fields[suffix]).type_name) { keep_aliases=false }
+    root=editable(plans,e,root,owner)
+    if has(root.prefixes,suffix) {
+        # The existing index enumerates exactly the candidate descendants in
+        # the original order. Missing stale keys are harmless; do not scan siblings.
+        delete(root.fields,suffix)
+        for name, unused in unwrap(root.prefixes[suffix]) { delete(root.fields,name) } }
+    attach(plans,root,suffix,item,false)
+    commit(e,owner,root,keep_aliases)
+    if has(e.visible,owner) { e.writes[owner+"|"+suffix]=true
+        for name, unused in item.fields { if depth(suffix+name)<=8 { e.writes[owner+"|"+suffix+name]=true } } }
+}
+# Cache the exact old enumeration order. Shared-container alias membership
+# cannot change when a child-free nonshared field changes; other stores and
+# branch restoration clear the cache before the next query.
+fn storage_aliases(plans map[int]Transform, e mut Environment, container View) Result<[]string> {
+    var empty []string=[]
+    if len(container.origins)==0 { return ok(empty) }
+    var identity=""
+    if rules.shared(container.type_name) { let encoded=json.encode(container.origins)
+        if is_ok(encoded) { identity=str(len(container.type_name))+":"+container.type_name+":"+unwrap(encoded)
+            if has(e.alias_cache,identity) { return ok(unwrap(e.alias_cache[identity])) } } }
+    var found=list.from_slice(empty)
+    for owner, root in e.values {
+        if same_storage(root.root,container) { list.append(found,owner)? }
+        if has(root.prefixes,"@types") {
+            let bucket="@type:"+container.type_name
+            if has(root.prefixes,bucket) { for full, unused in unwrap(root.prefixes[bucket]) {
+                if root.prefix!="" && !strings.starts_with(full,root.prefix+"#@") { continue }
+                if has(root.fields,full) { let field=raw_field(plans,root,full)
+                    if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+rules.cut(full,len(root.prefix),len(full)))? } } } }
+        } else {
+            # Accept older private metadata without type buckets using exact scans.
+            if root.prefix=="" { for prefix, template in root.fields { let field=raw_field(plans,root,prefix)
+                if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+prefix)? } }
+            } else if has(root.prefixes,root.prefix) {
+                for full, unused in unwrap(root.prefixes[root.prefix]) { if has(root.fields,full) {
+                    let field=raw_field(plans,root,full)
+                    if field.type_name==container.type_name && same_storage(field,container) { list.append(found,owner+rules.cut(full,len(root.prefix),len(full)))? } } }
+            }
+        }
+    }
+    let result=list.snapshot(found)
+    if identity!="" { e.alias_cache[identity]=result }
+    return ok(result)
+}
+fn assign(plans map[int]Transform, refs map[string]string, e mut Environment, left ast.Node, input Value) Result<void> {
+    let path=projection(refs,e.unit.id,e.unit.tree.pool,left)
+    if path=="" { return ok() }
+    if ast.kind(left.payload)!="Index" { put(plans,e,path,input,false,true)
+        return ok() }
+    let container=lookup_path(plans,e.values,projection(refs,e.unit.id,e.unit.tree.pool,get(e.unit.tree.pool,left.children[0])))
+    let destinations=storage_aliases(plans,e,container.root)?
+    for destination in destinations { put(plans,e,destination+"#@[]",input,true,true) }
+    return ok()
+}
+fn require_write(s mut State, e mut Environment, n ast.Node, fact View) Result<void> {
+    if !fact.writable { denied(s,e,n,"read-only member/view")? }
+    if !fact.record_copy { for origin, readonly in fact.origins { e.required[origin]=readonly || unwrap_or(e.required[origin],false) } }
+    return ok()
+}
+fn bind(plans map[int]Transform, declarations map[string]string, e mut Environment, n ast.Node, input Value, mutable bool) { let name=declaration(declarations,e.unit.id,n)
+    if name=="" { return }
+    var next=copied(plans,input)
+    next.root.writable=mutable && (!rules.shared(next.root.type_name) || input.root.writable)
+    store(e,name,next)
+}
+fn instantiate_view_at(plans map[int]Transform, site string, source View, actual map[string]Value) View {
+    return flat_instantiate_view(site,source,actuals(plans,actual))
+}
+# Returned fields retain the immutable summary table. Substitute only roots
+# and selected fields; positions reuse the same prepared argument transform.
+fn has_fields(input Value) bool {
+    if len(input.fields)>0 { return true }
+    for item in input.positions { if has_fields(item) { return true } }
+    return false
+}
+fn prepare_plan(plans mut map[int]Transform, site string, actual map[string]Actual) int {
+    # Admission bounds retention, with the exact eager path when full.
+    if len(plans)>=256 { return 0 }
+    let id=len(plans)+1
+    plans[id]=Transform{actual:actual,site:site}
+    return id
+}
+fn instantiate_flat(plans map[int]Transform, site string, source Value, actual map[string]Actual, identity int) Value {
+    var out=materialized(plans,source)
+    out.root=flat_instantiate_view(site,source.root,actual)
+    if len(out.fields)>0 {
+        if identity>0 { out.plan=identity*4 }
+        else { var fields=map[string]View{}
+            for path, fact in out.fields { fields[path]=flat_instantiate_view(site,fact,actual) }
+            out.fields=fields } }
+    if len(source.positions)>0 { out.positions=clone(source.positions)
+        for i in 0..len(source.positions) { out.positions[i]=instantiate_flat(plans,site,source.positions[i],actual,identity) } }
+    return out
+}
+fn instantiate_at(plans mut map[int]Transform, site string, source Value, actual map[string]Value) Value {
+    let prepared=actuals(plans,actual)
+    var identity=0
+    if has_fields(source) { identity=prepare_plan(plans,site,prepared) }
+    return instantiate_flat(plans,site,source,prepared,identity)
+}
+# Keep the isolated helper entry points; production calls bind the immutable
+# site once and pass three arguments through the entire value/position tree.
+fn instantiate_view(plans map[int]Transform, caller string, module string, node int, source View, actual map[string]Value) View {
+    return instantiate_view_at(plans,caller+"!"+key(module,node),source,actual)
+}
+fn instantiate(plans mut map[int]Transform, caller string, module string, node int, source Value, actual map[string]Value) Value {
+    return instantiate_at(plans,caller+"!"+key(module,node),source,actual)
+}
+fn invoke(s mut State, e mut Environment, n ast.Node, f Function, args []Value) Result<Value> {
+    # Summaries cannot change during a body traversal. Collect each consulted
+    # target once, including aliases/self-recursion and invalid-argument calls.
+    # Publish these edges before the body's new summary can invalidate callers.
+    if s.probing && e.function!="" && !has(e.callees,f.target) { e.callees[f.target]=true }
+    if len(args)!=len(f.parameters) { return ok(value(f.result,false)) }
+    for i in 0..len(args) { if !rules.compatible(f.parameters[i].type_name,args[i].root.type_name) { return ok(value(f.result,false)) } }
+    # Snapshot exactly the parameter/global bindings before writes. Their
+    # metadata stays immutable: put() detaches a changed binding, so pre-call
+    # return/requirement instantiation can share the old fields safely.
+    var actual=map[string]Value{}
+    for owner, unused in s.global_symbols { if has(e.values,owner) { actual[owner]=unwrap(e.values[owner]) } }
+    for i in 0..len(f.parameters) { if i<len(args) { actual[f.parameters[i].target]=args[i]
+        if f.parameters[i].writable && !args[i].root.writable { denied(s,e,get(e.unit.tree.pool,n.children[i+1]),"mut borrow requires writable argument")? } } }
+    if !has(s.summaries,f.target) { return ok(value(f.result,true)) }
+    let summary=unwrap(s.summaries[f.target])
+    let prepared=summary_actuals(s.plans,actual,summary.owners)
+    if summary.unknown {
+        for owner, input in e.values { if has(s.global_symbols,owner) || has(e.visible,owner) {
+            var conservative=conservative_value(s.plans,input)
+            if record(input.root.type_name) { conservative.root.writable=input.root.writable }
+            else if !has(s.global_symbols,owner) { conservative.root.writable=input.root.writable }
+            store(e,owner,conservative)
+        } }
+        for i in 0..len(f.parameters) { if f.parameters[i].writable && i+1<len(n.children) {
+            let path=projection(s.refs,e.unit.id,e.unit.tree.pool,get(e.unit.tree.pool,n.children[i+1]))
+            if path!="" { let input=lookup_path(s.plans,e.values,path)
+                var conservative=conservative_value(s.plans,input)
+                conservative.root.writable=input.root.writable
+                put(s.plans,e,path,conservative,false,false)
+            }
+        } }
+    }
+    for origin, readonly in summary.required { let parts=split_origin(origin)
+        if has(actual,parts[0]) { let root=unwrap(actual[parts[0]])
+            var fact=root.root
+            if parts[1]!="" { fact=field_fact(s.plans,root,parts[1],"") }
+            if readonly || !fact.writable { denied(s,e,n,"callee writes through a read-only member/view")? }
+            if !fact.record_copy { for name, flag in fact.origins { e.required[name]=flag || unwrap_or(e.required[name],false) } } } }
+    let site=e.function+"!"+key(e.unit.id,n.id.index)
+    if len(summary.writes)>0 { begin_updates(e) }
+    # Argument syntax and resolved names are immutable within this call. Cache
+    # owner resolution only; preserve ordered effects and the pre-write actuals.
+    var write_arguments=map[string]WriteArgument{}
+    for origin, fact in summary.writes { let parts=split_origin(origin)
+        if !has(write_arguments,parts[0]) {
+            var argument=WriteArgument{destination:parts[0],parameter:false,writable:false}
+            for i in 0..len(f.parameters) { if f.parameters[i].target==parts[0] {
+                argument.parameter=true
+                argument.writable=f.parameters[i].writable
+                if i+1<len(n.children) { argument.destination=projection(s.refs,e.unit.id,e.unit.tree.pool,get(e.unit.tree.pool,n.children[i+1])) } } }
+            write_arguments[parts[0]]=argument }
+        let argument=unwrap(write_arguments[parts[0]])
+        let destination=argument.destination
+        let parameter=argument.parameter
+        let mutable=argument.writable
+        if parameter && !mutable { continue }
+        if (destination=="" && (!parameter || !strings.contains(parts[1],"#@[]"))) || (e.deferred && parameter && record(unwrap(actual[parts[0]]).root.type_name) && !strings.contains(parts[1],"#@[]")) { continue }
+        var changed=value(fact.type_name,false)
+        changed.root=flat_instantiate_view(site,fact,prepared)
+        if parts[1]=="" { put(s.plans,e,destination,changed,false,false) }
+        else { let path=destination+parts[1]
+            # Install the summary fact as-is before weakly updating shared aliases.
+            if destination!="" { put(s.plans,e,path,changed,e.deferred,false) }
+            if strings.contains(parts[1],"#@[]") {
+                let start=strings.index(parts[1],"#@[]")
+                let ancestor=rules.cut(parts[1],0,start)
+                let suffix=rules.cut(parts[1],start,len(parts[1]))
+                var container=lookup_path(s.plans,e.values,destination+ancestor)
+                if destination=="" && parameter {
+                    container=unwrap(actual[parts[0]])
+                    if ancestor!="" { container=select(s.plans,container,ancestor,"") }
+                }
+                let aliases=storage_aliases(s.plans,e,container.root)?
+                for alias in aliases { put(s.plans,e,alias+suffix,changed,true,true) }
+            } }
+    }
+    if len(summary.writes)>0 { end_updates(e) }
+    var identity=0
+    if summary.deferred { identity=prepare_plan(s.plans,site,prepared) }
+    var result=instantiate_flat(s.plans,site,summary.returned,prepared,identity)
+    result.root.type_name=f.result
+    return ok(result)
+}
+fn expression(s mut State, e mut Environment, id ast.NodeId) Result<Value> {
+    let n=get(e.unit.tree.pool,id)
+    tick(s,n.span)?
+    let result=expression_body(s,e,n)?
+    s.facts[key(e.unit.id,n.id.index)]=node_fact(result)
+    return ok(result)
+}
+fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
+    let k=ast.kind(n.payload)
+    let text=ast.payload_text(n.payload)
+    if k=="Name" || (k=="Member" && target(s.refs,e.unit.id,n)!="") { let name=target(s.refs,e.unit.id,n)
+        if has(s.functions,name) { return ok(value("fn:"+name,false)) }
+        if has(s.variants,name) { return ok(value("variant:"+name,false)) }
+        if strings.starts_with(name,"builtin:") { return ok(value(name,false)) }
+        if has(e.values,name) { return ok(unwrap(e.values[name])) }
+        return ok(value("",false)) }
+    if k=="StructLiteral" { var out=value(target(s.refs,e.unit.id,n),true)
+        out.root.origins[e.function+"!"+key(e.unit.id,n.id.index)+"|"]=false
+        # Literal fields come only from their initializers, not borrowed type defaults.
+        for child in n.children { let field=get(e.unit.tree.pool,child)
+            let name=ast.payload_text(field.payload)
+            var item=expression(s,e,field.children[0])?
+            item.root.type_name=unwrap_or(s.fields[out.root.type_name+"#"+name],item.root.type_name)
+            attach(s.plans,out,"#@"+name,item,true) }
+        return ok(out) }
+    if k=="Array" || k=="MapLiteral" || k=="Pack" { var out=value("",true)
+        out.root.origins[e.function+"!"+key(e.unit.id,n.id.index)+"|"]=false
+        var seen=false
+        var element=value("",false)
+        var empty []Value=[]
+        var positions=list.from_slice(empty)
+        var types []string=[]
+        var type_names=list.from_slice(types)
+        var offset=0
+        if k=="MapLiteral" { offset=1 }
+        for i in offset..len(n.children) { var child=get(e.unit.tree.pool,n.children[i])
+            if k=="MapLiteral" { expression(s,e,child.children[0])?
+                child=get(e.unit.tree.pool,child.children[1]) }
+            let item=expression(s,e,child.id)?
+            if k=="Pack" { list.append(positions,item)?
+                list.append(type_names,item.root.type_name)? }
+            else { let next=copied(s.plans,item)
+                if seen { element=merge(s.plans,element,next) }
+                else { element=next
+                    seen=true } } }
+        if k=="Pack" { out.positions=list.snapshot(positions)
+            out.root.type_name="multi<"+strings.join(list.snapshot(type_names),",")+">"
+            return ok(out) }
+        out.root.type_name="[]"+element.root.type_name
+        if k=="MapLiteral" { out.root.type_name=type_name(s.refs,e.unit.id,e.unit.tree.pool,n.children[0]) }
+        if seen { attach(s.plans,out,"#@[]",element,false) }
+        return ok(out) }
+    if k=="Member" || k=="Index" || k=="Slice" { let base=expression(s,e,n.children[0])?
+        let base_node=get(e.unit.tree.pool,n.children[0])
+        var owner=""
+        var version=0
+        if ast.kind(base_node.payload)=="Name" || (ast.kind(base_node.payload)=="Member" && target(s.refs,e.unit.id,base_node)!="") {
+            let name=target(s.refs,e.unit.id,base_node)
+            if has(e.values,name) { owner=name
+                version=unwrap_or(e.versions[name],0) } }
+        var path="#@"+text
+        var typ=unwrap_or(s.fields[rules.optional(base.root.type_name)+"#"+text],"")
+        if k!="Member" { path="#@[]"
+            typ=child_type(base.root.type_name)
+            for i in 1..len(n.children) { if ast.kind(get(e.unit.tree.pool,n.children[i]).payload)!="Omitted" { expression(s,e,n.children[i])? } } }
+        if k=="Slice" { var out=base
+            out.root.type_name="[]"+typ
+            return ok(out) }
+        var out=select_cached(s.plans,e,base,path,typ,owner,version)
+        out.root.record_copy=false
+        if k=="Index" && len(rules.arguments(base.root.type_name,"map"))==2 { out.root.type_name=typ+"?" }
+        return ok(out) }
+    if k=="Propagate" { var out=expression(s,e,n.children[0])?
+        let ts=rules.arguments(out.root.type_name,"Result")
+        if len(ts)==2 { out.root.type_name=ts[0] }
+        return ok(out) }
+    if k=="Assignment" || k=="Update" { let left=get(e.unit.tree.pool,n.children[0])
+        if ast.kind(left.payload)!="Name" { expression(s,e,left.id)?
+            let base=unwrap(s.facts[key(e.unit.id,left.children[0].index)])
+            require_write(s,e,left,base.root)? }
+        if k=="Assignment" { let right=expression(s,e,n.children[1])?
+            if text=="=" { assign(s.plans,s.refs,e,left,right)? } }
+        return ok(value("",false)) }
+    if k=="Call" { let callee=expression(s,e,n.children[0])?
+        var empty []Value=[]
+        var items=list.from_slice(empty)
+        for i in 1..len(n.children) { list.append(items,expression(s,e,n.children[i])?)? }
+        let args=list.snapshot(items)
+        let name=callee.root.type_name
+        if strings.starts_with(name,"variant:") { let variant=rules.cut(name,8,len(name))
+            return ok(seeded(s,unwrap(s.variants[variant]),true,e.function+"!"+key(e.unit.id,n.id.index))) }
+        if strings.starts_with(name,"fn:") { let fn_name=rules.cut(name,3,len(name))
+            if has(s.functions,fn_name) { return invoke(s,e,n,unwrap(s.functions[fn_name]),args) } }
+        if len(args)>0 && alg.contains(["builtin:core:ok","builtin:core:err","builtin:core:unwrap","builtin:core:unwrap_err","builtin:core:unwrap_or","builtin:core:clone"],name) { var out=args[0]
+            if name=="builtin:core:clone" { out=seeded(s,args[0].root.type_name,true,e.function+"!"+key(e.unit.id,n.id.index))
+                out.root.deep_owned=true
+                out.fields=field_defaults(s,out.root,0)
+                for path, fact in out.fields { var next=fact
+                    next.writable=true
+                    next.readonly_children=false
+                    next.deep_owned=true
+                    out.fields[path]=next } }
+            else if name=="builtin:core:ok" || name=="builtin:core:err" {
+                let payload=out.root.type_name
+                if payload!="nil" && payload!="void" && !rules.shared(payload) && !record(payload) { out.root.writable=true }
+                if name=="builtin:core:ok" { out.root.type_name="Result<"+payload+",>" }
+                else { out.root.type_name="Result<,"+payload+">" } }
+            else { let ts=rules.arguments(out.root.type_name,"Result")
+                if len(ts)==2 { var side=0
+                    if name=="builtin:core:unwrap_err" { side=1 }
+                    out.root.type_name=ts[side] }
+                else { out.root.type_name=rules.optional(out.root.type_name) }
+                if name=="builtin:core:unwrap_or" && len(args)==2 { out=merge(s.plans,out,args[1]) } }
+            return ok(out) }
+        let std=signatures.signature(name)
+        if is_some(std) { let sig=unwrap(std)
+            if sig.mutates && len(args)>0 { require_write(s,e,n,args[0].root)? }
+            if name=="builtin:std.list#from_slice" && len(args)>0 { var out=args[0]
+                out.root.type_name="List<"+child_type(args[0].root.type_name)+">"
+                out.root.writable=true
+                out.root.origins=seeded(s,out.root.type_name,true,e.function+"!"+key(e.unit.id,n.id.index)).root.origins
+                return ok(out) }
+            if name=="builtin:std.list#get" && len(args)>0 { var out=select(s.plans,args[0],"#@[]",child_type(args[0].root.type_name))
+                out.root.writable=false
+                out.root.readonly_children=true
+                out.root.type_name="Result<"+out.root.type_name+",string>"
+                return ok(out) }
+            return ok(seeded(s,sig.result,sig.writable,e.function+"!"+key(e.unit.id,n.id.index))) }
+        if name=="builtin:core:delete" && len(args)>0 { require_write(s,e,n,args[0].root)? }
+        if strings.starts_with(name,"builtin:core:") { return ok(value("",false)) }
+        # An unresolved callback may alter shared members. Keep them conservative.
+        for owner, input in e.values { if rules.shared(input.root.type_name) || record(input.root.type_name) { var out=clone(materialized(s.plans,input))
+            out.root.readonly_children=true
+            out.root.deep_owned=false
+            for path, fact in out.fields { var next=fact
+                next.writable=false
+                next.readonly_children=true
+                out.fields[path]=next }
+            store(e,owner,out) } }
+        return ok(value("",false)) }
+    if k=="Integer" { return ok(value("int",false)) }
+    if k=="String" { return ok(value("string",false)) }
+    if k=="Float" { return ok(value("float",false)) }
+    if k=="Boolean" { return ok(value("bool",false)) }
+    if k=="Nil" { return ok(value("nil",false)) }
+    for child in n.children { expression(s,e,child)? }
+    return ok(value("",false))
+}
+fn type_name(refs map[string]string, module string, pool ast.Pool, id ast.NodeId) string { let n=get(pool,id)
+    let k=ast.kind(n.payload)
+    let text=ast.payload_text(n.payload)
+    if k=="TypeName" { let name=target(refs,module,n)
+        if strings.starts_with(name,"builtin:type:") { return text }
+        return name }
+    if k=="MutableType" { return type_name(refs,module,pool,n.children[0]) }
+    if k=="OptionalType" { return type_name(refs,module,pool,n.children[0])+"?" }
+    if k=="SliceType" { return "[]"+type_name(refs,module,pool,n.children[0]) }
+    if k=="ArrayType" { return "["+text+"]"+type_name(refs,module,pool,n.children[0]) }
+    var empty []string=[]
+    var names=list.from_slice(empty)
+    for child in n.children { unwrap(list.append(names,type_name(refs,module,pool,child))) }
+    if text=="Result" && len(n.children)==1 { unwrap(list.append(names,"string")) }
+    return text+"<"+strings.join(list.snapshot(names),",")+">"
+}
+# Copy the binding table, sharing immutable per-value metadata until put() detaches.
+fn snapshot(values map[string]Value) map[string]Value { var out=map[string]Value{}
+    for name, input in values { out[name]=input }
+    return out
+}
+fn join(plans map[int]Transform, e mut Environment, other map[string]Value, versions map[string]int) {
+    for name, input in e.values { if has(other,name) && unwrap_or(e.versions[name],0)!=unwrap_or(versions[name],0) {
+        let previous=unwrap(other[name])
+        if !same_value(plans,input,previous) { store(e,name,merge(plans,input,previous)) } } }
+}
+fn capture(plans map[int]Transform, e mut Environment, input Value) { let next=copied(plans,input)
+    if e.saw_return { e.returned=merge(plans,e.returned,next) }
+    else { e.returned=next
+        e.saw_return=true } }
+fn statement(s mut State, e mut Environment, id ast.NodeId) Result<void> { let n=get(e.unit.tree.pool,id)
+    tick(s,n.span)?
+    let k=ast.kind(n.payload)
+    let text=ast.payload_text(n.payload)
+    if alg.contains(["Function","Import","Struct","Enum","Break","Continue"],k) { return ok() }
+    if k=="Block" || k=="Program" { for child in n.children { statement(s,e,child)? }
+        return ok() }
+    if k=="Let" || k=="Var" || k=="Const" { var input=expression(s,e,n.children[len(n.children)-1])?
+        if len(n.children)==2 { input.root.type_name=type_name(s.refs,e.unit.id,e.unit.tree.pool,n.children[0]) }
+        bind(s.plans,s.declarations,e,n,input,k=="Var")
+        return ok() }
+    if k=="MultiBinding" || k=="MultiAssignment" { let names=get(e.unit.tree.pool,n.children[0])
+        let input=expression(s,e,n.children[1])?
+        let ts=rules.arguments(input.root.type_name,"multi")
+        for i in 0..len(names.children) { let item=get(e.unit.tree.pool,names.children[i])
+            var next=value("",false)
+            if i<len(input.positions) { next=input.positions[i] }
+            else if i<len(ts) { next.root.type_name=ts[i] }
+            if k=="MultiBinding" { bind(s.plans,s.declarations,e,item,next,text=="var") }
+            else { assign(s.plans,s.refs,e,item,next)? } }
+        return ok() }
+    if k=="Return" { var empty []Value=[]
+        var values=list.from_slice(empty)
+        for child in n.children { list.append(values,expression(s,e,child)?)? }
+        let items=list.snapshot(values)
+        if len(items)==1 { capture(s.plans,e,items[0]) }
+        else { var out=value("",false)
+            out.positions=items
+            capture(s.plans,e,out) }
+        var snapshot=map[string]Value{}
+        for owner, input in e.values { if has(e.visible,owner) { snapshot[owner]=input } }
+        var exits=list.from_slice(e.exits)
+        list.append(exits,snapshot)?
+        e.exits=list.snapshot(exits)
+        return ok() }
+    if k=="If" { expression(s,e,n.children[0])?
+        let yes_mark=mark(e)
+        statement(s,e,n.children[1])?
+        let yes=finish(e,yes_mark)
+        restore(e,yes)
+        let no_mark=mark(e)
+        if len(n.children)==3 { statement(s,e,n.children[2])? }
+        let no=finish(e,no_mark)
+        join_branches(s.plans,e,yes,no)
+        return ok() }
+    if k=="While" || k=="For" { let before=mark(e)
+        var count=0
+        if k=="While" { expression(s,e,n.children[0])? }
+        else { count=len(n.children)-2
+            let iterable=get(e.unit.tree.pool,n.children[count])
+            let input=expression(s,e,iterable.id)?
+            for i in 0..count { let name=declaration(s.declarations,e.unit.id,get(e.unit.tree.pool,n.children[i]))
+                if name!="" { store(e,name,value(child_type(input.root.type_name),false)) } } }
+        var changed=true
+        var passes=0
+        while changed && passes<32 {
+            passes+=1
+            let previous=mark(e)
+            statement(s,e,n.children[len(n.children)-1])?
+            join_saved(s.plans,e,before)
+            join_saved(s.plans,e,previous)
+            let delta=finish(e,previous)
+            changed=false
+            for owner, input in delta.before { if has(e.values,owner) && unwrap_or(delta.before_versions[owner],0)!=unwrap_or(e.versions[owner],0) && !same_value(s.plans,input,unwrap(e.values[owner])) { changed=true } }
+        }
+        finish(e,before)
+        if changed { for owner, input in e.values { var conservative=clone(materialized(s.plans,input))
+            conservative.root.readonly_children=true
+            conservative.root.deep_owned=false
+            for path, fact in conservative.fields { var item=fact
+                item.writable=false
+                item.readonly_children=true
+                conservative.fields[path]=item }
+            store(e,owner,conservative) } }
+        return ok() }
+    if k=="Match" { expression(s,e,n.children[0])?
+        let whole=mark(e)
+        var merged=saved(e,whole)
+        for i in 1..len(n.children) {
+            restore(e,merged)
+            let current=mark(e)
+            let arm=get(e.unit.tree.pool,n.children[i])
+            statement(s,e,arm.children[2])?
+            let next=finish(e,current)
+            join_branches(s.plans,e,merged,next)
+            merged=saved(e,whole) }
+        finish(e,whole)
+        return ok() }
+    if k=="Defer" { e.deferred=true
+        expression(s,e,n.children[0])?
+        e.deferred=false
+        return ok() }
+    if k=="ExpressionStatement" { expression(s,e,n.children[0])?
+        return ok() }
+    return ok()
+}
+fn environment(unit modules.Unit, function string, values map[string]Value) Environment {
+    var visible=map[string]bool{}
+    for owner, unused in values { visible[owner]=true }
+    return Environment{unit:unit,function:function,values:snapshot(values),versions:map[string]int{},next_version:0,journals:map[int]Delta{},next_journal:0,updating:false,edited_fields:map[string]map[string]View{},edited_prefixes:map[string]map[string]map[string]bool{},alias_cache:map[string][]string{},returned:value("",false),saw_return:false,writes:map[string]bool{},visible:visible,required:map[string]bool{},callees:map[string]bool{},exits:[],deferred:false}
+}
+fn view_owners(out mut map[string]bool, input View) {
+    for origin, unused in input.origins { out[split_origin(origin)[0]]=true }
+}
+fn value_owners(out mut map[string]bool, input Value) {
+    view_owners(out,input.root)
+    for path, fact in input.fields { view_owners(out,fact) }
+    for position in input.positions { value_owners(out,position) }
+}
+fn summary_actuals(plans map[int]Transform, values map[string]Value, owners map[string]bool) map[string]Actual {
+    var out=map[string]Actual{}
+    for owner, unused in owners { if has(values,owner) { out[owner]=actual_view(plans,unwrap(values[owner])) } }
+    return out
+}
+fn summary(plans map[int]Transform, e Environment) Summary { var writes=map[string]View{}
+    for origin, unused in e.writes { let parts=split_origin(origin)
+        var fact=lookup_path(plans,e.values,parts[0]+parts[1]).root
+        for exit in e.exits { if has(exit,parts[0]) { fact=merge_view(fact,value_path(plans,exit,parts[0]+parts[1]).root) } }
+        writes[origin]=fact }
+    let returned=canonical_value(plans,e.returned)
+    var owners=map[string]bool{}
+    value_owners(owners,returned)
+    for origin, fact in writes { view_owners(owners,fact) }
+    return Summary{returned:returned,unknown:false,saw_return:e.saw_return,writes:writes,required:e.required,owners:owners,deferred:has_fields(returned)}
+}
+fn same_flags(a map[string]bool, b map[string]bool) bool {
+    if len(a)!=len(b) { return false }
+    for name, flag in a { if !has(b,name) || flag!=unwrap(b[name]) { return false } }
+    return true
+}
+fn same_view(a View, b View) bool {
+    return a.type_name==b.type_name && a.writable==b.writable && a.readonly_children==b.readonly_children && a.deep_owned==b.deep_owned && a.record_copy==b.record_copy && same_flags(a.origins,b.origins)
+}
+fn same_fields(a map[string]View, b map[string]View) bool {
+    if len(a)!=len(b) { return false }
+    # These string-keyed records contain only strings/bools/maps: canonical
+    # JSON is an exact representation, without hash collisions. Preserve the
+    # element-wise path if the existing JSON depth/node/byte limits reject it.
+    if len(a)>8 { let left=json.encode(a)
+        let right=json.encode(b)
+        if is_ok(left) && is_ok(right) { return unwrap(left)==unwrap(right) } }
+    for name, input in a { if !has(b,name) || !same_view(input,unwrap(b[name])) { return false } }
+    return true
+}
+fn same_value(plans map[int]Transform, a Value, b Value) bool {
+    if !same_view(a.root,b.root) || len(a.positions)!=len(b.positions) { return false }
+    var equal=false
+    # Equality of the complete backing table and the same view is sufficient.
+    # Use the existing exact JSON/element comparison, never an identity/hash guess.
+    if a.plan==0 && b.plan==0 && a.prefix==b.prefix && a.readonly_fields==b.readonly_fields {
+        equal=same_fields(a.fields,b.fields)
+        if !equal && a.prefix=="" && !a.readonly_fields { return false } }
+    if !equal { let left=materialized(plans,a)
+        let right=materialized(plans,b)
+        if !same_fields(left.fields,right.fields) { return false } }
+    for i in 0..len(a.positions) { if !same_value(plans,a.positions[i],b.positions[i]) { return false } }
+    return true
+}
+fn same_summary(plans map[int]Transform, a Summary, b Summary) bool {
+    return a.unknown==b.unknown && a.saw_return==b.saw_return && same_value(plans,a.returned,b.returned) && same_fields(a.writes,b.writes) && same_flags(a.required,b.required)
+}
+fn conservative_value(plans map[int]Transform, input Value) Value {
+    var out=clone(materialized(plans,input))
+    out.root.writable=false
+    out.root.readonly_children=true
+    out.root.deep_owned=false
+    for path, fact in out.fields { var readonly=fact
+        readonly.writable=false
+        readonly.readonly_children=true
+        readonly.deep_owned=false
+        out.fields[path]=readonly }
+    for i in 0..len(out.positions) { out.positions[i]=conservative_value(plans,out.positions[i]) }
+    return out
+}
+# No callee summary is published inside statement()/expression(). Registering
+# the complete body set here therefore preserves the original reverse graph,
+# declaration order, self-invalidations and the 32-round fallback boundary.
+fn record_dependencies(s mut State, e Environment) {
+    for target, unused in e.callees {
+        var callers=map[string]bool{}
+        if has(s.dependents,target) { callers=unwrap(s.dependents[target]) }
+        if !has(callers,e.function) { callers=clone(callers)
+            callers[e.function]=true
+            s.dependents[target]=callers } }
+}
+pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[string]string, fields map[string]string, functions map[string]Function, variants map[string]string) Result<Model> {
+    # Index immutable declaration metadata once. Recursive projections visit only
+    # the requested record's fields, never every unrelated field in the project.
+    var members=map[string]map[string]string{}
+    for full, typ in fields {
+        let parts=strings.split(full,"#")
+        let name=parts[len(parts)-1]
+        let owner=rules.cut(full,0,len(full)-len(name)-1)
+        var own=map[string]string{}
+        if has(members,owner) { own=clone(unwrap(members[owner])) }
+        own[name]=typ
+        members[owner]=own
+    }
+    var s=State{units:map[string]modules.Unit{},refs:refs,declarations:declarations,fields:fields,members:members,plans:map[int]Transform{},shapes:map[string]map[string]View{},shape_prefixes:map[string]map[string]map[string]bool{},parameter_fields:map[string]map[string]View{},parameter_field_count:0,functions:functions,variants:variants,summaries:map[string]Summary{},dependents:map[string]map[string]bool{},dirty:map[string]bool{},facts:map[string]Fact{},global_symbols:map[string]bool{},errors:map[string]string{},probing:true,work:0,error:""}
+    for unit in list.snapshot(graph.units) { s.units[unit.id]=unit }
+    var globals=map[string]Value{}
+    for module in list.snapshot(graph.order) { var e=environment(unwrap(s.units[module]),"",globals)
+        statement(s,e,e.unit.tree.root)?
+        for name, input in e.values { globals[name]=canonical_value(s.plans,input) }
+        s.plans=map[int]Transform{} }
+    for owner, unused in globals { s.global_symbols[owner]=true }
+    for name, unused in functions { s.dirty[name]=true }
+    var passes=0
+    var changed=true
+    while changed && passes<32 { passes+=1
+        changed=false
+        # Preserve declaration order and the original 32 coarse rounds. Within
+        # each round, skip only a body whose consulted summaries cannot change.
+        for name, f in functions {
+            if !has(s.dirty,name) { continue }
+            delete(s.dirty,name)
+            delete(s.errors,name)
+            s.plans=map[int]Transform{}
+            var e=environment(unwrap(s.units[f.module]),name,globals)
+            for p in f.parameters { store(e,p.target,parameter_seeded(s,p.type_name,p.writable,p.target))
+                if p.writable { e.visible[p.target]=true } }
+            let n=get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:f.node})
+            statement(s,e,n.children[1])?
+            record_dependencies(s,e)
+            let next=summary(s.plans,e)
+            if !has(s.summaries,name) || !same_summary(s.plans,next,unwrap(s.summaries[name])) { changed=true
+                s.summaries[name]=next
+                if has(s.dependents,name) { for caller, unused in unwrap(s.dependents[name]) { s.dirty[caller]=true } } }
+        } }
+    if changed { for name, input in s.summaries { var next=clone(input)
+        next.unknown=true
+        next.writes=map[string]View{}
+        next.returned=conservative_value(s.plans,input.returned)
+        s.summaries[name]=next
+        # The conservative fallback changes every consulted summary. Mark every
+        # dependent, including self-recursion, for final validation with it.
+        if has(s.dependents,name) { for caller, unused in unwrap(s.dependents[name]) { s.dirty[caller]=true } } } }
+    s.probing=false
+    for name, f in functions {
+        # A stable body already produced its final facts and first diagnostic.
+        # Only invalidated bodies need another visit; globals/parameters are fixed.
+        if has(s.dirty,name) { delete(s.errors,name)
+            s.plans=map[int]Transform{}
+            var e=environment(unwrap(s.units[f.module]),name,globals)
+            for p in f.parameters { store(e,p.target,parameter_seeded(s,p.type_name,p.writable,p.target))
+                if p.writable { e.visible[p.target]=true } }
+            let n=get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:f.node})
+            statement(s,e,n.children[1])? }
+        if s.error=="" && has(s.errors,name) { s.error=unwrap(s.errors[name]) }
+    }
+    return ok(Model{facts:s.facts,passes:passes,work:s.work,error:s.error})
+}

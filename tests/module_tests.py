@@ -22,7 +22,7 @@ def run(command, path, code=0, output=None, error=None, silent=False):
     checks += 1
     return result
 
-with tempfile.TemporaryDirectory(prefix="hua-modules-", dir=root / "build") as temp:
+with tempfile.TemporaryDirectory(prefix="hua-modules-", dir=root / "tests" / "build") as temp:
     base = Path(temp)
     entry = base / "鍏ュ彛 with spaces.hua"
 
