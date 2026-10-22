@@ -1,18 +1,18 @@
 # 当前状态
 
-更新2026-10-22。Git：main，最新提交见 `git log -1`（本次交接提交在15d3c79之后），已推送origin/main。
+更新2026-10-23。Git：main，在f5e277a之上加P4-S1（只改selfhost/capabilities.hua与文档）；提交/推送以 `git log`、`git status` 为准。旧基线67faab1上的诊断与实验另存分支 `bo11-capability-diagnostics-20261023`（已推送，未合入）。
 
 ## 一句话
 
-Hua编译器已在Windows上自举并到达代际不动点；同一时段完整自举从555.6秒（首次成功）降到约344秒，600秒余量约43%。下一步是继续性能路线（F其余项与C阶段）。
+Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（C04摘要轮次按被调用方优先访问）使同机同输入步数-18.7%、墙钟-19.4%，产物不变；另一台机器上完整自举C2 207.8秒、C3 202.8秒，600秒余量约65%。下一步是继续性能路线（F其余项与C阶段）。
 
 ## 关键事实（均为本机实测）
 
 | 项 | 数值 | 记录 |
 |---|---|---|
-| 完整自举（当前源码） | 343.5秒、1,570,130,785步、peak_calls 52 | docs/VM与自举性能改造分析.md 第0.2节“D2＋F1” |
-| 自身产物 | C2=C3逐字节相同，4,171,764字节，CRC32 559473999，sha256 454c7f77…（交接前更正注释日期后重做） | tests/build-selfhost-f1/summary-datefix.json（本机，不入Git） |
-| 回归 | 72项CTest全过；另11项为已定因的既有问题（宿主前端过慢造成的测试时限、3项旧断言） | 性能日志“Windows完整CTest回归” |
+| 完整自举（当前源码，P4-S1后） | 另一台机器：C2 207.8秒、C3 202.8秒，1,281,255,218步、peak_calls 52（原机F1源码343.5秒、15.70亿步） | docs/VM与自举性能改造分析.md 第0.2节“P4-S1” |
+| 自身产物 | C2=C3逐字节相同，4,195,418字节，CRC32 3424058752，sha256 f73869fa…（P4-S1源码；F1源码为4,171,764字节、CRC32 559473999） | tests/build-selfhost-s1/summary.json（本机，不入Git） |
+| 回归 | 原机72项CTest全过；另一台机器P4-S1后71/72，archives_extensions因本机产物长度使一个变异为空操作而失败（不含P4-S1同样失败，HUA-D037）；另11项为已定因的既有问题 | 性能日志“Windows完整CTest回归”“P4-S1” |
 | 同机对照 | Hua比CPython 3.12慢约4–10倍，比Lua 5.4慢2.5–27倍 | perf/results/win-reference-stageB.json |
 | 剖析（C04阶段） | 值复制约30%、内建约31%、GC约24%（D2前）；分发仅约3% | 性能日志第0.2节“第9节A/B阶段” |
 
@@ -25,6 +25,7 @@ Hua编译器已在Windows上自举并到达代际不动点；同一时段完整�
 5. F1：`==`结构相等；C04比较改用`==`，步数-9.5%。
 6. 测量工具：HUA_INTERNAL_PROFILE计数与探针--mix、perf/run_bench.py、ab_bench.py、count_bench.py、reference_bench.py（CPython/Lua）、tests/tools/native_profile/。
 7. 文档：10份活文档已同步；docs/开发与运行指南.md新增“在另一台电脑接续开发”。
+8. P4-S1（2026-10-23，另一台机器）：C04 `analyze` 第2轮起按调用图DFS后序（被调用方优先）访问dirty函数体；C04 134例、195输入报告除3例stats.work外逐字节相同、隔离测试、完整C1→C2→C3不动点通过。
 
 ## 在另一台电脑接续
 

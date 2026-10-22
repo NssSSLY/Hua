@@ -109,7 +109,7 @@ Bytes 保存任意字节，Buffer 支持追加文本/小端整数，List<T> 支�
 ```
 
 示例写入 17 字节并读回验证，输出与解释器对照见 [字节与容器合同](docs/标准库与内建接口.md)。
-2026-10-22：Hua编写的完整编译器（[selfhost/archive_main.hua](selfhost/archive_main.hua)）已在Windows本机编译自身并到达代际不动点（第二、第三代HUAB逐字节相同，当前约474秒）；复现步骤见[开发指南](docs/开发与运行指南.md)，现状与边界见[项目概览](docs/项目概览与进度.md#current-bootstrap-evidence)。
+2026-10-22：Hua编写的完整编译器（[selfhost/archive_main.hua](selfhost/archive_main.hua)）已在Windows本机编译自身并到达代际不动点（第二、第三代HUAB逐字节相同，2026-10-23在本机约203–208秒）；复现步骤见[开发指南](docs/开发与运行指南.md)，现状与边界见[项目概览](docs/项目概览与进度.md#current-bootstrap-evidence)。
 
 ## 本地模块
 

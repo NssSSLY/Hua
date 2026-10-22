@@ -1,14 +1,14 @@
 # 待办与下一次选择
 
-更新2026-10-22。完整清单与优先级以docs/设计决策与未决事项.md（design-backlog）为准；性能项的具体步骤与验收在docs/VM与自举性能改造分析.md第0.3节与第9节。
+更新2026-10-23。完整清单与优先级以docs/设计决策与未决事项.md（design-backlog）为准；性能项的具体步骤与验收在docs/VM与自举性能改造分析.md第0.3节与第9节。
 
 | 次序 | 待办 | 验收 |
 |---|---|---|
-| P0/高 | 性能F其余项：std.map原生合并/包含、strings.cut_once、C04来源路径整数化（HUA-D028/D008相关） | 完整自举步数下降；改编译器源码后C2=C3逐字节相同；AST/VM/HUAB三路径对照；72项CTest |
+| P0/高 | 性能F其余项：std.map原生合并/包含（旧基线上的接口提案在分支bo11-capability-diagnostics-20261023，F1已覆盖“相等”，需在当前代码重估）、strings.cut_once、C04来源路径整数化（HUA-D028/D008相关）；P4-S1已完成 | 完整自举步数下降；改编译器源码后C2=C3逐字节相同；AST/VM/HUAB三路径对照；72项CTest |
 | P0/高 | 性能C阶段：不可变共享字符串、16字节Value、非原子引用计数（线程边界先核对）、map哈希化（HUA-D004） | 分配/步明显下降（当前完整自举约1次/步）；ab_bench无退化；完整自举产物逐字节相同 |
 | P1/高 | 性能D1：struct写时复制（A07只读来源与Task隔离反例必须保持） | struct复制分配基本消除；A07四路对照通过 |
 | P1/中 | HUA-D036：宿主C++前端检查自举入口36–39秒，使9项测试超出自带时限 | 决定调测试时限或加速sema，补跑这些测试后段检查 |
-| P2 | HUA-D037：3项既有断言（selfhost_ast_pool E4007/E4099、frontend_extended E8201@14:11、lowering capability_passes上限） | 逐项判断测试过期还是实现回归并修复 |
+| P2 | HUA-D037：3项既有断言（selfhost_ast_pool E4007/E4099、frontend_extended E8201@14:11、lowering capability_passes上限）；archives_extensions“第16字节写0”变异在部分机器上是空操作 | 逐项判断测试过期还是实现回归并修复 |
 | P1 | C09覆盖/兼容、正式C08/C10脚本验收、A12/B10、G1–G3 | 按设计决策原路线 |
 | 待决定 | GC计数合同（无环对象不入环检测会改变std.gc.collect()计数） | 用户确认后才做 |
 | 待决定 | Windows分配器（HUA-D035，是否引入mimalloc等新依赖） | 用户确认后才做 |
@@ -19,3 +19,5 @@
 - 性能F其余项：std.map原生合并/包含、strings.cut_once、C04来源路径整数化
 - 性能C阶段：共享字符串、16字节Value、map哈希化
 - HUA-D036宿主前端过慢导致的测试时限；HUA-D037三项既有断言
+
+- User reviews diff; then commit; next F remaining items and C stage
