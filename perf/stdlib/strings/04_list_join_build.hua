@@ -1,0 +1,14 @@
+# 当前推荐的构造方式：先收集到List，再一次join
+import std.strings as strings
+import std.list as list
+fn main() {
+    var total = 0
+    for round in 0..10 {
+        var empty []string = []
+        var parts = list.from_slice(empty)
+        for i in 0..20000 { unwrap(list.append(parts, "ab")) }
+        let s = strings.join(list.snapshot(parts), "")
+        total += len(s)
+    }
+    print(total)
+}

@@ -4,7 +4,7 @@
 
 | 次序 | 待办 | 验收 |
 |---|---|---|
-| **当前主线** | HUA-D038 标准库对齐成熟语言（性能优先，2026-10-23用户决定；暂不推进自举）：先L0-3基准框架→字符串P0＋构建器＋parse/format→map/list P0与Set→L0-1回调入口→回调类方法→math/encoding→random/哈希→collections/time/os/fs/test（清单见docs/标准库设计与实现路线.md#stdlib-parity-2026-10-23）；当前只列待办，未改代码 | 每切片：接口文档精确签名、三路径一致、边界测试、新增微基准与CPython/Lua对照、ab_bench无退化、HUAB since |
+| **当前主线** | HUA-D038 标准库对齐成熟语言（性能优先，2026-10-23用户决定；暂不推进自举）：先L0-3基准框架→字符串P0＋构建器＋parse/format→map/list P0与Set→L0-1回调入口→回调类方法→math/encoding→random/哈希→collections/time/os/fs/test（清单见docs/标准库设计与实现路线.md#stdlib-parity-2026-10-23）；L0-3基准框架已完成（perf/stdlib、--suite stdlib、strings基线），字符串P0＋构建器＋parse/format提案待审（knowledge/bootstrap-performance/designs/2026-10-23-strings-p0-proposal.md） | 每切片：接口文档精确签名、三路径一致、边界测试、新增微基准与CPython/Lua对照、ab_bench无退化、HUAB since |
 | **当前/最高** | CPython对齐（用户2026-10-23决定，暂停自举线）：P1–P4、调用路径（03_calls 1.15x）、分发循环瘦身（01 1.09x、02 1.04x，仅LocalRef去owner保留）已完成；P7实施前剖析显示收益约微基准5–10%、真实负载2–3%（取指在L1内；真实负载以Windows堆分配22.7%、复制、GC为主），未实施；P5实施前剖析显示其收益约5–18%（01/02），逐指令分发开销（40–50%）与Value variant成本（约17%）更大，顺序待用户决定（docs/VM与自举性能改造分析.md 9.6）；原计划P5→P6 16字节Value/共享字符串→P7紧凑指令（docs/VM与自举性能改造分析.md 9.6） | reference_bench每项Hua/CPython≤2倍（再≤1倍）；ab_bench无退化、步数不变；72项CTest；C1编译自身得C2逐字节相同 |
 | 之后 | 补标准库（CPython对齐达标后） | 按docs/标准库设计与实现路线.md |
 | 暂停 | 性能F其余项：std.map原生合并/包含（旧基线上的接口提案在分支bo11-capability-diagnostics-20261023，F1已覆盖“相等”，需在当前代码重估）、strings.cut_once、C04来源路径整数化（HUA-D028/D008相关）；P4-S1已完成 | 完整自举步数下降；改编译器源码后C2=C3逐字节相同；AST/VM/HUAB三路径对照；72项CTest |

@@ -1,0 +1,13 @@
+# 查找与替换：contains / index / replace
+import std.strings as strings
+fn main() {
+    let text = "the quick brown fox jumps over the lazy dog and the cat sleeps"
+    var total = 0
+    for i in 0..150000 {
+        if strings.contains(text, "lazy") { total += 1 }
+        total += strings.index(text, "cat")
+        let changed = strings.replace(text, "the", "THE")
+        total += len(changed)
+    }
+    print(total)
+}

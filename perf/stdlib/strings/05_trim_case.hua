@@ -1,0 +1,11 @@
+# 去空白与ASCII大小写：trim / lower_ascii / upper_ascii
+import std.strings as strings
+fn main() {
+    let raw = "   Mixed Case Text With Spaces And Tabs\t "
+    var total = 0
+    for i in 0..100000 {
+        let t = strings.trim(raw)
+        total += len(strings.lower_ascii(t)) + len(strings.upper_ascii(t))
+    }
+    print(total)
+}

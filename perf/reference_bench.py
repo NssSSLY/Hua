@@ -10,7 +10,7 @@ CPython（0X_*.py）与 Lua 5.4（0X_*.lua）。Lua 默认取 .tools/lua-5.4.7/s
 同一基准内 Hua 与各参照解释器交替运行，比较整程序墙钟中位数（含进程启动）。
 """
 import argparse, json, pathlib, statistics, subprocess, sys, time
-from run_bench import ROOT, BENCH, run_one
+from run_bench import ROOT, BENCH, SUITES, micro_jobs, reference_source, run_one
 
 REFERENCE = ROOT / "reference"
 DEFAULT_LUA = ROOT.parent / ".tools" / "lua-5.4.7" / "src" / "lua.exe"
@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--only", default="")
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--save")
+    parser.add_argument("--suite", choices=SUITES, default="core", help="core：perf/bench与perf/reference；stdlib：perf/stdlib（参照程序在同目录）")
     options = parser.parse_args()
     hua = pathlib.Path(options.hua).resolve()
     engines = [("Python", [options.python], ".py")]
@@ -44,19 +45,19 @@ def main():
         probe = subprocess.run([*command, "-v" if label == "Lua" else "--version"], capture_output=True, text=True)
         versions[label] = (probe.stdout or probe.stderr).strip().splitlines()[0]
     print("参照：" + "；".join(versions.values()))
-    header = f"{'基准':<16}{'Hua(s)':>9}"
+    width = 16 if options.suite == "core" else 30
+    header = f"{'基准':<{width}}{'Hua(s)':>9}"
     for label, _, _ in engines:
         header += f"{label + '(s)':>11}{'Hua/' + label:>12}"
     print(header)
     results, failed = {}, False
-    for source in sorted(BENCH.glob("0*.hua")):
-        name = source.stem
-        if options.only not in name:
+    for name, source, _args, expect_path in micro_jobs(options.suite):
+        if options.only not in name or (options.suite == "core" and not source.stem.startswith("0")):
             continue
-        refs = [(label, command, REFERENCE / (name + suffix)) for label, command, suffix in engines if (REFERENCE / (name + suffix)).exists()]
+        refs = [(label, command, reference_source(options.suite, source, suffix)) for label, command, suffix in engines if reference_source(options.suite, source, suffix).exists()]
         if not refs:
             continue
-        expect = (BENCH / (name + ".expect")).read_text("utf-8")
+        expect = expect_path.read_text("utf-8")
         walls = {"Hua": []}
         for _ in range(options.repeat):
             wall, _steps, out = run_one(hua, source, options.timeout)
@@ -70,7 +71,7 @@ def main():
                     failed = True
         medians = {k: statistics.median(v) for k, v in walls.items()}
         results[name] = {"medians": medians, "walls": walls}
-        line = f"{name:<16}{medians['Hua']:>9.3f}"
+        line = f"{name:<{width}}{medians['Hua']:>9.3f}"
         for label, _, _ in engines:
             if label in medians:
                 line += f"{medians[label]:>11.3f}{medians['Hua'] / medians[label]:>11.2f}x"
@@ -78,7 +79,7 @@ def main():
     if failed:
         print("输出与 .expect 不一致")
     if options.save:
-        pathlib.Path(options.save).write_text(json.dumps({"hua": str(hua), "references": versions, "results": results}, ensure_ascii=False, indent=2), "utf-8")
+        pathlib.Path(options.save).write_text(json.dumps({"suite": options.suite, "hua": str(hua), "references": versions, "results": results}, ensure_ascii=False, indent=2), "utf-8")
     return 1 if failed else 0
 
 

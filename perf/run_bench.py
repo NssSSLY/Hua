@@ -14,6 +14,22 @@ import argparse, json, pathlib, statistics, subprocess, sys, time
 
 ROOT = pathlib.Path(__file__).resolve().parent
 BENCH = ROOT / "bench"
+# Standard-library suite (HUA-D038 L0-3): perf/stdlib/<module>/NN_name.hua with .expect and
+# same-algorithm .py/.lua references beside it; names are "<module>/<stem>".
+STDLIB = ROOT / "stdlib"
+SUITES = ("core", "stdlib")
+
+
+def micro_jobs(suite):
+    """(name, source, args, expect) for the micro benchmarks of a suite; core keeps its order."""
+    if suite == "stdlib":
+        return [(f"{p.parent.name}/{p.stem}", p, (), p.with_suffix(".expect")) for p in sorted(STDLIB.glob("*/*.hua"))]
+    return [(p.stem, p, (), p.with_suffix(".expect")) for p in sorted(BENCH.glob("*.hua"))]
+
+
+def reference_source(suite, source, suffix):
+    """The CPython/Lua program with the same algorithm as a micro benchmark."""
+    return source.with_suffix(suffix) if suite == "stdlib" else ROOT / "reference" / (source.stem + suffix)
 
 
 def run_one(hua, source, timeout, args=()):
@@ -43,10 +59,11 @@ def main():
     parser.add_argument("--label", default="")
     parser.add_argument("--compiler-huab", help="自举编译器HUAB；缺省时用被测hua从selfhost/archive_main.hua构建（约2分钟）")
     parser.add_argument("--no-real", action="store_true", help="跳过真实编译负载")
+    parser.add_argument("--suite", choices=SUITES, default="core", help="core：perf/bench；stdlib：perf/stdlib（无真实负载）")
     options = parser.parse_args()
     hua = pathlib.Path(options.hua).resolve()
-    jobs = [(p.stem, p, (), p.with_suffix(".expect")) for p in sorted(BENCH.glob("*.hua"))]
-    if not options.no_real:
+    jobs = micro_jobs(options.suite)
+    if options.suite == "core" and not options.no_real:
         huab = pathlib.Path(options.compiler_huab) if options.compiler_huab else ROOT / "results" / "compiler.huab"
         if not huab.exists():
             print(f"构建自举编译器HUAB → {huab}", flush=True)
@@ -59,7 +76,8 @@ def main():
     jobs = [job for job in jobs if options.only in job[0]]
     baseline = json.loads(pathlib.Path(options.compare).read_text("utf-8"))["results"] if options.compare else {}
     results, failed = {}, False
-    header = f"{'基准':<18}{'步数':>12}{'墙钟中位(s)':>13}{'ns/步':>9}"
+    width = 18 if options.suite == "core" else 30
+    header = f"{'基准':<{width}}{'步数':>12}{'墙钟中位(s)':>13}{'ns/步':>9}"
     if baseline:
         header += f"{'基线(s)':>10}{'加速':>8}"
     print(header)
@@ -75,7 +93,7 @@ def main():
         median = statistics.median(walls)
         ns = median * 1e9 / steps if steps else 0
         results[name] = {"steps": steps, "wall": median, "walls": walls, "ns_per_step": ns}
-        line = f"{name:<18}{steps:>12}{median:>13.3f}{ns:>9.1f}"
+        line = f"{name:<{width}}{steps:>12}{median:>13.3f}{ns:>9.1f}"
         if name in baseline:
             old = baseline[name]["wall"]
             line += f"{old:>10.3f}{old / median:>7.2f}x"
@@ -85,7 +103,7 @@ def main():
     if options.save:
         path = pathlib.Path(options.save)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"label": options.label, "hua": str(hua), "results": results}, ensure_ascii=False, indent=2), "utf-8")
+        path.write_text(json.dumps({"label": options.label, "suite": options.suite, "hua": str(hua), "results": results}, ensure_ascii=False, indent=2), "utf-8")
     return 1 if failed else 0
 
 

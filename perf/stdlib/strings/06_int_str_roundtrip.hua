@@ -1,0 +1,9 @@
+# 整数与字符串互转：str(int) / int(string)（parse_int/格式化要替代的路径）
+fn main() {
+    var total = 0
+    for i in 0..800000 {
+        let s = str(i * 37)
+        total += int(s) + len(s)
+    }
+    print(total)
+}

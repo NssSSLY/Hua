@@ -1,0 +1,13 @@
+# split + join：按分隔符切分并重新连接（strings.split / strings.join）
+import std.strings as strings
+fn main() {
+    let line = "alpha,beta,gamma,delta,epsilon,zeta,eta,theta,iota,kappa"
+    var total = 0
+    for i in 0..100000 {
+        let parts = strings.split(line, ",")
+        total += len(parts)
+        let joined = strings.join(parts, ";")
+        total += len(joined)
+    }
+    print(total)
+}

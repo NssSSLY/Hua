@@ -1,0 +1,19 @@
+# 手写repeat与左侧补齐（P0的repeat/pad_left要替代的循环）
+fn repeat_text(text string, n int) string {
+    var out = ""
+    for i in 0..n { out = out + text }
+    return out
+}
+fn pad_left(text string, width int, fill string) string {
+    var out = text
+    while len(out) < width { out = fill + out }
+    return out
+}
+fn main() {
+    var total = 0
+    for i in 0..40000 {
+        total += len(repeat_text("ab", 16))
+        total += len(pad_left(str(i), 12, "0"))
+    }
+    print(total)
+}

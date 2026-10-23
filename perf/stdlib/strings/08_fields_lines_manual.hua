@@ -1,0 +1,16 @@
+# 手写按空白切分与按行切分（P0的fields/lines要替代的组合）
+import std.strings as strings
+fn main() {
+    let text = "alpha  beta\tgamma\ndelta   epsilon\n\nzeta eta\ttheta\n"
+    var total = 0
+    for i in 0..20000 {
+        for line in strings.split(text, "\n") {
+            if len(line) == 0 { continue }
+            total += 1
+            for word in strings.split(strings.replace(line, "\t", " "), " ") {
+                if len(word) > 0 { total += len(word) }
+            }
+        }
+    }
+    print(total)
+}

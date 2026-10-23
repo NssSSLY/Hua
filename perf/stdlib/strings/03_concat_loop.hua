@@ -1,0 +1,10 @@
+# 逐次拼接构造字符串（字符串构建器要解决的场景）：s = s + 片段
+fn main() {
+    var total = 0
+    for round in 0..5 {
+        var s = ""
+        for i in 0..20000 { s = s + "ab" }
+        total += len(s)
+    }
+    print(total)
+}
