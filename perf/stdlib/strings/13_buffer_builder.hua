@@ -1,0 +1,12 @@
+# 字符串构建器（Buffer文本快路径write_str/take_text；对照03逐次拼接、04 List后join）
+import std.buffer as buffer
+fn main() {
+    var total = 0
+    for round in 0..10 {
+        var b = buffer.new()
+        for i in 0..20000 { buffer.write_str(b, "ab") }
+        let s = unwrap(buffer.take_text(b))
+        total += len(s)
+    }
+    print(total)
+}

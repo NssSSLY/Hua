@@ -1,0 +1,10 @@
+# 末次出现位置与出现次数（P0原生last_index/count）
+import std.strings as strings
+fn main() {
+    let text = "the quick brown fox jumps over the lazy dog and the cat sleeps by the door"
+    var total = 0
+    for i in 0..150000 {
+        total += strings.last_index(text, "the") + strings.count(text, "the") + strings.count(text, "o")
+    }
+    print(total)
+}

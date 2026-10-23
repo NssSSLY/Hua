@@ -1,0 +1,10 @@
+# repeat与左侧补齐（P0原生函数；对照07手写版）
+import std.strings as strings
+fn main() {
+    var total = 0
+    for i in 0..40000 {
+        total += len(strings.repeat("ab", 16))
+        total += len(strings.pad_left(str(i), 12, "0"))
+    }
+    print(total)
+}

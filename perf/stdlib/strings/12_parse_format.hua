@@ -1,0 +1,10 @@
+# 十六进制格式化与解析（P0原生format_int/parse_int；对照06的str/int）
+import std.strings as strings
+fn main() {
+    var total = 0
+    for i in 0..400000 {
+        let s = strings.format_int(i * 37, 16)
+        total += unwrap(strings.parse_int(s, 16)) + len(s)
+    }
+    print(total)
+}

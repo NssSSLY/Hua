@@ -125,6 +125,25 @@ const std::vector<StandardFunction>& standard_functions() {
         {"strings","join",{"[]string","string"},"string"},
         {"strings","replace",{"string","string","string"},"string"},
         {"strings","slice",{"string","int","int"},"Result<string,string>"},
+        {"strings","last_index",{"string","string"},"int",false,false,9},
+        {"strings","count",{"string","string"},"int",false,false,9},
+        {"strings","repeat",{"string","int"},"string",false,false,9},
+        {"strings","split_n",{"string","string","int"},"[]string",false,false,9},
+        {"strings","fields",{"string"},"[]string",false,false,9},
+        {"strings","lines",{"string"},"[]string",false,false,9},
+        {"strings","trim_start",{"string"},"string",false,false,9},
+        {"strings","trim_end",{"string"},"string",false,false,9},
+        {"strings","trim_prefix",{"string","string"},"string",false,false,9},
+        {"strings","trim_suffix",{"string","string"},"string",false,false,9},
+        {"strings","pad_left",{"string","int","string"},"string",false,false,9},
+        {"strings","pad_right",{"string","int","string"},"string",false,false,9},
+        {"strings","replace_n",{"string","string","string","int"},"string",false,false,9},
+        {"strings","is_empty",{"string"},"bool",false,false,9},
+        {"strings","parse_int",{"string","int"},"Result<int,string>",false,false,9},
+        {"strings","parse_float",{"string"},"Result<float,string>",false,false,9},
+        {"strings","format_int",{"int","int"},"string",false,false,9},
+        {"strings","format_float",{"float","int"},"string",false,false,9},
+        {"strings","format",{"string","[]string"},"Result<string,string>",false,false,9},
         {"json","decode",{"string"},"Result<Json,string>"},
         {"json","encode",{""},"Result<string,string>"},
         {"json","kind",{"Json"},"string"},
@@ -163,6 +182,10 @@ const std::vector<StandardFunction>& standard_functions() {
         {"buffer","bytes",{"Buffer"},"Bytes",false,false,4},
         {"buffer","text",{"Buffer"},"Result<string,string>",false,false,4},
         {"buffer","clear",{"Buffer"},"void",true,false,4},
+        {"buffer","write_str",{"Buffer","string"},"void",true,false,9},
+        {"buffer","write_int",{"Buffer","int"},"void",true,false,9},
+        {"buffer","take_text",{"Buffer"},"Result<string,string>",true,false,9},
+        {"buffer","reserve",{"Buffer","int"},"void",true,false,9},
         {"list","from_slice",{""},"List",false,true,4},
         {"list","len",{""},"int",false,false,4},
         {"list","get",{"","int"},"",false,false,4},
@@ -228,6 +251,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.module=="task")return task_standard(f.name,args,s,context);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
     if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);
+    if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);
     auto result=type_arguments(f.result,"Result");std::string success=result.empty()?"":result[0];
     auto ok=[&](Value v){return standard_result(std::move(v),true,success);};auto err=[&](std::string text){return standard_result(Value(std::move(text)),false,success);};
     auto text=[&](std::size_t i)->const std::string& {return std::get<std::string>(args[i].data);};

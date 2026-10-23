@@ -1,0 +1,14 @@
+# 按行与按空白切分（P0原生lines/fields；对照08手写版）
+import std.strings as strings
+fn main() {
+    let text = "alpha  beta\tgamma\ndelta   epsilon\n\nzeta eta\ttheta\n"
+    var total = 0
+    for i in 0..20000 {
+        for line in strings.lines(text) {
+            if len(line) == 0 { continue }
+            total += 1
+            for word in strings.fields(line) { total += len(word) }
+        }
+    }
+    print(total)
+}

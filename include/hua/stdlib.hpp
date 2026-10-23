@@ -28,6 +28,7 @@ Value invoke_algorithm_standard(const StandardFunction&,const std::vector<Value>
 Value invoke_filesystem_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 Value invoke_system_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 Value invoke_binary_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
+Value invoke_text_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 const std::vector<StandardFunction>& standard_functions();
 std::string standard_name(const StandardFunction& function);
 const StandardFunction* standard_function(std::string_view name);

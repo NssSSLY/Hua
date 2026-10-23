@@ -4,9 +4,11 @@ import re,sys
 root=Path(sys.argv[1])
 registry=(root/"src/stdlib.cpp").read_text(encoding="utf-8")
 functions=re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{',registry,re.M)
+# since-9 additions (HUA-D038 slice 1) have their own ER0-T rows; the original baseline stays 125.
+later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,9\},\s*$',registry,re.M)}
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
-expected=[m+"."+n for m,n in functions if m not in {"error","file"}]
+expected=[m+"."+n for m,n in functions if m not in {"error","file"} and (m,n) not in later]
 assert len(listed)==len(set(listed))==len(expected)==125,(len(listed),len(expected))
 assert set(listed)==set(expected),set(expected)-set(listed)
 runtime=(root/"src/runtime.cpp").read_text(encoding="utf-8")
@@ -22,4 +24,6 @@ assert len([x for x in functions if x[0]=="error"])==16
 new_file=[m+"."+n for m,n in functions if m=="file"]
 file_rows=re.findall(r"^\| ER0-R\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(file_rows)==len(set(file_rows))==len(new_file)==12 and set(file_rows)==set(new_file)
-print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs separately.")
+text_rows=re.findall(r"^\| ER0-T\d\d \| std\.([^ ]+) \|",text,re.M)
+assert len(text_rows)==len(set(text_rows))==len(later)==23 and set(text_rows)=={m+"."+n for m,n in later},(len(text_rows),len(later))
+print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File and 23 slice-1 APIs separately.")

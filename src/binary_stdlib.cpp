@@ -1,5 +1,6 @@
 #include "hua/stdlib.hpp"
 #include <bit>
+#include <charconv>
 #include <limits>
 namespace hua {
 namespace {
@@ -75,6 +76,12 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
         if(f.name=="bytes")return bytes(out);
         if(f.name=="text"){if(out.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(out);return invalid.empty()?ok(Value(out)):err(invalid);}
         if(f.name=="clear"){out.clear();return {};}
+        // Text fast path (since 9): strings are valid UTF-8, so write_str appends without
+        // re-validating; take_text moves the bytes out (validated once) and empties the buffer.
+        if(f.name=="write_str"){const auto& t=std::get<std::string>(args[1].data);if(t.size()>max_bytes-out.size())runtime_error(s,"buffer exceeds 128 MiB","E4099");out+=t;return {};}
+        if(f.name=="write_int"){char digits[24];auto done=std::to_chars(digits,digits+sizeof digits,integer(1));if(static_cast<std::size_t>(done.ptr-digits)>max_bytes-out.size())runtime_error(s,"buffer exceeds 128 MiB","E4099");out.append(digits,done.ptr);return {};}
+        if(f.name=="reserve"){auto n=integer(1);if(n<0)runtime_error(s,"buffer reserve must not be negative","E4003");if(static_cast<std::uint64_t>(n)>max_bytes)runtime_error(s,"buffer exceeds 128 MiB","E4099");out.reserve(static_cast<std::size_t>(n));return {};}
+        if(f.name=="take_text"){if(out.size()>max_text)return err("TEXT_SIZE: text exceeds 16 MiB");auto invalid=text_utf8_error(out);if(!invalid.empty())return err("TEXT_UTF8: "+invalid);std::string taken=std::move(out);out.clear();return ok(Value(std::move(taken)));}
         std::string addition;
         if(f.name=="append")addition=*std::get<BytesValue>(args[1].data).data;
         else if(f.name=="write_text"){addition=std::get<std::string>(args[1].data);if(addition.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(addition);if(!invalid.empty())return err(invalid);}

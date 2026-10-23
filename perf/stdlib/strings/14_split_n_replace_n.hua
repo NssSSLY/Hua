@@ -1,0 +1,12 @@
+# 限次切分与限次替换（P0原生split_n/replace_n）
+import std.strings as strings
+fn main() {
+    let line = "key=value=with=equals and the the the end"
+    var total = 0
+    for i in 0..150000 {
+        let parts = strings.split_n(line, "=", 2)
+        total += len(parts) + len(parts[1])
+        total += len(strings.replace_n(line, "the", "THE", 2))
+    }
+    print(total)
+}
