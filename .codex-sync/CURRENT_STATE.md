@@ -33,7 +33,7 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 唯一下一步
 
-2026-10-23用户决定：暂停自举线，先让VM在perf/reference微基准上赶上CPython量级（每项≤2倍），再补标准库。已完成CPython对齐P1（帧复用按形状、IterNext免复制、参数槽缓存）、P2（空作用域省略）与P3（局部变量轻量位置LocalRef），未提交；当前Hua/CPython 3.1–7.6倍（perf/results/win-reference-parity-p3.json）。下一步P4加载/常量复制，然后P5槽位化局部变量，路线见docs/VM与自举性能改造分析.md 9.6，结论记在0.2“CPython对齐阶段”。每步：ab_bench → reference_bench → 72项CTest → C1编译自身得C2逐字节相同。
+2026-10-23用户决定：暂停自举线，先让VM在perf/reference微基准上赶上CPython量级（每项≤2倍），再补标准库。已完成CPython对齐P1（帧复用按形状、IterNext免复制、参数槽缓存）、P2（空作用域省略）、P3（局部变量轻量位置LocalRef，均已提交b5df3a3）与P4（标量快路径，未提交）；当前Hua/CPython 2.4–9.7倍（perf/results/win-reference-parity-p4.json）。下一步调用路径（03_calls）与P5槽位化局部变量，路线见docs/VM与自举性能改造分析.md 9.6，结论记在0.2“CPython对齐阶段”。每步：ab_bench → reference_bench → 72项CTest → C1编译自身得C2逐字节相同。
 
 ## 待用户决定
 
