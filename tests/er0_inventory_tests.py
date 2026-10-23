@@ -4,8 +4,10 @@ import re,sys
 root=Path(sys.argv[1])
 registry=(root/"src/stdlib.cpp").read_text(encoding="utf-8")
 functions=re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{',registry,re.M)
-# since-9 additions (HUA-D038 slice 1) have their own ER0-T rows; the original baseline stays 125.
-later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,9\},\s*$',registry,re.M)}
+# since-9/10 additions (HUA-D038 slices 1/2) have their own ER0-T/ER0-U rows; the original baseline stays 125.
+text_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,9\},\s*$',registry,re.M)}
+collection_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,10\},\s*$',registry,re.M)}
+later=text_later|collection_later
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
 expected=[m+"."+n for m,n in functions if m not in {"error","file"} and (m,n) not in later]
@@ -25,5 +27,7 @@ new_file=[m+"."+n for m,n in functions if m=="file"]
 file_rows=re.findall(r"^\| ER0-R\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(file_rows)==len(set(file_rows))==len(new_file)==12 and set(file_rows)==set(new_file)
 text_rows=re.findall(r"^\| ER0-T\d\d \| std\.([^ ]+) \|",text,re.M)
-assert len(text_rows)==len(set(text_rows))==len(later)==23 and set(text_rows)=={m+"."+n for m,n in later},(len(text_rows),len(later))
-print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File and 23 slice-1 APIs separately.")
+assert len(text_rows)==len(set(text_rows))==len(text_later)==23 and set(text_rows)=={m+"."+n for m,n in text_later},(len(text_rows),len(text_later))
+collection_rows=re.findall(r"^\| ER0-U\d\d \| std\.([^ ]+) \|",text,re.M)
+assert len(collection_rows)==len(set(collection_rows))==len(collection_later)==21 and set(collection_rows)=={m+"."+n for m,n in collection_later},(len(collection_rows),len(collection_later))
+print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1 and 21 slice-2 APIs separately.")

@@ -221,6 +221,8 @@ Value make_multi(std::vector<Value> values, std::vector<bool> contextual = {});
 std::vector<Value> unpack_multi(const Value& value, std::size_t count, const SourceSpan& span);
 Value make_map(const std::string& type, const SourceSpan& span);
 MapKey map_key(const MapValue& map, const Value& key, const SourceSpan& span);
+// Single lookup entry for reads (m[k], has, delete, maps.get_or/pop).
+std::map<MapKey, Value>::iterator map_find(const MapValue& map, const Value& key, const SourceSpan& span);
 void map_put(MapValue& map, const Value& key, Value value, const SourceSpan& span, bool contextual = false);
 Value index_value(const Value& base, const Value& index, const SourceSpan& span);
 ValueLocation index_location(Value base, Value index, const SourceSpan& span);

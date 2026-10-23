@@ -196,6 +196,27 @@ const std::vector<StandardFunction>& standard_functions() {
         {"list","snapshot",{""},"",false,false,4},
         {"list","clear",{""},"void",true,false,4},
         {"list","reserve",{"","int"},"Result<bool,string>",true,false,4},
+        {"list","insert",{"","int",""},"Result<int,string>",true,false,10},
+        {"list","remove_at",{"","int"},"",true,false,10},
+        {"list","index_of",{"",""},"int",false,false,10},
+        {"list","contains",{"",""},"bool",false,false,10},
+        {"list","reverse",{""},"void",true,false,10},
+        {"list","sort",{""},"void",true,false,10},
+        {"list","swap",{"","int","int"},"Result<bool,string>",true,false,10},
+        {"list","truncate",{"","int"},"void",true,false,10},
+        {"list","slice",{"","int","int"},"",false,false,10},
+        {"maps","keys",{""},"",false,false,10},
+        {"maps","values",{""},"",false,false,10},
+        {"maps","entries",{""},"",false,false,10},
+        {"maps","get_or",{"","",""},"",false,false,10},
+        {"maps","pop",{"",""},"",true,false,10},
+        {"maps","merge",{"",""},"int",true,false,10},
+        {"sets","from_slice",{""},"",false,true,10},
+        {"sets","union",{"",""},"",false,true,10},
+        {"sets","intersection",{"",""},"",false,true,10},
+        {"sets","difference",{"",""},"",false,true,10},
+        {"sets","is_subset",{"",""},"bool",false,false,10},
+        {"sets","is_disjoint",{"",""},"bool",false,false,10},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
@@ -227,6 +248,8 @@ std::string text_utf8_error(std::string_view s) {
 }
 Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,const SourceSpan& s,std::ostream& output,RuntimeContext* context) {
     if(input.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
+    // maps/sets check their own map arguments without building signature strings.
+    if(f.since>=10&&(f.module=="maps"||f.module=="sets"))return invoke_collection_standard(f,input,s,context);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.
     const bool typed=f.module=="alg"||f.module=="simd"||f.module=="task"||f.module=="list";
@@ -249,6 +272,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.module=="simd")return simd_standard(f.name,args,s,context);
     if(f.module=="gc"){auto& heap=managed_heap();auto n=f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected();if(f.name=="collect"&&(!context||!context->resumable||!context->in_task))file_checkpoint(context);return Value(static_cast<I>(n));}
     if(f.module=="task")return task_standard(f.name,args,s,context);
+    if(f.since>=10&&f.module=="list")return invoke_list_extra(f,args,s,context);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
     if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);
     if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);

@@ -1,0 +1,22 @@
+# 集合并/交/差/子集：原生std.sets（对照01手写）
+import std.sets as sets
+fn main() {
+    var u = 0
+    var n = 0
+    var d = 0
+    var subset = 0
+    for round in 0..20 {
+        var a = map[int]bool{}
+        var b = map[int]bool{}
+        for i in 0..5000 {
+            a[i] = true
+            b[i + 2500] = true
+        }
+        let inter = sets.intersection(a, b)
+        u += len(sets.union(a, b))
+        n += len(inter)
+        d += len(sets.difference(a, b))
+        if sets.is_subset(inter, a) { subset += 1 }
+    }
+    print(u, n, d, subset)
+}

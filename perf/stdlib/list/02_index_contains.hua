@@ -1,0 +1,31 @@
+# 线性查找下标与存在：快照后手写循环
+import std.list as list
+fn main() {
+    var empty []int = []
+    var l = list.from_slice(empty)
+    for i in 0..2000 { unwrap(list.append(l, (i * 7) % 3001)) }
+    var sum = 0
+    var found = 0
+    for q in 0..400 {
+        let target = (q * 13) % 3001
+        let xs = list.snapshot(l)
+        var at = -1
+        for i in 0..len(xs) {
+            if xs[i] == target {
+                at = i
+                break
+            }
+        }
+        sum += at
+        let ys = list.snapshot(l)
+        var hit = false
+        for x in ys {
+            if x == target {
+                hit = true
+                break
+            }
+        }
+        if hit { found += 1 }
+    }
+    print(sum, found)
+}

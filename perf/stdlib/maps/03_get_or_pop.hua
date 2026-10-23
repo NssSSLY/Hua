@@ -1,0 +1,19 @@
+# 带缺省值读取与删除取值：手写has+unwrap与has+unwrap+delete
+fn main() {
+    var total = 0
+    for round in 0..40 {
+        var m = map[int]int{}
+        for i in 0..3000 { m[i] = i * 3 }
+        for i in 0..6000 {
+            if has(m, i) { total += unwrap(m[i]) } else { total += 1 }
+        }
+        for i in 0..3000 {
+            if i % 2 == 0 && has(m, i) {
+                total += unwrap(m[i])
+                delete(m, i)
+            }
+        }
+        total += len(m)
+    }
+    print(total)
+}

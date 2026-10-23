@@ -29,13 +29,28 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
             if(f.name=="all")out.result="Task<[]"+task[0]+">";
             if(f.name=="race")out.result=types[0];}return out;
     }
+    if(f.since>=10&&(f.module=="maps"||f.module=="sets")&&!types.empty()){
+        if(f.module=="sets"&&f.name=="from_slice"){auto end=types[0].find(']');auto key=types[0].starts_with('[')&&end!=std::string::npos?types[0].substr(end+1):"";out.result=key.empty()?"":"map<"+key+",bool>";return out;}
+        auto kv=type_arguments(types[0],"map");if(kv.size()!=2)return out;
+        out.parameters[0]=types[0];
+        if(f.module=="sets"){out.parameters[1]=types.size()>1?types[1]:"";out.result=f.name=="is_subset"||f.name=="is_disjoint"?"bool":"map<"+kv[0]+",bool>";return out;}
+        if(f.name=="keys")out.result="[]"+kv[0];
+        else if(f.name=="values")out.result="[]"+kv[1];
+        else if(f.name=="entries")out.result="multi<[]"+kv[0]+",[]"+kv[1]+">";
+        else if(f.name=="get_or"){out.parameters[1]=kv[0];out.parameters[2]=kv[1];out.result=kv[1];}
+        else if(f.name=="pop"){out.parameters[1]=kv[0];out.result=kv[1].ends_with('?')?kv[1]:kv[1]+"?";}
+        else if(f.name=="merge")out.parameters[1]=types[0];
+        return out;
+    }
     if(f.module!="list"||types.empty())return out;
     if(f.name=="from_slice"){auto end=types[0].find(']');auto element=types[0].starts_with('[')&&end!=std::string::npos?types[0].substr(end+1):"";out.result=element.empty()?"":"List<"+element+">";return out;}
     auto element=item_type(types[0]);out.parameters[0]=element.empty()?"":"List<"+element+">";
     if(f.name=="append")out.parameters[1]=element;
     if(f.name=="set")out.parameters[2]=element;
+    if(f.since>=10){if(f.name=="index_of"||f.name=="contains")out.parameters[1]=element;if(f.name=="insert")out.parameters[2]=element;}
     if(f.name=="extend")out.parameters[1]="[]"+element;
-    if(f.name=="get"||f.name=="pop")out.result="Result<"+element+",string>";
+    if(f.name=="get"||f.name=="pop"||f.name=="remove_at")out.result="Result<"+element+",string>";
+    if(f.name=="slice")out.result="Result<[]"+element+",string>";
     if(f.name=="snapshot")out.result="[]"+element;
     return out;
 }

@@ -1,0 +1,19 @@
+# 合并两个map（src覆盖，统计新增键）：手写for k,v
+fn main() {
+    var added = 0
+    var size = 0
+    for round in 0..20 {
+        var dst = map[int]int{}
+        var src = map[int]int{}
+        for i in 0..3000 {
+            dst[i * 2] = i
+            src[i * 3] = i
+        }
+        for k, v in src {
+            if !has(dst, k) { added += 1 }
+            dst[k] = v
+        }
+        size += len(dst)
+    }
+    print(added, size)
+}

@@ -1,0 +1,15 @@
+# 线性查找下标与存在：原生list.index_of/contains（对照02手写）
+import std.list as list
+fn main() {
+    var empty []int = []
+    var l = list.from_slice(empty)
+    for i in 0..2000 { unwrap(list.append(l, (i * 7) % 3001)) }
+    var sum = 0
+    var found = 0
+    for q in 0..400 {
+        let target = (q * 13) % 3001
+        sum += list.index_of(l, target)
+        if list.contains(l, target) { found += 1 }
+    }
+    print(sum, found)
+}

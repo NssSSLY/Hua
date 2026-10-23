@@ -1,0 +1,12 @@
+# 去重计数：原生sets.from_slice（对照02手写）
+import std.list as list
+import std.sets as sets
+fn main() {
+    var empty []int = []
+    var l = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(l, (i * 7919) % 3000)) }
+    let xs = list.snapshot(l)
+    var total = 0
+    for round in 0..20 { total += len(sets.from_slice(xs)) }
+    print(total)
+}

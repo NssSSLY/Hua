@@ -1,0 +1,38 @@
+# 集合并/交/差/子集：Set以map[int]bool表示，手写for循环
+fn main() {
+    var u = 0
+    var n = 0
+    var d = 0
+    var subset = 0
+    for round in 0..20 {
+        var a = map[int]bool{}
+        var b = map[int]bool{}
+        for i in 0..5000 {
+            a[i] = true
+            b[i + 2500] = true
+        }
+        var un = map[int]bool{}
+        for k in a { un[k] = true }
+        for k in b { un[k] = true }
+        var inter = map[int]bool{}
+        for k in a {
+            if has(b, k) { inter[k] = true }
+        }
+        var diff = map[int]bool{}
+        for k in a {
+            if !has(b, k) { diff[k] = true }
+        }
+        var sub = true
+        for k in inter {
+            if !has(a, k) {
+                sub = false
+                break
+            }
+        }
+        u += len(un)
+        n += len(inter)
+        d += len(diff)
+        if sub { subset += 1 }
+    }
+    print(u, n, d, subset)
+}

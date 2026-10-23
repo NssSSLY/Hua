@@ -1,10 +1,10 @@
 # 当前状态
 
-更新2026-10-23。Git：main，在f5e277a之上加P4-S1（只改selfhost/capabilities.hua与文档）；提交/推送以 `git log`、`git status` 为准。旧基线67faab1上的诊断与实验另存分支 `bo11-capability-diagnostics-20261023`（已推送，未合入）。
+更新2026-10-24。Git：main，HUA-D038切片2已提交推送；提交/推送以 `git log`、`git status` 为准。旧基线67faab1上的诊断与实验另存分支 `bo11-capability-diagnostics-20261023`（已推送，未合入）。
 
 ## 一句话
 
-**2026-10-23主线调整**：用户决定暂不推进自举，在优先考虑性能的前提下完善标准库，与成熟语言常用方法基本对齐（HUA-D038）；待办见docs/标准库设计与实现路线.md“当前主线”。已完成L0-3基准框架（perf/stdlib、--suite stdlib）与切片1：strings新增19个、buffer文本4个（since 9，HUAB9），string恒为合法UTF-8确认为语言不变量；标准库现为17模块/176函数。
+**2026-10-23主线调整**：用户决定暂不推进自举，在优先考虑性能的前提下完善标准库，与成熟语言常用方法基本对齐（HUA-D038）；待办见docs/标准库设计与实现路线.md“当前主线”。已完成L0-3基准框架（perf/stdlib、--suite stdlib）与切片1：strings新增19个、buffer文本4个（since 9，HUAB9），string恒为合法UTF-8确认为语言不变量；切片2（2026-10-24）：std.maps 6个、std.sets 6个（Set即`map[K]bool`的键集合）、list新增9个（since 10，HUAB10），D5查找不复制键实测退化已回退；标准库现为19模块/197函数。
 
 Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（C04摘要轮次按被调用方优先访问）使同机同输入步数-18.7%、墙钟-19.4%，产物不变；另一台机器上完整自举C2 207.8秒、C3 202.8秒，600秒余量约65%。2026-10-23起按用户决定暂停自举线，先做CPython对齐（P1–P4、调用路径与分发循环瘦身已完成；原机对CPython 3.12为2.4–9.7倍，另一台机器对3.14为3.1–9.9倍），下一步见TODO.md与docs/VM与自举性能改造分析.md第9.6节。
 
@@ -31,11 +31,17 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 在另一台电脑接续
 
-按docs/开发与运行指南.md#resume-on-another-computer：git clone/pull → 准备.tools（llvm-mingw-20260922-ucrt-x86_64、wasmtime-v49.0.2，可复制本机.tools）→ scripts/build.ps1 → 跑72项CTest → 可选按指南三条命令复现完整自举（约20分钟，C2=C3）。然后读TODO.md与性能日志0.3节开始下一项。
+按docs/开发与运行指南.md#resume-on-another-computer：git clone/pull → 准备.tools（llvm-mingw-20260922-ucrt-x86_64、wasmtime-v49.0.2，可复制本机.tools）→ scripts/build.ps1 → 跑74项CTest（archives_extensions为HUA-D037已知失败） → 可选按指南三条命令复现完整自举（约20分钟，C2=C3）。然后读TODO.md与性能日志0.3节开始下一项。
 
 ## 唯一下一步
 
-2026-10-23用户决定：暂停自举线，先让VM在perf/reference微基准上赶上CPython量级（每项≤2倍），再补标准库。已完成CPython对齐P1（帧复用按形状、IterNext免复制、参数槽缓存）、P2（空作用域省略）、P3（局部变量轻量位置LocalRef，均已提交b5df3a3）与P4（标量快路径，未提交）；当前Hua/CPython 2.4–9.7倍（perf/results/win-reference-parity-p4.json）。下一步调用路径（03_calls）与P5槽位化局部变量，路线见docs/VM与自举性能改造分析.md 9.6，结论记在0.2“CPython对齐阶段”。每步：ab_bench → reference_bench → 72项CTest → C1编译自身得C2逐字节相同。
+**下一项：HUA-D038第3步——L0-1回调入口的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。
+
+- 目标：原生标准函数回调Hua函数值的统一入口，AST解释器与源码VM/HUAB一致；覆盖步数预算计入、Result/诊断传播、GC根、Task取消检查点、捕获与重入（回调里再调标准函数）。需求见docs/标准库设计与实现路线.md“前置基础”表L0-1行。
+- 首批依赖它的方法（提案中给出精确签名）：list/alg的`sort_by`、`map`、`filter`、`fold`、`find`、`any`/`all`、`min_by`/`max_by`，maps的`update`。
+- 提案写到.codex-sync/knowledge/bootstrap-performance/designs/（参照2026-10-24-slice2-map-list-set-proposal.md的格式：现状事实、签名表、语义/错误/复杂度、性能原则、基准、版本since 11/HUAB11、验收、待决定点）。
+- 实施时沿用切片验收：perf/stdlib先建手写基线→实现→三路径测试（参照tests/collections_p0_tests.py）→`ab_bench`（core与stdlib）无退化，可疑项用交替计时复核→reference_bench→CTest（archives_extensions为HUA-D037已知本机失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 经验：新模块名判断不要放在每次标准调用的热路径上，先判`since`；内部改动必须A/B实测才能保留（D5即因此回退）。
 
 ## 待用户决定
 

@@ -36,3 +36,6 @@
 - 暂停自举；标准库对齐为当前主线，VM性能作为约束与并行候选
 
 - take_text每次验证UTF-8（跳过验证需改Buffer共享存储，未做）
+
+- D5 transparent comparator reverted: long keys +8 percent but SSO keys -7 percent and unrelated core -4 to -6 percent; keep map_find wrapper only
+- New module dispatch checks guarded by since>=10 first; unguarded string compares cost list/01 7 percent

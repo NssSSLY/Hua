@@ -1,0 +1,17 @@
+# 合并两个map：原生maps.merge（对照04手写）
+import std.maps as maps
+fn main() {
+    var added = 0
+    var size = 0
+    for round in 0..20 {
+        var dst = map[int]int{}
+        var src = map[int]int{}
+        for i in 0..3000 {
+            dst[i * 2] = i
+            src[i * 3] = i
+        }
+        added += maps.merge(dst, src)
+        size += len(dst)
+    }
+    print(added, size)
+}

@@ -1,0 +1,14 @@
+# 中间插入与删除：原生list.insert/remove_at（对照01手写）
+import std.list as list
+fn main() {
+    var empty []int = []
+    var total = 0
+    for round in 0..5 {
+        var l = list.from_slice(empty)
+        for i in 0..1000 { unwrap(list.append(l, i)) }
+        for j in 0..200 { unwrap(list.insert(l, (j * 37) % list.len(l), 0 - j)) }
+        for j in 0..200 { total += unwrap(list.remove_at(l, (j * 53) % list.len(l))) }
+        total += list.len(l) + unwrap(list.get(l, 0)) + unwrap(list.get(l, list.len(l) - 1))
+    }
+    print(total)
+}

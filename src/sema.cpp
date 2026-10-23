@@ -588,6 +588,12 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                 if(f->module=="list"&&!types.empty()&&!types[0].empty()){
                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
                     else if(type_arguments(types[0],"List").size()!=1)error(n,"expected List<T>","E3004");
+                    else if(f->name=="sort"){auto e=type_arguments(types[0],"List")[0];if(e!="int"&&e!="float"&&e!="string")error(n,"list.sort requires int/float/string elements","E3004");}
+                }
+                if((f->module=="maps"||f->module=="sets")&&!types[0].empty()){
+                    if(f->module=="sets"&&f->name=="from_slice"){auto e=element_type(types[0]);if(!types[0].starts_with('[')||(e!="bool"&&e!="int"&&e!="string"))error(n,"set from_slice requires a bool/int/string slice or array","E3004");}
+                    else if(type_arguments(types[0],"map").size()!=2)error(n,"expected map","E3004");
+                    else if(f->module=="sets"&&!types[1].empty()){auto b=type_arguments(types[1],"map");if(b.size()!=2||b[0]!=type_arguments(types[0],"map")[0])error(*n.children[2],"set operation requires maps with identical key types","E3004");}
                 }
                 if(f->module=="simd"&&f->name!="backend"){auto a=element_type(types[0]),b=element_type(types[1]);if(a!=b||(a!="f32"&&a!="f64"&&a!="float"))error(n,"SIMD requires matching f32/f64/float arrays","E3004");}
                 if(f->module=="task"&&f->name!="sleep"&&f->name!="yield"&&f->name!="worker_id"){
@@ -597,7 +603,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                 }
                 auto signature=standard_signature(*f,types);
                 for(std::size_t i=0;i<args.size();++i){
-                    if(f->module=="list"&&((f->name=="append"&&i==1)||(f->name=="set"&&i==2))&&!compatible(signature.parameters[i],args[i].type))error(*n.children[i+1],"list element type mismatch","E3004");
+                    if(f->module=="list"&&(((f->name=="append"||f->name=="index_of"||f->name=="contains")&&i==1)||((f->name=="set"||f->name=="insert")&&i==2))&&!compatible(signature.parameters[i],args[i].type))error(*n.children[i+1],"list element type mismatch","E3004");
                     require(signature.parameters[i],args[i],*n.children[i+1]);
                 }
                 if(f->mutates_first&&!args[0].writable&&!probing_)error(n,"standard mutation requires a writable argument","E3003");

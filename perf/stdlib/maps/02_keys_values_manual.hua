@@ -1,0 +1,16 @@
+# 按键有序取键值：手写for k,v收集键、排序、再逐键取值（原生maps.entries对照）
+import std.list as list
+import std.alg as alg
+fn main() {
+    var m = map[int]int{}
+    for i in 0..5000 { m[(i * 7919) % 5000] = i }
+    var total = 0
+    for round in 0..20 {
+        var empty []int = []
+        var ks = list.from_slice(empty)
+        for k, v in m { unwrap(list.append(ks, k)) }
+        let keys = unwrap(alg.sorted(list.snapshot(ks)))
+        for j in 0..len(keys) { total += j * unwrap(m[keys[j]]) }
+    }
+    print(total)
+}

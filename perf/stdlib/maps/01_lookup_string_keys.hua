@@ -1,0 +1,22 @@
+# 字符串键热查找：has与m[k]（衡量查找时的键复制）
+import std.list as list
+fn main() {
+    var m = map[string]int{}
+    var empty []string = []
+    var names = list.from_slice(empty)
+    for i in 0..2000 {
+        let k = "key" + str(i)
+        m[k] = i
+        unwrap(list.append(names, k))
+    }
+    let keys = list.snapshot(names)
+    var total = 0
+    var misses = 0
+    for round in 0..250 {
+        for k in keys {
+            if has(m, k) { total += unwrap(m[k]) }
+        }
+        if !has(m, "missing" + str(round)) { misses += 1 }
+    }
+    print(total, misses)
+}

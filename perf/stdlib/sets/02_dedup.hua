@@ -1,0 +1,15 @@
+# 去重计数：手写for x in xs写入map[int]bool
+import std.list as list
+fn main() {
+    var empty []int = []
+    var l = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(l, (i * 7919) % 3000)) }
+    let xs = list.snapshot(l)
+    var total = 0
+    for round in 0..20 {
+        var seen = map[int]bool{}
+        for x in xs { seen[x] = true }
+        total += len(seen)
+    }
+    print(total)
+}

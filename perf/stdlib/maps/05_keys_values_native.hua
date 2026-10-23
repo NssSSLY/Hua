@@ -1,0 +1,12 @@
+# 按键有序取键值：原生maps.entries（对照02手写）
+import std.maps as maps
+fn main() {
+    var m = map[int]int{}
+    for i in 0..5000 { m[(i * 7919) % 5000] = i }
+    var total = 0
+    for round in 0..20 {
+        let keys, values = maps.entries(m)
+        for j in 0..len(keys) { total += j * values[j] }
+    }
+    print(total)
+}

@@ -53,7 +53,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
         if(args[0].data.index()==0)return copy_value(enforce_type(args[1],result_type,span,contextual.size()>1&&contextual[1]));enforce_type(args[1],value_type(args[0]),span,contextual.size()>1&&contextual[1]);return copy_value(args[0]);
     }
     if(info.core==CoreBuiltin::has||info.core==CoreBuiltin::delete_) {
-        auto m=std::get_if<MapValue>(&args[0].data);if(!m)runtime_error(span,"expected map","E4003");if(info.core==CoreBuiltin::delete_&&!m->writable)runtime_error(span,"cannot mutate a read-only map","E4007");auto key=map_key(*m,args[1],span);return Value(info.core==CoreBuiltin::has?m->data->entries.contains(key):m->data->entries.erase(key)!=0);
+        auto m=std::get_if<MapValue>(&args[0].data);if(!m)runtime_error(span,"expected map","E4003");if(info.core==CoreBuiltin::delete_&&!m->writable)runtime_error(span,"cannot mutate a read-only map","E4007");auto found=map_find(*m,args[1],span);if(found==m->data->entries.end())return Value(false);if(info.core==CoreBuiltin::delete_)m->data->entries.erase(found);return Value(true);
     }
     if(info.core==CoreBuiltin::print){for(std::size_t i=0;i<args.size();++i){if(i)output<<' ';output<<show(args[i]);}output<<'\n';return {};}
     if(info.core==CoreBuiltin::str)return Value(show(args[0]));
