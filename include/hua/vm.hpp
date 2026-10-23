@@ -24,9 +24,12 @@ private:
     Routine<void> run_body(const Bytecode& bytecode,ExecutionScope&);
     struct Binding { Value value; std::string type; bool mutable_binding{}; };
     struct Deferred {Callable callable;std::vector<Value> arguments;Instruction site;};
+    struct Environment;
     struct ScopeLayout {
         std::unordered_map<std::string,std::size_t> indices;
         std::vector<std::string> names;
+        // Retired activations of this shape, reused in O(1) by the frame arena.
+        std::vector<std::unique_ptr<Environment>> spare;
         void add(const std::string& name) { if(!indices.contains(name)){indices.emplace(name,names.size());names.push_back(name);} }
     };
     struct Environment {
@@ -65,7 +68,10 @@ private:
     std::shared_ptr<FrameArena> frame_arena_;
     std::shared_ptr<Environment> activation(const ScopeLayout* shape){if(!frame_arena_)frame_arena_=std::make_shared<FrameArena>();return frame_arena_->acquire(shape,frame_arena_);}
     using Location = ValueLocation;
-    using Entry = std::variant<Value, Location>;
+    // A local variable's assignment target: the binding plus the environment that owns it
+    // (kept alive across LeaveScope like ValueLocation::owner); type is read from the binding.
+    struct LocalRef { Binding* binding{}; std::shared_ptr<Environment> owner; };
+    using Entry = std::variant<Value, Location, LocalRef>;
     struct Iterator {
         bool range{}, inclusive{}, done{};
         std::int64_t current{}, end{}, step{}, index{};
@@ -90,7 +96,7 @@ private:
     struct BuiltinRoute { const std::string* name{};const BuiltinInfo* info{}; };
     struct FunctionLayout;struct CodeLayout;
     // Call sites remember the callee's layouts (all owned by stable VM/bytecode tables).
-    struct FunctionRoute { const Node* function{};const FunctionLayout* layout{};const Code* code{};CodeLayout* slots{}; };
+    struct FunctionRoute { const Node* function{};const FunctionLayout* layout{};const Code* code{};CodeLayout* slots{};std::vector<std::size_t> parameter_slots; };
     struct AccessCache { NameRoute name;FieldAccess field;std::optional<std::vector<std::string>> multi_types;BuiltinRoute builtin;FunctionRoute function; };
     struct CodeLayout {
         ScopeLayout root;
@@ -98,6 +104,10 @@ private:
         std::vector<std::unique_ptr<AccessCache>> accesses;
         // Load-time fusion (bytecode unchanged): `!` directly followed by JumpFalse/JumpTrue.
         std::vector<bool> negated_jump;
+        // Per instruction: the scope layout opened there (EnterScope/IterNext), and whether an
+        // EnterScope declares nothing in a defer-free body, so no environment is needed.
+        std::vector<ScopeLayout*> scope_at;
+        std::vector<bool> empty_scope;
     };
     struct Frame {
         const Code* code{};
@@ -107,6 +117,10 @@ private:
         std::shared_ptr<Environment> environment;
         std::vector<Iterator> iterators;
         CodeLayout* layout{};
+        // Lexical scope depth and, for depths below 64, which scopes were entered without an
+        // environment; LeaveScope/Unwind still pop the same number of logical scopes.
+        std::uint32_t scope_depth{};
+        std::uint64_t elided_scopes{};
     };
     struct ParameterLayout { std::string name,type;bool mutable_view{}; };
     struct FunctionLayout { std::string name;std::vector<ParameterLayout> parameters;std::vector<std::string> returns;bool external{},unsafe{}; };
@@ -148,6 +162,8 @@ private:
     Routine<void> call(const Callable& callable, const std::vector<Value>& args, const Instruction& site);
     // Synchronous part of call(): user/external functions never suspend while entering.
     void enter_function(const Callable& callable, const std::vector<Value>& args, const Instruction& site, FunctionRoute* route=nullptr);
+    void materialize_scope();
+    void bind_named(const std::string& name,const std::string& declared,bool mutable_binding,const SourceSpan& span,Value value);
     // Return without deferred work anywhere in the returning frame: no coroutine needed.
     bool has_pending_defers(const Frame& frame) const;
     void complete_return(Value value,const Instruction& op,bool early);

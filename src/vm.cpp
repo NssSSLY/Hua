@@ -56,7 +56,7 @@ template<std::size_t Size> LeaseBlocks<Size>& lease_blocks(){thread_local LeaseB
 // Binary fast path: same-type int/bool/string comparisons and int +/- give the
 // same result as binary_value; every other case (and overflow, which must raise
 // E4002 there) returns nullopt and takes the general path.
-std::optional<Value> fast_binary(const std::string& op,const Value& left,const Value& right){
+std::optional<Value> fast_binary(std::string_view op,const Value& left,const Value& right){
     const auto index=left.data.index();if(index!=right.data.index()||op.empty()||op.size()>2)return std::nullopt;
     const char c0=op[0],c1=op.size()==2?op[1]:'\0';
     const bool eq=c0=='='&&c1=='=',ne=c0=='!'&&c1=='=',lt=c0=='<'&&!c1,le=c0=='<'&&c1=='=',gt=c0=='>'&&!c1,ge=c0=='>'&&c1=='=';
@@ -75,6 +75,8 @@ std::optional<Value> fast_binary(const std::string& op,const Value& left,const V
         if(eq)return Value(x==y);if(ne)return Value(x!=y);if(lt)return Value(x<y);if(le)return Value(x<=y);if(gt)return Value(x>y);if(ge)return Value(x>=y);}
     return std::nullopt;
 }
+// Inline copy of file_pump_pending (tasks.cpp) for the per-step check.
+inline bool pump_pending(const RuntimeContext* c) noexcept{return c&&(!c->resumable||!c->in_task)&&c->files&&c->files->created->load(std::memory_order_acquire);}
 template<class T> struct LeaseAllocator {
     using value_type=T;
     LeaseAllocator()=default;
@@ -94,7 +96,8 @@ template<class T> struct LeaseAllocator {
 }
 std::shared_ptr<VirtualMachine::Environment> VirtualMachine::FrameArena::acquire(const ScopeLayout* shape,const std::shared_ptr<FrameArena>& arena){
     std::unique_ptr<Environment> item;
-    for(auto i=free.size();i>0;--i)if(free[i-1]->layout==shape){
+    if(shape){auto& spare=const_cast<ScopeLayout*>(shape)->spare;if(!spare.empty()){item=std::move(spare.back());spare.pop_back();++work.reused;}}
+    else for(auto i=free.size();i>0;--i)if(free[i-1]->layout==shape){
         item=std::move(free[i-1]);free.erase(free.begin()+static_cast<std::ptrdiff_t>(i-1));++work.reused;break;
     }
     if(!item){item=std::make_unique<Environment>(shape);++work.created;}
@@ -116,6 +119,9 @@ void VirtualMachine::FrameArena::retire(Environment* environment) noexcept {
     if(item->slots.capacity()<=256 && item->bindings.bucket_count()<=256 && item->deferred.capacity()<=32){
         // Keep recently retired storage, rather than permanently pinning the
         // first 64 shapes and starving every later hot activation.
+        if(item->layout){auto& spare=const_cast<ScopeLayout*>(item->layout)->spare;
+            if(spare.size()<16){spare.push_back(std::move(item));return;} // per-shape cap; overflow is destroyed
+            return;}
         if(free.size()==64)free.erase(free.begin());
         free.push_back(std::move(item)); // constructor reserved all 64 entries
     }
@@ -152,6 +158,10 @@ VirtualMachine::CodeLayout& VirtualMachine::code_layout(const Code& code,const N
         else if(op.op==Op::BindMulti||op.op==Op::IterNext)for(const auto& name:op.names)if(name!="_")scopes.back()->add(name);
         if(op.op==Op::LeaveScope&&scopes.size()>1)scopes.pop_back();
     }
+    result.scope_at.assign(code.instructions.size(),nullptr);result.empty_scope.assign(code.instructions.size(),false);
+    bool has_defer=false;for(const auto& op:code.instructions)has_defer=has_defer||op.op==Op::Defer;
+    for(auto& [pc,scope]:result.scopes){result.scope_at[pc]=&scope;
+        result.empty_scope[pc]=!has_defer&&code.instructions[pc].op==Op::EnterScope&&scope.names.empty();}
     return result;
 }
 VirtualMachine::AccessCache& VirtualMachine::access(Frame& frame) {
@@ -224,12 +234,19 @@ void VirtualMachine::pop_arguments(std::size_t count,const SourceSpan& span,std:
     if(count>stack_.size() || (!frames_.empty() && count>stack_.size()-frames_.back().base))invalid(span);out.resize(count);
     for(std::size_t i=count;i>0;--i)out[i-1]=pop(span);
 }
-void VirtualMachine::bind(const Instruction& op,Value value) {
-    if(std::holds_alternative<MultiValue>(value.data))runtime_error(op.span,"multiple values require positional binding","E4003");
-    auto type=op.type.empty()?value_type(value):op.type;value=copy_value(std::move(value));
-    if(!op.flag)value=read_only(std::move(value));
-    if(!frames_.back().environment->insert(op.text,Binding{std::move(value),type,op.flag}))
-        runtime_error(op.span,"duplicate runtime binding `"+op.text+"`","E4001");
+void VirtualMachine::bind(const Instruction& op,Value value) {bind_named(op.text,op.type,op.flag,op.span,std::move(value));}
+void VirtualMachine::materialize_scope() {
+    // A binding the load-time layout did not predict lands in an elided scope: give it a real environment now.
+    auto& f=frames_.back();if(f.scope_depth==0||f.scope_depth>64)return;auto bit=std::uint64_t{1}<<(f.scope_depth-1);
+    if(!(f.elided_scopes&bit))return;f.elided_scopes&=~bit;auto env=activation(nullptr);env->parent=f.environment;f.environment=std::move(env);
+}
+void VirtualMachine::bind_named(const std::string& name,const std::string& declared,bool mutable_binding,const SourceSpan& span,Value value) {
+    materialize_scope();
+    if(std::holds_alternative<MultiValue>(value.data))runtime_error(span,"multiple values require positional binding","E4003");
+    auto type=declared.empty()?value_type(value):declared;value=copy_value(std::move(value));
+    if(!mutable_binding)value=read_only(std::move(value));
+    if(!frames_.back().environment->insert(name,Binding{std::move(value),type,mutable_binding}))
+        runtime_error(span,"duplicate runtime binding `"+name+"`","E4001");
 }
 EntryResult VirtualMachine::run(const Bytecode& bytecode){
     ExecutionScope execution(context_,output_);context_->type_relations=&model_.relations;context_->resumable=true;
@@ -286,6 +303,10 @@ void VirtualMachine::enter_function(const Callable& callable,const std::vector<V
     if(context_&&context_->in_task&&callable.closure)std::static_pointer_cast<Environment>(callable.closure)->parent=global_;
     const Code* body=route?route->code:nullptr;CodeLayout* slots=route?route->slots:nullptr;
     if(!body){auto code=bytecode_->functions.find(&fn);if(code!=bytecode_->functions.end()){body=&code->second;slots=&code_layout(code->second,&fn);if(route){route->code=body;route->slots=slots;}}}
+    if(route&&slots&&route->parameter_slots.size()!=layout.parameters.size()){
+        route->parameter_slots.clear();
+        for(const auto& p:layout.parameters){auto found=slots->root.indices.find(p.name);route->parameter_slots.push_back(found==slots->root.indices.end()?no_slot:found->second);}
+    }
     auto local=activation(slots?&slots->root:nullptr);local->parent=callable.closure?std::static_pointer_cast<Environment>(callable.closure):global_;
     if(callable.closure)local->insert(key,Binding{Value(callable),"fn:"+key,false});
     if(callable.receiver) {
@@ -297,7 +318,11 @@ void VirtualMachine::enter_function(const Callable& callable,const std::vector<V
         if(mut && !writable(args[i]))runtime_error(site.span,"mut parameter requires mutable argument","E4007");
         HUA_PROFILE_CONSTRAINT_SOURCE(argument);
         auto v=mut?enforce_borrow(args[i],type,site.span):enforce_type(copy_value(args[i]),type,site.span,i<site.contextual.size()&&site.contextual[i]);
-        if(!mut)v=read_only(std::move(v));local->insert(p.name,Binding{std::move(v),type,false});
+        if(!mut)v=read_only(std::move(v));
+        // Same effect as insert(): parameter slots of the function's root scope, cached per call site.
+        const auto slot=route&&slots&&i<route->parameter_slots.size()?route->parameter_slots[i]:no_slot;
+        if(slot!=no_slot&&slot<local->slots.size()&&!local->slots[slot])local->slots[slot].emplace(Binding{std::move(v),type,false});
+        else local->insert(p.name,Binding{std::move(v),type,false});
     }
     if(!body)invalid(site.span);
     if(observer_){flush_metrics();observer_->enter(&fn,frames_.empty()?nullptr:frames_.back().function,args);}
@@ -360,7 +385,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         // cooperative yield are polled every poll_interval steps (and on the first
         // step after entering dispatch or resuming from a suspension).
         if(--poll_countdown_==0){poll_countdown_=poll_interval;flush_metrics();co_await Yield{false,poll_interval};cancellation_checkpoint(context_,s);}
-        if(file_pump_pending(context_))file_checkpoint(context_);
+        if(pump_pending(context_))file_checkpoint(context_);
         ++pending_metric_steps_;if(++steps_>context_->execution_limits.steps){flush_metrics();runtime_error(s,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");}
         try{
         switch(op.op) {
@@ -376,7 +401,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             if(op.text=="!"&&stack_.size()>f.base)if(auto* v=std::get_if<Value>(&stack_.back()))if(auto* b=std::get_if<bool>(&v->data)){
                 // Fused `!` + conditional jump. The jump is still one counted step; fuse only
                 // when that step could not yield, pump files or exceed the step limit.
-                if(f.layout&&f.layout->negated_jump[f.pc-1]&&poll_countdown_>1&&!file_pump_pending(context_)&&steps_<context_->execution_limits.steps){
+                if(f.layout&&f.layout->negated_jump[f.pc-1]&&poll_countdown_>1&&!pump_pending(context_)&&steps_<context_->execution_limits.steps){
                     const auto& jump=f.code->instructions[f.pc];
                     --poll_countdown_;++pending_metric_steps_;++steps_;HUA_PROFILE_COUNT(vm_steps);HUA_PROFILE_OP(jump.op);HUA_PROFILE_ADD(fused_steps,1);
                     const bool condition=!*b;stack_.pop_back();++f.pc;
@@ -393,15 +418,20 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             auto condition=as_bool(pop(s),s);
             if(condition==(op.op==Op::JumpTrue)){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;}break;
         }
-        case Op::EnterScope:{auto env=activation(&f.layout->scopes.at(f.pc-1));HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);break;}
+        case Op::EnterScope:{
+            if(f.layout->empty_scope[f.pc-1]&&f.scope_depth<64){f.elided_scopes|=std::uint64_t{1}<<f.scope_depth;++f.scope_depth;break;}
+            if(f.scope_depth<64)f.elided_scopes&=~(std::uint64_t{1}<<f.scope_depth);++f.scope_depth;
+            auto env=activation(f.layout->scope_at[f.pc-1]);HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);break;}
         case Op::LeaveScope:case Op::Unwind: {
             auto count=op.op==Op::LeaveScope?1:op.argument;
-            for(std::size_t i=0;i<count;++i){if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;if(!env->deferred.empty())(co_await drain(env));frames_.back().environment=env->parent;}break;
+            for(std::size_t i=0;i<count;++i){
+                auto& top=frames_.back();if(top.scope_depth>0){--top.scope_depth;if(top.scope_depth<64&&(top.elided_scopes>>top.scope_depth)&1)continue;}
+                if(!frames_.back().environment->parent || frames_.back().environment==global_)invalid(s);auto env=frames_.back().environment;if(!env->deferred.empty())(co_await drain(env));frames_.back().environment=env->parent;}break;
         }
         case Op::LocateName: {
             if(op.text=="_"){stack_.emplace_back(Location{});break;}
             auto& b=lookup(f,op);if(!b.mutable_binding)runtime_error(s,"cannot mutate immutable binding or read-only view","E4007");
-            stack_.emplace_back(Location{&b.value,b.type,true,f.environment,{},{}});break;
+            stack_.emplace_back(LocalRef{&b,f.environment});break;
         }
         case Op::LocateField: {
             auto value=pop(s);auto object=materialize_record(value);
@@ -415,18 +445,28 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             auto index=pop(s),value=pop(s);if(op.op==Op::Index)stack_.emplace_back(index_value(value,index,s));else {auto l=index_location(std::move(value),std::move(index),s);if(!l.writable)runtime_error(s,"cannot mutate immutable binding or read-only view","E4007");stack_.emplace_back(std::move(l));}break;
         }
         case Op::Store: {
-            auto value=pop(s);if(stack_.empty() || !std::holds_alternative<Location>(stack_.back()))invalid(s);
-            if(stack_.size()<=f.base)invalid(s);
-            auto where=std::get<Location>(stack_.back());stack_.pop_back();
-            if(op.text!="=")value=binary_value(op.text.substr(0,op.text.size()-1),location_read(where,s),value,s,op.flag);
+            auto value=pop(s);if(stack_.size()<=f.base)invalid(s);
+            if(auto* local=std::get_if<LocalRef>(&stack_.back())){
+                // Same steps as the Location path below, without building a ValueLocation.
+                auto& b=*local->binding;
+                if(op.text.size()>1){const auto name=std::string_view(op.text).substr(0,op.text.size()-1);
+                    if(auto fast=fast_binary(name,b.value,value))value=std::move(*fast);else value=binary_value(name,b.value,value,s,op.flag);}
+                value=enforce_type(std::move(value),b.type,s,op.flag||op.text.size()>1);b.value=copy_value(value);
+                stack_.back()=std::move(value);break;
+            }
+            if(!std::holds_alternative<Location>(stack_.back()))invalid(s);
+            auto where=std::move(std::get<Location>(stack_.back()));stack_.pop_back();
+            if(op.text!="=")value=binary_value(std::string_view(op.text).substr(0,op.text.size()-1),location_read(where,s),value,s,op.flag);
             value=enforce_type(std::move(value),where.type,s,op.flag||op.text!="=");location_write(where,value,s);stack_.emplace_back(std::move(value));break;
         }
         case Op::MakeMulti:{auto values=arguments(op.argument,s);for(auto& v:values)v=copy_value(v);stack_.emplace_back(make_multi(std::move(values),op.contextual));break;}
-        case Op::BindMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto& cached=access(f).multi_types;if(!cached)cached=type_arguments(op.type,"multi");else HUA_PROFILE_COUNT(vm_multi_type_hits);const auto& types=*cached;if(types.size()!=values.size()||op.names.size()!=values.size())invalid(s);auto data=std::get<MultiValue>(pack.data).data;
+        case Op::BindMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto& cached=access(f).multi_types;if(!cached)cached=type_arguments(op.type,"multi");else HUA_PROFILE_COUNT(vm_multi_type_hits);const auto& types=*cached;if(types.size()!=values.size()||op.names.size()!=values.size())invalid(s);materialize_scope();auto data=std::get<MultiValue>(pack.data).data;
             for(std::size_t i=0;i<values.size();++i){values[i]=enforce_type(std::move(values[i]),types[i],s,i<data->contextual.size()&&data->contextual[i]);if(op.names[i]!="_"&&f.environment->own(op.names[i]))runtime_error(s,"duplicate runtime binding","E4001");}
             for(std::size_t i=0;i<values.size();++i)if(op.names[i]!="_"){auto item=op;item.text=op.names[i];item.type=types[i];bind(item,values[i]);}break;}
         case Op::StoreMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto data=std::get<MultiValue>(pack.data).data;std::vector<Location> ls(op.argument);
-            for(std::size_t i=op.argument;i>0;--i){if(stack_.size()<=f.base||!std::holds_alternative<Location>(stack_.back()))invalid(s);ls[i-1]=std::get<Location>(stack_.back());stack_.pop_back();}
+            for(std::size_t i=op.argument;i>0;--i){if(stack_.size()<=f.base)invalid(s);
+                if(auto* local=std::get_if<LocalRef>(&stack_.back()))ls[i-1]=Location{&local->binding->value,local->binding->type,true,local->owner,{},{}};
+                else if(auto* where=std::get_if<Location>(&stack_.back()))ls[i-1]=std::move(*where);else invalid(s);stack_.pop_back();}
             for(std::size_t i=0;i<values.size();++i)values[i]=copy_value(enforce_type(std::move(values[i]),ls[i].type,s,i<data->contextual.size()&&data->contextual[i]));
             prepare_map_writes(ls,s);for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i],s);break;}
         case Op::MakeMap:stack_.emplace_back(make_map(op.type,s));break;
@@ -522,12 +562,15 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             }
             if(!has){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;break;}
             if(it.index==std::numeric_limits<I>::max())it.done=true;else ++it.index;
-            auto env=activation(&f.layout->scopes.at(f.pc-1));HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);
-            Instruction binding=op;binding.flag=false;binding.type="int";
-            Value key(index);if(it.map){auto parts=unpack_multi(item,2,s);key=parts[0];item=op.names.size()==1?key:parts[1];binding.type="";}
-            if(op.names.size()==2){binding.text=op.names[0];bind(binding,key);}
+            if(f.scope_depth<64)f.elided_scopes&=~(std::uint64_t{1}<<f.scope_depth);++f.scope_depth;
+            auto env=activation(f.layout->scope_at[f.pc-1]);HUA_PROFILE_COUNT(vm_scopes);HUA_PROFILE_ADD(vm_scope_slot_bytes,env->slots.size()*sizeof(std::optional<Binding>));env->parent=f.environment;f.environment=std::move(env);
+            // Loop variables bind read-only: index/key first (int for sequences), then the item.
+            static const std::string int_type="int",inferred_type;
+            const std::string* key_type=&int_type;
+            Value key(index);if(it.map){auto parts=unpack_multi(item,2,s);key=parts[0];item=op.names.size()==1?key:parts[1];key_type=&inferred_type;}
+            if(op.names.size()==2)bind_named(op.names[0],*key_type,false,s,std::move(key));
             if(op.names.empty() || op.names.size()>2)invalid(s);
-            binding.text=op.names.back();binding.type="";bind(binding,std::move(item));break;
+            bind_named(op.names.back(),inferred_type,false,s,std::move(item));break;
         }
         case Op::IterEnd:if(f.iterators.empty())invalid(s);f.iterators.pop_back();break;
         case Op::Fail:runtime_error(s,op.text,op.type.empty()?"E4008":op.type);

@@ -30,7 +30,9 @@ struct VmSlotTestAccess {
         // The newest shape must displace a cold empty frame when capacity is full.
         // The former first-64 cache allocated all 1000 of these activations.
         for(unsigned i=0;i<1000;++i){auto activation=arena->acquire(&shapes.back(),arena);}
-        return arena->free.size()==64&&arena->work.created==65&&arena->work.reused==1000&&arena->work.active==0;
+        // Retired frames are kept per shape (at most 16 each), so cold shapes cannot starve a hot one.
+        for(const auto& shape:shapes)if(shape.spare.size()>16)return false;
+        return shapes.back().spare.size()==1&&arena->work.created==65&&arena->work.reused==1000&&arena->work.active==0;
     }
     static bool clears_unreachable_cycle(){
         ManagedHeap heap(256);HeapScope heap_scope(heap);

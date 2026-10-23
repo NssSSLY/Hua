@@ -12,7 +12,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 当前步骤 | P4第一项“摘要轮次按被调用方优先访问”已完成（2026-10-23，见0.2“P4-S1”）；F其余项与C阶段待做 |
+| 当前步骤 | 2026-10-23起按用户决定暂停自举线，做CPython对齐（见0.2“CPython对齐阶段”与9.6）；P1–P3已完成，Hua/CPython 3.1–7.6倍 |
 | 下一步 | 见0.3 |
 | 自举 | Windows（2026-10-23，P4-S1源码，另一台机器）：C2 207.8秒、C3 202.8秒、12.81亿步，C2=C3逐字节相同；600秒余量约65%。各次计时的机器与时段见0.2对应步骤，不跨机比较 |
 | compiler配置 | 已改为墙钟600秒为主，步数上限提高到1000亿（只防死循环），见0.2 步骤1 |
@@ -284,7 +284,47 @@ python perf/run_bench.py --hua tests/build/hua.exe --compare perf/results/win-ba
 
 **过程与旧基线上的诊断**（逐函数体步骤、来源流、超5亿步测量、已撤回的候选A）保存在分支 `bo11-capability-diagnostics-20261023` 的 `.codex-sync/knowledge/bootstrap-performance/` 下；本机运行记录见 [P4-S1记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-23-p4-s1-callee-first.md)。
 
+#### CPython对齐阶段（2026-10-23起，Windows本机）
+
+目标与分步见9.6。每步验收：`perf/ab_bench.py` 交替A/B（步数与 `.expect` 一致）、`perf/reference_bench.py` 同时段对照、72项CTest、宿主构建的C1编译自身得到的C2与已记录产物逐字节相同且步数不变。
+
+**P1（帧与绑定的小开销）**：`src/vm.cpp` 退休的激活按作用域形状各留最多16个备用（替代全局64项按形状线性查找）；`IterNext` 直接按名字绑定，不再为每次迭代复制336字节的Instruction；函数参数槽位在调用点布局缓存中预先算好；分发循环内联判断待处理的文件事件。对 `hua-d2f1.exe`（D2+F1构建）A/B：01_loop 1.02x、02_arith 1.45x、03_calls 1.07x、04 1.05x、05 1.12x、06 1.10x、07 1.06x、08 1.01x、09 1.04x。`vm_slots` 的有界复用测试改为检查同一性质（每形状≤16、热形状不被冷形状挤占）。
+
+**P2（空作用域省略）**：剖析01_loop每轮11条指令中有一对空的ENTER_SCOPE/LEAVE_SCOPE。加载时（`code_layout`）标出“作用域布局不声明任何名字、且函数体内没有Defer”的EnterScope；执行时这类作用域只记一位（帧内 `scope_depth`/`elided_scopes`，64层以内），不创建Environment；LeaveScope/Unwind仍按原数量逐层弹出逻辑作用域。若运行时仍有布局未预测到的绑定落在被省略的作用域里（例如 `vm_slots` 的dictionary_fallback），`bind_named`/BindMulti先补建该层Environment，名字可见性与生命周期与原来一致。同时把每次EnterScope/IterNext的 `std::map` 查找改为按指令下标的指针表。字节码、HUAB与步数不变。
+
+| 基准 | P2/P1 A/B | Hua/CPython（P2，同时段） | Hua/Lua |
+|---|---:|---:|---:|
+| 01_loop | 1.40x | 3.90x | 16.8x |
+| 02_arith | 1.01x | 3.79x | 18.9x |
+| 03_calls | 1.04x | 4.84x | 12.5x |
+| 04_struct_pass | 1.00x（11次复测；5次时0.89x为噪声） | 3.78x | 4.4x |
+| 05_map_ops | 1.04x | 3.21x | 3.3x |
+| 06_map_merge | 1.08x | 9.12x | 8.7x |
+| 07_strings | 1.04x | 5.27x | 2.5x |
+
+结果文件 `perf/results/win-parity-p2-ab.json`、`win-reference-parity-p2.json`。72项CTest：并行（-j 8）首轮 `capability_c04`、`capability_prepared_supervisor`、`bytecode_verifier_metadata` 失败，删除旧 `tests/build/a07-c04/analyzer.huab` 后单独重跑三项全部通过（属既有的产物缓存与并行负载时限问题），其余69项通过。自举回归：宿主构建C1后编译当前 `selfhost/archive_main.hua`，C2为4,195,418字节、回执CRC32 3424058752（与0.2“P4-S1”记录的C2=C3产物一致），1,281,255,218步、peak_calls 52（步数与记录相同）；本机墙钟298.3秒（与另一台机器的207.8秒不可比）。
+
+**P3（局部变量轻量位置）**：操作数栈项增加 `LocalRef`（绑定指针＋所属Environment，24字节），`LocateName` 不再构造400字节的ValueLocation、不再复制类型字符串；`Store` 对 `LocalRef` 直接在绑定上做复合运算（整数先走 `fast_binary`）、`enforce_type` 后写回，步骤与原ValueLocation路径相同；`StoreMulti` 遇到 `LocalRef` 时转换为原ValueLocation。字段/下标位置仍走ValueLocation，但从栈上取出时改为移动而非复制。所属Environment仍随栈项保活，`vm_slots` 的“离开作用域后写入旧位置”用例行为不变。字节码、HUAB与步数不变。
+
+| 基准 | P3/P2 A/B | Hua/CPython（P3，同时段） | Hua/Lua |
+|---|---:|---:|---:|
+| 01_loop | 1.18x | 3.50x | 13.7x |
+| 02_arith | 1.06x | 3.52x | 17.4x |
+| 03_calls | 1.05x | 4.93x | 13.7x |
+| 04_struct_pass | 0.97x／0.98x（7次／11次，两次都略慢；该基准此前也测出0.89x噪声，判为持平边缘） | 3.66x | 4.5x |
+| 05_map_ops | 0.94x→复测1.02x（11次） | 3.09x | 3.1x |
+| 06_map_merge | 1.00x | 7.57x | 8.6x |
+| 07_strings | 1.00x | 4.81x | 2.3x |
+| 08_real_type_rules | 1.08x | — | — |
+| 09_real_ast_pool | 1.01x | — | — |
+
+结果文件 `perf/results/win-parity-p3-ab.json`、`win-reference-parity-p3.json`。72项CTest：并行（-j 4）首轮70项通过，`capability_c04`（177秒）与 `task_resume_public` 失败，单独重跑均通过（与P2相同的并行负载现象）。自举回归：P3构建的C1编译自身得到的C2与P2逐字节相同（4,195,418字节、回执CRC32 3424058752），1,281,255,218步不变。首次单跑墙钟343.2秒（P2单跑298.3秒）；随后用同一份C1交替计时 P2/P3/P2/P3 为341.3/321.5/300.2/295.7秒，P3每对都更快（-5.8%、-1.5%），单跑差异来自机器状态。
+
 ### 0.3 下一步
+
+**2026-10-23用户调整优先级**：暂停自举线（C04/selfhost改造与C09/G3验收），先做通用VM性能，目标是微基准赶上CPython量级（`perf/reference_bench.py` 同机同时段，每个基准 Hua/CPython ≤2倍，进一步≤1倍）；达到后转入补标准库。自举只作为回归检查（产物逐字节相同、步数不变）。具体分步见下方“CPython对齐阶段”记录与第9.6节。
+
+原第0.3节内容（暂停，保留供恢复自举线时参考）：
 
 1. 已完成：C04误报修复、Windows完整CTest回归、Windows微基准基线、步骤3a、第9节A/B阶段、D2（GC机制）、F1（结构相等）、Lua参照、P4-S1（被调用方优先调度，见上）。另列：宿主前端检查自举源码过慢导致的测试超时（HUA-D036）。
 2. **建议下一步**：F其余项（`std.map` 原生合并/包含——旧基线上写过接口提案，保存在分支 `bo11-capability-diagnostics-20261023` 的 `designs/2026-10-23-s2-native-map-primitives.md`，F1已覆盖其中“相等”，需在当前代码上重估；`strings.cut_once`，C04来源整数化）与C阶段（不可变共享字符串、16字节Value）——C04阶段的复制（约30%）与长字符串分配仍是最大成本；GC若要再降需决定是否允许“无环对象不入环检测”改变 `std.gc.collect()` 计数。
@@ -608,3 +648,17 @@ Parser负载（现有1.27亿步、普通CPU约26.6秒）作为真实回归：HUA
 | map迭代顺序 | 语言合同已写“顺序无承诺”，改哈希表不改合同；如希望稳定顺序可用插入序哈希表（略慢） | C |
 | Windows分配器（HUA-D035） | 可先引入作为临时提速（预计1.2–1.4倍），但它是新依赖；C/D完成后可再评估是否保留 | 任意 |
 | 寄存器VM/JIT | 等E/F完成、有本机Lua/CPython参照后再决定 | G |
+
+### 9.6 CPython对齐路线（2026-10-23，用户调整优先级后）
+
+目标：`perf/reference` 同算法微基准上每项 Hua/CPython ≤2倍，再争取≤1倍；之后转入补标准库。约束不变：语义、HUAB、步数不变，自举产物逐字节相同。起点（B阶段构建）3.9–9.6倍；P2后3.2–9.1倍；P3后3.1–7.6倍（06_map_merge的同时段CPython时间波动较大）。
+
+剩余差距的来源（剖析01_loop/02_arith）：CPython每轮约4条字节码，Hua约9–11条，且每条要搬运144字节Value、400字节ValueLocation，局部变量按名字走Environment。因此只靠修补分发不够，必须做9.2的C/E两阶段的核心部分。顺序（每步独立验收、可单独回退）：
+
+1. **P3 轻量位置**（2026-10-23完成）：实测01_loop 1.18x、02_arith 1.06x，低于预估的1.3–1.6倍——剩余成本在名字查找、Value复制与指令数，需P4/P5解决。
+2. **P4 加载与常量复制**：Load/Constant对int/bool/float不走通用 `copy_value`，栈项直接构造；预计调用与算术类1.2倍。
+3. **P5 槽位化局部变量（9.2 E1）**：加载时把非捕获局部变量解析为帧内槽位，Load/Store为数组下标；Environment只给被闭包捕获或动态回退的作用域。预计循环/算术类1.5–2倍，是达到≤2倍的关键一步。
+4. **P6 紧凑Value与共享字符串（9.2 C）**：Value压到16字节、字符串不可变共享；影响面最大，单独分支做，预计全部基准1.5–2倍、06/07收益最大。
+5. **P7 紧凑指令（9.2 E4）**：热字段16–32字节，文本/源位置进旁表。
+
+06_map_merge（9倍）主要成本在map红黑树与复制，归入P6与map哈希化（HUA-D004，迭代顺序合同见9.5）。每步完成后在0.2“CPython对齐阶段”追加结论行。
