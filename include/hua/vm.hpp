@@ -68,9 +68,12 @@ private:
     std::shared_ptr<FrameArena> frame_arena_;
     std::shared_ptr<Environment> activation(const ScopeLayout* shape){if(!frame_arena_)frame_arena_=std::make_shared<FrameArena>();return frame_arena_->acquire(shape,frame_arena_);}
     using Location = ValueLocation;
-    // A local variable's assignment target: the binding plus the environment that owns it
-    // (kept alive across LeaveScope like ValueLocation::owner); type is read from the binding.
-    struct LocalRef { Binding* binding{}; std::shared_ptr<Environment> owner; };
+    // A local variable's assignment target; type is read from the binding. No owner lease:
+    // LocateName resolves through the frame's current environment chain, and the binding's
+    // scope encloses the assignment, so that chain keeps it alive until Store/StoreMulti
+    // consumes the entry (inner scopes entered by the right-hand side are left first; a late
+    // binding only adds a child environment; Unwind/errors discard the entry unread).
+    struct LocalRef { Binding* binding{}; };
     using Entry = std::variant<Value, Location, LocalRef>;
     struct Iterator {
         bool range{}, inclusive{}, done{};
@@ -121,6 +124,12 @@ private:
         // environment; LeaveScope/Unwind still pop the same number of logical scopes.
         std::uint32_t scope_depth{};
         std::uint64_t elided_scopes{};
+        // Calls from dispatch point at the call instruction's span inside the loaded
+        // bytecode (as stable as `code`) instead of copying its file path; other entries
+        // keep the owned `site`. The callee layout is cached so returns skip the lookup.
+        const SourceSpan* site_ref{};
+        const FunctionLayout* callee{};
+        const SourceSpan& site_span() const {return site_ref?*site_ref:site;}
     };
     struct ParameterLayout { std::string name,type;bool mutable_view{}; };
     struct FunctionLayout { std::string name;std::vector<ParameterLayout> parameters;std::vector<std::string> returns;bool external{},unsafe{}; };

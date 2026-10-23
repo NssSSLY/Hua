@@ -4,7 +4,7 @@
 
 | 次序 | 待办 | 验收 |
 |---|---|---|
-| **当前/最高** | CPython对齐（用户2026-10-23决定，暂停自举线）：P1–P4已完成；下一步调用路径→P5槽位化局部变量→P6 16字节Value/共享字符串→P7紧凑指令（docs/VM与自举性能改造分析.md 9.6） | reference_bench每项Hua/CPython≤2倍（再≤1倍）；ab_bench无退化、步数不变；72项CTest；C1编译自身得C2逐字节相同 |
+| **当前/最高** | CPython对齐（用户2026-10-23决定，暂停自举线）：P1–P4、调用路径（03_calls 1.15x）、分发循环瘦身（01 1.09x、02 1.04x，仅LocalRef去owner保留）已完成；P7实施前剖析显示收益约微基准5–10%、真实负载2–3%（取指在L1内；真实负载以Windows堆分配22.7%、复制、GC为主），未实施；P5实施前剖析显示其收益约5–18%（01/02），逐指令分发开销（40–50%）与Value variant成本（约17%）更大，顺序待用户决定（docs/VM与自举性能改造分析.md 9.6）；原计划P5→P6 16字节Value/共享字符串→P7紧凑指令（docs/VM与自举性能改造分析.md 9.6） | reference_bench每项Hua/CPython≤2倍（再≤1倍）；ab_bench无退化、步数不变；72项CTest；C1编译自身得C2逐字节相同 |
 | 之后 | 补标准库（CPython对齐达标后） | 按docs/标准库设计与实现路线.md |
 | 暂停 | 性能F其余项：std.map原生合并/包含（旧基线上的接口提案在分支bo11-capability-diagnostics-20261023，F1已覆盖“相等”，需在当前代码重估）、strings.cut_once、C04来源路径整数化（HUA-D028/D008相关）；P4-S1已完成 | 完整自举步数下降；改编译器源码后C2=C3逐字节相同；AST/VM/HUAB三路径对照；72项CTest |
 | P0/高 | 性能C阶段：不可变共享字符串、16字节Value、非原子引用计数（线程边界先核对）、map哈希化（HUA-D004） | 分配/步明显下降（当前完整自举约1次/步）；ab_bench无退化；完整自举产物逐字节相同 |
@@ -13,7 +13,7 @@
 | P2 | HUA-D037：3项既有断言（selfhost_ast_pool E4007/E4099、frontend_extended E8201@14:11、lowering capability_passes上限）；archives_extensions“第16字节写0”变异在部分机器上是空操作 | 逐项判断测试过期还是实现回归并修复 |
 | P1 | C09覆盖/兼容、正式C08/C10脚本验收、A12/B10、G1–G3 | 按设计决策原路线 |
 | 待决定 | GC计数合同（无环对象不入环检测会改变std.gc.collect()计数） | 用户确认后才做 |
-| 待决定 | Windows分配器（HUA-D035，是否引入mimalloc等新依赖） | 用户确认后才做 |
+| 待决定 | Windows分配器（HUA-D035）：2026-10-23剖析与对比方案已完成（Segment Heap清单实测自举-4.7%；减少分配以struct写时复制收益最大；mimalloc暂不引入），见knowledge/bootstrap-performance/designs/2026-10-23-heap-allocation-options.md | 用户选择方案后才做 |
 | 待决定 | 性能路线9.5节：非原子引用计数、寄存器VM/JIT时机 | 用户确认后才做 |
 
 已完成项与数据见CURRENT_STATE.md与性能日志第0.2节，不在此重复。提交/推送需用户明确要求。
@@ -22,4 +22,8 @@
 - 性能C阶段：共享字符串、16字节Value、map哈希化
 - HUA-D036宿主前端过慢导致的测试时限；HUA-D037三项既有断言
 
-- User reviews diff; then commit; next F remaining items and C stage
+- P5槽位化局部变量；激活环境寿命证明或侵入式计数
+
+- 用户决定下一项：P7紧凑指令、P6紧凑Value、或for循环作用域环境
+
+- 用户选择HUA-D035方案；候选：A清单、C4多返回值不经堆、C3 map查找不复制键、C1 struct写时复制
