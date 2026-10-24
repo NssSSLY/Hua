@@ -264,6 +264,7 @@ parallel for支持独立数组计算，最多8线程块；simd for为受检查�
 hua run .\examples\hello.hua
 hua build .\examples\hello.hua -o .\tests\build\hello.huab
 hua run .\tests\build\hello.huab
+hua test .\examples\hello.hua   # 运行文件中的 @test 函数（无则输出 0 passed, 0 failed）
 code --install-extension .\tests\build\hua-language-0.1.0.vsix
 ```
 

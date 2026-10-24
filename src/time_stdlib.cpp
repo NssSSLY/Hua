@@ -127,6 +127,8 @@ Value parse_duration(const std::string& original){
 }
 }
 
+std::string format_rfc3339_utc(std::int64_t ms){return rfc3339(ms,"Z");}
+
 // std.time additions (since 15): one-call operations dispatched before the
 // generic argument checks, so they validate argument kinds themselves.
 Value invoke_time_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s){

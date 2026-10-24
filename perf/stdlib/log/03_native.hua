@@ -1,0 +1,10 @@
+# 结构日志：原生log.with_fields（logfmt格式化与stderr写入在宿主内完成）
+import std.log as log
+fn main() {
+    var lines = 0
+    for i in 0..100000 {
+        log.with_fields("info", "request done", map[string]string{"id": str(i), "path": "/api/items"})
+        lines += 1
+    }
+    print(lines, true)
+}

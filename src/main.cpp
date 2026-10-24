@@ -27,10 +27,56 @@ void usage(std::ostream& out) {
         << "       hua run <file.hua|file.huab> [--execution-profile default|compiler] [--report-budget] [-- args...]\n"
         << "       hua interpret <file.hua> [--execution-profile default|compiler] [--report-budget] [-- args...]\n"
         << "       hua bytecode <file.hua|file.huab>\n"
-        << "       hua build <file.hua> [-o file.huab]\n";
+        << "       hua build <file.hua> [-o file.huab]\n"
+        << "       hua test <file.hua> [--filter text]\n";
 }
 int usage_error() { std::cerr<<"error[E0004]: invalid command arguments\n";usage(std::cerr);return 2; }
+// hua test (2026-10-24): runs each top-level @test function of a source file, in
+// source order, as the entry of a fresh VM and execution context (module state is
+// initialized again for every test). Report on stdout; exit 0 only if all pass.
+int run_tests(const std::vector<std::string>& args) {
+    std::string filter;
+    if(args.size()==5&&args[3]=="--filter")filter=args[4];
+    else if(args.size()!=3)return usage_error();
+    auto path=std::filesystem::path(std::u8string(args[2].begin(),args[2].end()));
+    if(path.extension()!=".hua"){std::cerr<<"error[E0004]: hua test requires a .hua source file\n";return 2;}
+    hua::ModuleLoader loader;
+    std::vector<std::pair<std::string,hua::SourceSpan>> tests;
+    std::unique_ptr<hua::SemanticModel> model;std::unique_ptr<hua::Bytecode> bytecode;
+    try{
+        const auto& tree=loader.load(path);
+        model=std::make_unique<hua::SemanticModel>(hua::SemanticAnalyzer{}.analyze(tree,loader.externals()));
+        bytecode=std::make_unique<hua::Bytecode>(hua::BytecodeCompiler{}.compile(tree,*model));
+        for(const auto& n:tree.children)if(n->kind==hua::NodeKind::Function&&n->text.find(" @test")!=std::string::npos){
+            auto name=hua::declared_name(*n);if(name.find(filter)!=std::string::npos)tests.emplace_back(name,n->span);
+        }
+    }catch(const hua::Diagnostic& error){
+        if(const auto* origin=loader.source(error.span().file_id))std::cerr<<error.render(*origin);
+        else std::cerr<<"error["<<error.code()<<"]: "<<error.what()<<'\n';
+        return hua::diagnostic_exit_code(error.code());
+    }
+    std::size_t passed=0,failed=0;
+    for(const auto& [name,span]:tests){
+        std::string failure;
+        try{
+            hua::reset_report_state();
+            hua::RuntimeContext context;context.input=&std::cin;context.working_directory=std::filesystem::current_path();
+            hua::VirtualMachine vm(*model,std::cout,&context);vm.set_entry(name);
+            auto result=vm.run(*bytecode);
+            if(result.exit_code){failure=result.message;if(failure.rfind("main returned Err: ",0)==0)failure="returned Err: "+failure.substr(19);}
+        }catch(const hua::Diagnostic& error){
+            failure=error.code()+": "+error.what();
+            if(!error.span().file_id.empty())failure+=" ("+error.span().file_id+":"+std::to_string(error.span().line)+":"+std::to_string(error.span().column)+")";
+        }catch(const hua::ProgramExit& exit){failure="test called os.exit("+std::to_string(exit.code)+")";}
+        std::cout.flush();
+        if(failure.empty()){++passed;std::cout<<"PASS "<<name<<'\n';}
+        else{++failed;std::cout<<"FAIL "<<name<<": "<<failure<<'\n';}
+    }
+    std::cout<<passed<<" passed, "<<failed<<" failed\n";
+    return failed?1:0;
+}
 int cli(const std::vector<std::string>& args) {
+    if(args.size()>=3&&args[1]=="test")return run_tests(args);
     if (args.size() == 2 && (args[1] == "version" || args[1] == "--version")) {
         std::cout << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
     }

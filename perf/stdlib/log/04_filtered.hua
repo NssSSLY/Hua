@@ -1,0 +1,11 @@
+# 结构日志：低于set_level的调用被过滤（不格式化、不写）
+import std.log as log
+fn main() {
+    log.set_level("warn")
+    var lines = 0
+    for i in 0..1000000 {
+        log.debug("request done")
+        lines += 1
+    }
+    print(lines, true)
+}

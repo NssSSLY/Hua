@@ -54,3 +54,5 @@
 - async main body runs as a task, so os.exit there is E4104 under X3
 
 - Replaced CopyFileExW with exclusive create plus streamed copy (CopyFileExW was slower than manual read/write)
+
+- test/log按T1-T7推荐定稿（2026-10-24）

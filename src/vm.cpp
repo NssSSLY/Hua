@@ -297,7 +297,7 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
     std::exception_ptr error;Value returned;SourceSpan entry_span;
     try{
         frames_.push_back({&bytecode.initializer,nullptr,0,0,{},global_,{},&initial_layout});(co_await dispatch());
-        if(auto main=model_.functions.find("main");main!=model_.functions.end()){
+        if(auto main=model_.functions.find(entry_name_);main!=model_.functions.end()){
             entry_span=main->second->span;completed_.reset();
             Instruction site{};site.span=entry_span;(co_await call(Callable{main->second,"",{}},{},site));if(frames_.empty())stack_.clear();else (co_await dispatch());
             if(completed_)returned=std::move(*completed_);

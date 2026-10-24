@@ -94,7 +94,7 @@ NodePtr Parser::statement() {
         std::vector<std::string> attributes;
         while(accept(K::At)) {
             auto name=expect(K::Identifier,"expected attribute name");std::string value=name.text;
-            if(value!="deprecated"&&value!="doc"&&value!="inline"&&value!="noinline"&&value!="entry")fail(name,"unsupported attribute `"+value+"`","E2002");
+            if(value!="deprecated"&&value!="doc"&&value!="inline"&&value!="noinline"&&value!="entry"&&value!="test")fail(name,"unsupported attribute `"+value+"`","E2002");
             if(accept(K::LParen)){auto argument=expect(K::String,"attribute argument must be a string");if(name.text!="deprecated"&&name.text!="doc")fail(name,"attribute takes no arguments","E2002");value+="=";for(unsigned char c:argument.text){constexpr char hex[]="0123456789abcdef";value+=hex[c>>4];value+=hex[c&15];}expect(K::RParen,"expected ) after attribute");}
             else if(value=="deprecated"||value=="doc")fail(name,"attribute requires a string argument","E2002");
             for(const auto& old:attributes)if(old.substr(0,old.find('='))==name.text)fail(name,"duplicate attribute","E2002");
@@ -102,7 +102,7 @@ NodePtr Parser::statement() {
         }
         bool pub=accept(K::Pub);
         if(accept(K::Async)){node=function(pub,false);node->text+=" async";}else if(at(K::Fn))node=function(pub,false);else if(at(K::Struct))node=structure(pub);else fail(peek(),"attributes require a function or struct declaration","E2002");
-        for(const auto& attribute:attributes){if(node->kind!=N::Function&&(attribute=="inline"||attribute=="noinline"||attribute=="entry"))fail(peek(),"function attribute used on a struct","E2002");node->text+=" @"+attribute;}
+        for(const auto& attribute:attributes){if(node->kind!=N::Function&&(attribute=="inline"||attribute=="noinline"||attribute=="entry"||attribute=="test"))fail(peek(),"function attribute used on a struct","E2002");node->text+=" @"+attribute;}
         if(node->text.find(" @inline")!=std::string::npos&&node->text.find(" @noinline")!=std::string::npos)fail(peek(),"conflicting inline attributes","E2002");
     }
     else if (at(K::Let) || at(K::Var) || at(K::Const)) node = variable();

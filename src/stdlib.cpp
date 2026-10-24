@@ -142,6 +142,17 @@ const std::vector<StandardFunction>& standard_functions() {
         {"fs","copy_dir",{"string","string"},"Result<int,string>",false,false,17},
         {"fs","remove_all",{"string"},"Result<int,string>",false,false,17},
         {"fs","canonical",{"string"},"Result<string,string>",false,false,17},
+        {"io","write_err",{"string"},"Result<int,string>",false,false,18},
+        {"test","assert",{"bool","string"},"void",false,false,18},
+        {"test","equal",{"",""},"void",false,false,18},
+        {"test","not_equal",{"",""},"void",false,false,18},
+        {"test","fail",{"string"},"void",false,false,18},
+        {"log","debug",{"string"},"void",false,false,18},
+        {"log","info",{"string"},"void",false,false,18},
+        {"log","warn",{"string"},"void",false,false,18},
+        {"log","error",{"string"},"void",false,false,18},
+        {"log","with_fields",{"string","string","map<string,string>"},"void",false,false,18},
+        {"log","set_level",{"string"},"void",false,false,18},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -342,6 +353,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.since>=14&&f.module=="deque")return invoke_deque_standard(f,input,s);
     if(f.since>=15&&f.module=="time")return invoke_time_standard(f,input,s);
     if(f.since>=16&&f.module=="os")return invoke_os_standard(f,input,s,context);
+    if(f.since>=18&&(f.module=="io"||f.module=="test"||f.module=="log"))return invoke_report_standard(f,input,s);
     if(f.since>=14&&f.module=="heap"&&!f.callback)return invoke_heap_standard(f,input,s);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.

@@ -18,6 +18,8 @@ class VirtualMachine {
 public:
     VirtualMachine(const SemanticModel& model, std::ostream& output, RuntimeContext* context = nullptr, VMCallObserver* observer = nullptr) : observer_(observer), model_(model), output_(output), context_(context) {}
     EntryResult run(const Bytecode& bytecode);
+    // Entry function name for run (hua test runs each @test function this way).
+    void set_entry(std::string name){entry_name_=std::move(name);}
 private:
     friend struct VmSlotTestAccess;
     VMCallObserver* observer_{};
@@ -155,6 +157,7 @@ private:
     std::vector<Entry> stack_;
     std::vector<Frame> frames_;
     std::size_t steps_{};
+    std::string entry_name_{"main"};
     std::optional<Value> completed_;
     Value pop(const SourceSpan& span);
     std::vector<Value> arguments(std::size_t count, const SourceSpan& span);

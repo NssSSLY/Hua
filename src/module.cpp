@@ -137,13 +137,18 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
         error(module.tree->span,"import namespace conflicts with declaration `"+name+"`","E5004");
     loading_.pop_back();module.state=Module::State::Loaded;ordered_.push_back(&module);return module;
 }
+// Registry types are canonical (map<K,V>); the generated declaration text needs source syntax.
+static std::string source_type(const std::string& type){
+    auto kv=type_arguments(type,"map");
+    return kv.size()==2?"map["+source_type(kv[0])+"]"+source_type(kv[1]):type;
+}
 ModuleLoader::Module& ModuleLoader::standard(const std::string& name,const SourceSpan& site) {
     auto id="builtin:"+name;if(auto found=cache_.find(id);found!=cache_.end())return *found->second;
     if(!standard_module(name))error(site,"unknown standard module `"+name+"`");
     if(modules_.size()>=128)error(site,"module graph limit exceeded","E5005");
     auto owned=std::make_unique<Module>();owned->standard=true;owned->state=Module::State::Loaded;
     std::string text="# built-in standard interface; implemented by the shared runtime\n";
-    for(const auto& f:standard_functions())if(name=="std."+f.module){text+="pub fn "+f.name+"(";for(std::size_t i=0;i<f.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i);if(!f.parameters[i].empty())text+=" "+f.parameters[i];}text+=") "+f.result+" {}\n";owned->globals.emplace(f.name,"$core$"+standard_name(f));}
+    for(const auto& f:standard_functions())if(name=="std."+f.module){text+="pub fn "+f.name+"(";for(std::size_t i=0;i<f.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i);if(!f.parameters[i].empty())text+=" "+source_type(f.parameters[i]);}text+=") "+f.result+" {}\n";owned->globals.emplace(f.name,"$core$"+standard_name(f));}
     if(name=="std.file"){text+="pub struct File {}\npub struct IOFailure {}\n";owned->globals.emplace("File","std.file.File");owned->globals.emplace("IOFailure","std.file.IOFailure");}
     if(name=="std.random"){text+="pub struct Rng {}\n";owned->globals.emplace("Rng","std.random.Rng");}
     if(name=="std.error"){text+="pub struct Value {}\n";owned->globals.emplace("Value","std.error.Value");}

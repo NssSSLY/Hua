@@ -183,6 +183,13 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
     for(const auto& n:program.children) {
         if(n->kind==N::Function) {
             auto name=declared_name(*n);define(name,{"fn:"+name,false,false,{}},n->span);model_.functions.emplace(name,n.get());
+            // hua test runs @test functions as zero-argument entries (2026-10-24).
+            if(n->text.find(" @test")!=std::string::npos){
+                if(!parameters(*n).empty())error(*n,"@test functions take no parameters","E3004");
+                auto result=result_type(*n);
+                if(n->text.find(" async")!=std::string::npos||!(result.empty()||result=="void"||type_arguments(result,"Result").size()==2&&type_arguments(result,"Result")[0]=="void"))
+                    error(*n,"@test functions return void or Result<void,E> and are not async","E3004");
+            }
         } else if(n->kind==N::Struct) {
             auto name=declared_name(*n);if(name=="Json"||name=="Bytes"||name=="Buffer"||name=="List"||name=="Deque")error(*n,"reserved standard value type","E3002");define(name,{"struct:"+name,false,false,{}},n->span);model_.structures.emplace(name,n.get());
         }
@@ -363,6 +370,7 @@ void SemanticAnalyzer::statement(const Node& n) {
     case N::Import:{auto name=n.children.empty()?n.text.substr(0,n.text.find('.')):n.children[0]->text;define(name,{"module",false,false,{}},n.span);break;}
     case N::Function: {
         auto name=declared_name(n);model_.functions.emplace(name,&n);model_.nested[&n]=true;
+        if(n.text.find(" @test")!=std::string::npos)error(n,"@test functions must be top-level","E3004");
         define(name,{"fn:"+name,false,false,{}},n.span);
         auto outer=current_function_;auto saved=HUA_SEMA_SNAPSHOT(scopes_,closure);auto previous_return=pending_return_;auto previous_effects=pending_effects_;auto previous_exits=std::move(exit_views_);auto previous_roots=std::move(effect_roots_);bool previous_seen=saw_return_;pending_return_={};pending_effects_={};effect_roots_.clear();exit_views_.clear();saw_return_=false;current_function_=&n;
         // Closures capture readonly snapshots at declaration, rather than dangling stack environments.
@@ -636,6 +644,8 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                     else if(type_arguments(types[0],"List").size()!=1)error(n,"expected List<T>","E3004");
                     else if(f->name=="sort"){auto e=type_arguments(types[0],"List")[0];if(e!="int"&&e!="float"&&e!="string")error(n,"list.sort requires int/float/string elements","E3004");}
                 }
+                if(f->module=="test"&&(f->name=="equal"||f->name=="not_equal")&&!types[0].empty()&&!types[1].empty()&&!compatible(types[0],types[1])&&!compatible(types[1],types[0]))
+                    error(*n.children[2],"test.equal/not_equal require values of the same type","E3004");
                 if(f->module=="deque"&&!types[0].empty()){
                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
                     else if(type_arguments(types[0],"Deque").size()!=1)error(*n.children[1],"expected Deque<T>","E3004");

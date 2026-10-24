@@ -31,6 +31,9 @@ Value invoke_binary_standard(const StandardFunction& function,const std::vector<
 Value invoke_text_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_collection_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 std::int64_t monotonic_now_ns(const SourceSpan& span);
+std::string format_rfc3339_utc(std::int64_t ms);
+void reset_report_state();
+Value invoke_report_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_os_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 Value invoke_time_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_deque_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);

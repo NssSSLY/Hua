@@ -1,0 +1,19 @@
+# 结构日志：手写logfmt格式化（时间戳＋级别＋转义＋字段），写入Buffer（原生log对照见03）
+import std.time as time
+import std.strings as strings
+import std.buffer as buffer
+fn quote(v string) string {
+    if strings.contains(v, " ") || strings.contains(v, "=") || strings.contains(v, "\"") {
+        return "\"" + strings.replace(strings.replace(v, "\\", "\\\\"), "\"", "\\\"") + "\""
+    }
+    return v
+}
+fn main() {
+    var out = buffer.new()
+    var lines = 0
+    for i in 0..100000 {
+        buffer.write_str(out, "ts=" + time.format_rfc3339(time.unix_ms()) + " level=info msg=" + quote("request done") + " id=" + str(i) + " path=" + quote("/api/items") + "\n")
+        lines += 1
+    }
+    print(lines, buffer.len(out) > 0)
+}
