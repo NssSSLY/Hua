@@ -35,12 +35,12 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 唯一下一步
 
-**下一项：HUA-D038第5步——collections（Deque、Heap/优先队列）、Duration与UTC日期、os exit/平台、fs walk/copy、test/log；先选第一组写精确接口提案给用户审，审定后才实施。** 不推进自举（用户2026-10-23决定）。
+**下一项：HUA-D038第5步第二组——Duration与UTC日期（std.time扩展）的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。之后按定稿顺序：os exit/平台 → fs walk/copy → test/log。
 
-- 已完成（2026-10-24）：切片2（HUAB10）、L0-1回调（HUAB11）、math/encoding（HUAB12，35b19c6，均已推送）；std.random与std.crypto（HUAB13，已提交推送），结果见docs/标准库设计与实现路线.md“第4步后半random/crypto结果”。
-- 第5步范围见docs/标准库设计与实现路线.md“建议执行顺序”第5条与对齐清单std.collections/std.time/std.os/std.fs/test行；Deque/Heap需要新句柄（可参照本步`RngValue`的接入清单）或基于List的函数，提案中定。
-- 实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项交替计时复核）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
-- 经验：新模块若是轻量标准调用，在`invoke_standard`入口早分派并自行检查实参，避免通用参数检查的类型串开销；新判断不要放在每次标准调用热路径；内部改动A/B实测才保留；机器负载会使单次测量偏高，可疑项交替复测。
+- 已完成（2026-10-24）：切片2（HUAB10）、L0-1回调（HUAB11）、math/encoding（HUAB12）、random/crypto（HUAB13，de8cb48，均已推送）；第5步第一组std.deque/std.heap（HUAB14，已提交推送），结果见docs/标准库设计与实现路线.md“第5步第一组Deque/Heap结果”。
+- 现有std.time只有2个函数（单调计时与现实时间），见docs/标准库与内建接口.md“std.time”；Duration若做成新类型，可参照`RngValue`（非泛型句柄）或纯int纳秒/毫秒约定，提案中定。
+- 实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项交替计时，必要时加同一base二进制两份对照）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 经验：轻量标准调用在`invoke_standard`入口早分派；新增Value变体要同步`gc_cost`计数数组（已加`static_assert`）；构建间存在约±7%的代码布局波动，判定退化前用多份二进制交替复测。
 
 ## 待用户决定
 

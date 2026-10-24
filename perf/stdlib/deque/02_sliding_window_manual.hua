@@ -1,0 +1,25 @@
+# 滑动窗口最大值：手写List加头下标（原生deque对照见04）
+import std.list as list
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    var x = 1
+    for i in 0..100000 {
+        x = (x * 1103515245 + 12345) % 2147483648
+        unwrap(list.append(src, x % 100000))
+    }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..3 {
+        var q = list.from_slice(empty)
+        var head = 0
+        for i in 0..len(xs) {
+            let v = xs[i]
+            while list.len(q) > head && xs[unwrap(list.get(q, list.len(q) - 1))] <= v { unwrap(list.pop(q)) }
+            unwrap(list.append(q, i))
+            if unwrap(list.get(q, head)) <= i - 50 { head += 1 }
+            if i >= 49 { total += xs[unwrap(list.get(q, head))] }
+        }
+    }
+    print(total)
+}

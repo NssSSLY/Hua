@@ -125,7 +125,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
             if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
             else {try{auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}catch(const Diagnostic& error){auto reported=error;reported.add_context(n->span,"imported from");throw reported;}}
         }else {
-            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
+            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Deque"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
             if(n->kind==N::MultiBinding){for(const auto& p:n->children[0]->children)if(p->text!="_")module.globals.emplace(p->text,module.prefix+p->text);}
             if(n->kind==N::Function || n->kind==N::Struct || n->kind==N::Let || n->kind==N::Var || n->kind==N::Const) {
                 auto name=declared_name(*n);module.globals.emplace(name,module.prefix+name);
@@ -205,7 +205,7 @@ NodePtr ModuleLoader::link(Module& module) {
         if(n.kind==N::MultiAssignment) {
             auto list=std::make_unique<Node>(N::BindingList,n.children[0]->span);for(const auto& t:n.children[0]->children)list->add(t->kind==N::Name&&t->text=="_"?std::make_unique<Node>(N::Name,t->span,"_"):rewrite(*t,false));out->add(std::move(list));out->add(rewrite(*n.children[1],false));return out;
         }
-        if(n.kind==N::TypeName || n.kind==N::StructLiteral || (n.kind==N::GenericType&&n.text!="map"&&n.text!="Result"&&n.text!="List"&&n.text!="Task"&&n.text!="ptr"&&n.text!="ref"))out->text=type(n.text,n.span);
+        if(n.kind==N::TypeName || n.kind==N::StructLiteral || (n.kind==N::GenericType&&n.text!="map"&&n.text!="Result"&&n.text!="List"&&n.text!="Deque"&&n.text!="Task"&&n.text!="ptr"&&n.text!="ref"))out->text=type(n.text,n.span);
         if(n.kind==N::Function) {
             if(!top && !locals.empty())locals.back().insert(declared_name(n));
             if(top)out->text=module.prefix+n.text;

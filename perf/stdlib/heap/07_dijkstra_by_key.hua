@@ -1,0 +1,44 @@
+# 网格Dijkstra：原生heap.push_by_key/pop_by_key，结构体负载（对照06键编码）
+import std.list as list
+import std.heap as heap
+struct Entry { d int
+    node int }
+fn cost(e Entry) int { return e.d }
+fn main() {
+    let w = 150
+    var empty []int = []
+    var total = 0
+    for round in 0..2 {
+        var dist = list.from_slice(empty)
+        for i in 0..w * w { unwrap(list.append(dist, 1000000000000000000)) }
+        unwrap(list.set(dist, 0, 0))
+        var h = list.from_slice([Entry{d: 0, node: 0}])
+        while list.len(h) > 0 {
+            let e = unwrap(heap.pop_by_key(h, cost))
+            let d = e.d
+            let c = e.node
+            if d <= unwrap(list.get(dist, c)) {
+                let x = c % w
+                let y = c // w
+                for k in 0..4 {
+                    var nx = x
+                    var ny = y
+                    if k == 0 { nx = x + 1 }
+                    if k == 1 { nx = x - 1 }
+                    if k == 2 { ny = y + 1 }
+                    if k == 3 { ny = y - 1 }
+                    if nx >= 0 && nx < w && ny >= 0 && ny < w {
+                        let n = ny * w + nx
+                        let nd = d + (nx * 31 + ny * 17) % 9 + 1
+                        if nd < unwrap(list.get(dist, n)) {
+                            unwrap(list.set(dist, n, nd))
+                            unwrap(heap.push_by_key(h, Entry{d: nd, node: n}, cost))
+                        }
+                    }
+                }
+            }
+        }
+        for d in list.snapshot(dist) { total += d }
+    }
+    print(total)
+}

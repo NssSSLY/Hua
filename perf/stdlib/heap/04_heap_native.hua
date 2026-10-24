@@ -1,0 +1,21 @@
+# 堆：原生heap.push/pop（对照01手写）
+import std.list as list
+import std.heap as heap
+fn main() {
+    var empty []int = []
+    var total = 0
+    for round in 0..3 {
+        var h = list.from_slice(empty)
+        var x = round + 1
+        for i in 0..50000 {
+            x = (x * 1103515245 + 12345) % 2147483648
+            unwrap(heap.push(h, x % 1000000))
+        }
+        var k = 0
+        while list.len(h) > 0 {
+            total += k * unwrap(heap.pop(h)) % 1000003
+            k += 1
+        }
+    }
+    print(total)
+}

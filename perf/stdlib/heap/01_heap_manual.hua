@@ -1,0 +1,50 @@
+# 堆：手写list.get/set上滤下滤（原生heap.push/pop对照见04）
+import std.list as list
+fn hpush(mut h List<int>, x int) {
+    unwrap(list.append(h, x))
+    var i = list.len(h) - 1
+    while i > 0 {
+        let p = (i - 1) // 2
+        let pv = unwrap(list.get(h, p))
+        if pv <= x { break }
+        unwrap(list.set(h, i, pv))
+        i = p
+    }
+    unwrap(list.set(h, i, x))
+}
+fn hpop(mut h List<int>) int {
+    let top = unwrap(list.get(h, 0))
+    let last = unwrap(list.pop(h))
+    let n = list.len(h)
+    if n > 0 {
+        var i = 0
+        while 2 * i + 1 < n {
+            var c = 2 * i + 1
+            if c + 1 < n && unwrap(list.get(h, c + 1)) < unwrap(list.get(h, c)) { c += 1 }
+            let cv = unwrap(list.get(h, c))
+            if cv >= last { break }
+            unwrap(list.set(h, i, cv))
+            i = c
+        }
+        unwrap(list.set(h, i, last))
+    }
+    return top
+}
+fn main() {
+    var empty []int = []
+    var total = 0
+    for round in 0..3 {
+        var h = list.from_slice(empty)
+        var x = round + 1
+        for i in 0..50000 {
+            x = (x * 1103515245 + 12345) % 2147483648
+            hpush(h, x % 1000000)
+        }
+        var k = 0
+        while list.len(h) > 0 {
+            total += k * hpop(h) % 1000003
+            k += 1
+        }
+    }
+    print(total)
+}

@@ -46,3 +46,5 @@
 - No is_nan/is_inf (float always finite) and no math.pow (** covers)
 
 - std.random dispatched early in invoke_standard with direct argument checks (generic checks made draws slower than a manual LCG)
+
+- Observed about +-7 percent build-to-build layout variance on string benchmarks, non-monotonic, not attributed

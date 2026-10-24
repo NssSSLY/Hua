@@ -19,13 +19,13 @@ bool file_type(const std::string& type,const SemanticModel& model,std::set<std::
     if(!seen.insert(type).second)return false;
     if(type.ends_with('?'))return file_type(type.substr(0,type.size()-1),model,seen);
     if(type.starts_with('['))return file_type(type.substr(type.find(']')+1),model,seen);
-    for(auto c:{"map","List","Result","multi","Task"})for(const auto& t:type_arguments(type,c))if(file_type(t,model,seen))return true;
+    for(auto c:{"map","List","Deque","Result","multi","Task"})for(const auto& t:type_arguments(type,c))if(file_type(t,model,seen))return true;
     if(auto found=model.structures.find(type);found!=model.structures.end())
         for(const auto& field:found->second->children)if(field->kind==N::Field&&!field->children.empty()&&file_type(type_name(*field->children[0]),model,seen))return true;
     return false;
 }
 // Shared mutable handles whose write capability flows like a container.
-bool shared_handle(std::string_view type){return type=="Buffer"||type=="std.random.Rng";}
+bool shared_handle(std::string_view type){return type=="Buffer"||type=="std.random.Rng"||type.starts_with("Deque<");}
 bool mutable_parameter(const Node& p) { return p.text.find(" mut")!=std::string::npos || (!p.children.empty() && p.children[0]->kind==N::MutableType); }
 bool definitely_returns(const Node& n) {
     if(n.kind==N::Return)return true;
@@ -74,8 +74,8 @@ void SemanticAnalyzer::validate_type(const Node& n,bool allow_void) {
         if(n.text.find('.')==std::string::npos)error(n,"unknown type `"+n.text+"`","E3004");
         auto prefix=n.text.substr(0,n.text.find('.'));lookup(prefix,n.span);
     }
-    if(n.kind==N::TypeName&&(n.text=="List"||n.text=="Task"))error(n,"List requires an element type","E3004");
-    if(n.kind==N::GenericType&&n.text=="List"&&type_name(*n.children[0])=="void")error(n,"List elements cannot be void","E3004");
+    if(n.kind==N::TypeName&&(n.text=="List"||n.text=="Deque"||n.text=="Task"))error(n,n.text+" requires an element type","E3004");
+    if(n.kind==N::GenericType&&(n.text=="List"||n.text=="Deque")&&type_name(*n.children[0])=="void")error(n,n.text+" elements cannot be void","E3004");
     if(n.kind==N::GenericType && n.text=="map") {
         auto key=type_name(*n.children[0]);if(key!="bool"&&key!="int"&&key!="string")error(n,"map keys require bool/int/string","E3004");
         if(type_name(*n.children[1])=="void")error(n,"map values cannot be void","E3004");
@@ -184,7 +184,7 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
         if(n->kind==N::Function) {
             auto name=declared_name(*n);define(name,{"fn:"+name,false,false,{}},n->span);model_.functions.emplace(name,n.get());
         } else if(n->kind==N::Struct) {
-            auto name=declared_name(*n);if(name=="Json"||name=="Bytes"||name=="Buffer"||name=="List")error(*n,"reserved standard value type","E3002");define(name,{"struct:"+name,false,false,{}},n->span);model_.structures.emplace(name,n.get());
+            auto name=declared_name(*n);if(name=="Json"||name=="Bytes"||name=="Buffer"||name=="List"||name=="Deque")error(*n,"reserved standard value type","E3002");define(name,{"struct:"+name,false,false,{}},n->span);model_.structures.emplace(name,n.get());
         }
     }
     std::function<void(const Node&)> collect_nested=[&](const Node& n){for(const auto& c:n.children){if(c->kind==N::Function){model_.functions.emplace(declared_name(*c),c.get());model_.nested[c.get()]=true;}collect_nested(*c);}};for(const auto& n:program.children)if(n->kind==N::Function)collect_nested(*n);
@@ -585,9 +585,11 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                     // L0-1: the callback's declaration fixes element/accumulator/key/result
                     // types; the standard call is treated as an unknown call for effects.
                     const auto& name=f->name;const bool fold=name=="fold",update=f->module=="maps";
-                    const std::size_t at=fold?2:update?3:1;const auto& site=*n.children[at+1];std::string element;
+                    const bool heap_push=f->module=="heap"&&name=="push_by_key";
+                    const std::size_t at=fold||heap_push?2:update?3:1;const auto& site=*n.children[at+1];std::string element;
                     if(f->module=="alg"){if(!types[0].empty()&&!types[0].starts_with('['))error(*n.children[1],"callback algorithm requires an array or slice","E3004");element=element_type(types[0]);}
-                    if(f->module=="list"&&!types[0].empty()){auto ts=type_arguments(types[0],"List");if(ts.size()!=1)error(*n.children[1],"expected List<T>","E3004");element=ts[0];}
+                    if((f->module=="list"||f->module=="heap")&&!types[0].empty()){auto ts=type_arguments(types[0],"List");if(ts.size()!=1)error(*n.children[1],"expected List<T>","E3004");element=ts[0];}
+                    if(heap_push&&!element.empty())require(element,args[1],*n.children[2]);
                     if(update&&!types[0].empty()){auto kv=type_arguments(types[0],"map");if(kv.size()!=2)error(*n.children[1],"expected map","E3004");require(kv[0],args[1],*n.children[2]);require(kv[1],args[2],*n.children[3]);element=kv[1];}
                     const std::size_t arity=fold||name=="sorted_by"||name=="sort_by"?2:1;std::string result;
                     if(!types[at].empty()){
@@ -617,6 +619,8 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                     else if(name=="find")type=element.empty()?"":element.ends_with('?')?element:element+"?";
                     else if(name=="min_by_key"||name=="max_by_key")type=element.empty()?"":"Result<"+element+",string>";
                     else if(update)type=element;
+                    else if(heap_push)type="Result<int,string>";
+                    else if(f->module=="heap")type=element.empty()?"":"Result<"+element+",string>";
                     else type="void";
                     out={type,false};break;
                 }
@@ -631,6 +635,15 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
                     else if(type_arguments(types[0],"List").size()!=1)error(n,"expected List<T>","E3004");
                     else if(f->name=="sort"){auto e=type_arguments(types[0],"List")[0];if(e!="int"&&e!="float"&&e!="string")error(n,"list.sort requires int/float/string elements","E3004");}
+                }
+                if(f->module=="deque"&&!types[0].empty()){
+                    if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
+                    else if(type_arguments(types[0],"Deque").size()!=1)error(*n.children[1],"expected Deque<T>","E3004");
+                }
+                if(f->module=="heap"&&!f->callback&&!types[0].empty()){
+                    auto natural=[](const std::string& e){return e=="int"||e=="float"||e=="string";};
+                    if(f->name=="smallest"||f->name=="largest"){if(!types[0].starts_with('[')||!natural(element_type(types[0])))error(*n.children[1],"heap top-k requires an int/float/string array or slice","E3004");}
+                    else{auto items=type_arguments(types[0],"List");if(items.size()!=1||!natural(items[0]))error(*n.children[1],"heap requires List<int/float/string>; use push_by_key/pop_by_key for other elements","E3004");}
                 }
                 if(f->module=="random"&&(f->name=="shuffle"||f->name=="choice"||f->name=="sample")&&types.size()>1&&!types[1].empty()){
                     if(f->name=="shuffle"){
@@ -786,7 +799,7 @@ SemanticAnalyzer::Views SemanticAnalyzer::field_shape(Info base,unsigned depth) 
             out[path]=value;for(auto [nested,view]:field_shape(value,depth+1))out[path+nested]=std::move(view);
         }
     }else{
-        auto element=element_type(type);auto map=type_arguments(type,"map"),list=type_arguments(type,"List");if(!map.empty())element=map[1];if(!list.empty())element=list[0];
+        auto element=element_type(type);auto map=type_arguments(type,"map"),list=type_arguments(type,"List"),deque=type_arguments(type,"Deque");if(!map.empty())element=map[1];if(!list.empty())element=list[0];if(!deque.empty())element=deque[0];
         if(!element.empty()){auto value=projected(base,"[]");value.type=element;out["[]"]=value;for(auto [path,view]:field_shape(value,depth+1))out["[]"+path]=std::move(view);}
     }
     return out;

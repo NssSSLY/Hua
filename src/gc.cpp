@@ -174,6 +174,10 @@ std::size_t ManagedHeap::collect_records(std::vector<Record>& records_){
 #endif
     return count;
 }
+#ifdef HUA_GC_COST_PROFILE
+// The cost profile counts every Value alternative by index.
+static_assert(std::variant_size_v<Value::Data> <= std::tuple_size_v<decltype(gc_cost::Row{}.value_kinds)>);
+#endif
 void heap_edges(const Value& v,const HeapVisitor& visit){
 #ifdef HUA_GC_COST_PROFILE
     if(gc_cost::current){++gc_cost::current->value_kinds[v.data.index()];++gc_cost::current->value_sources[gc_cost::current->source][v.data.index()];}
@@ -216,6 +220,7 @@ void heap_edges(const ListData& x,const HeapVisitor& v){
     if(gc_cost::current){++gc_cost::current->list_scans;}
 #endif
 heap_edges(x.values,v);}
+void heap_edges(const DequeData& x,const HeapVisitor& v){for(const auto& item:x.values)heap_edges(item,v);}
 void heap_edges(const MultiData& x,const HeapVisitor& v){
 #ifdef HUA_GC_COST_PROFILE
     if(gc_cost::current){++gc_cost::current->multi_scans;}

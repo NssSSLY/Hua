@@ -19,7 +19,7 @@ struct Broken {};struct Continued {};
 template<class T> struct Restore {T& value;T old;Restore(T& v,T next):value(v),old(v){value=next;}~Restore(){value=old;}};
 std::vector<const Node*> params(const Node& n) {std::vector<const Node*>out;for(const auto&c:n.children)if(c->kind==N::Parameter)out.push_back(c.get());return out;}
 bool mutable_param(const Node& p){return p.text.find(" mut")!=std::string::npos || (!p.children.empty()&&p.children[0]->kind==N::MutableType);}
-bool writable_value(const Value& v){if(auto p=std::get_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<RngValue>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
+bool writable_value(const Value& v){if(auto p=std::get_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<RngValue>(&v.data))return p->writable;if(auto p=std::get_if<DequeValue>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
 
 Value read_member(const Value& v,bool writable){return writable ? v : read_only(v);}
 }

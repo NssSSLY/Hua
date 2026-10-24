@@ -23,8 +23,8 @@ struct Row {
  HUA_GC_COST_FIELDS(HUA_GC_COST_MEMBER)
 #undef HUA_GC_COST_MEMBER
  std::array<std::uint64_t,9> ns{};
- std::array<std::uint64_t,22> value_kinds{};
- std::array<std::array<std::uint64_t,22>,4> value_sources{};std::size_t source=3;
+ std::array<std::uint64_t,24> value_kinds{};
+ std::array<std::array<std::uint64_t,24>,4> value_sources{};std::size_t source=3;
  std::uint64_t start_ns{},total_ns{};
 };
 struct Sink {

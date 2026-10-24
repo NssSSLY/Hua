@@ -106,6 +106,49 @@ Routine<Value> alg_callback(const StandardFunction& f,std::vector<Value> args,co
     runtime_error(s,"unknown callback operation","E4003");
 }
 
+// heap.push_by_key/pop_by_key on List<T>: the sift path is found with key
+// callbacks first (each followed by the List revision check), then applied once.
+Routine<Value> heap_callback(const StandardFunction& f,std::vector<Value> args,const SourceSpan& s,CallbackHost& host,Work& work){
+    auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
+    if(!handle->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
+    auto data=handle->data;auto& values=data->values;const auto& element=data->element_type;const bool push=f.name=="push_by_key";
+    const auto& fn=callable_arg(args[push?2:1],s);auto shape=callback_shape(fn,1,s);require_key(shape,s);
+    const auto revision=data->revision;
+    auto unchanged=[data,revision,&s]{if(data->revision!=revision)runtime_error(s,"list modified during callback","E4003");};
+    if(push){
+        if(values.size()>=max_entries)co_return standard_result(Value(std::string("heap item limit exceeded")),false,"int");
+        auto item=copy_value(enforce_type(args[1],element,s));
+        auto key=checked_key(co_await host.invoke(fn,{item},s),s);unchanged();
+        std::vector<std::size_t> path;
+        for(auto i=values.size();i>0;){
+            auto parent=(i-1)/2;work.tick();
+            auto above=checked_key(co_await host.invoke(fn,{values[parent]},s),s);unchanged();
+            if(compare_keys(key,above,work)>=0)break;
+            path.push_back(parent);i=parent;
+        }
+        values.emplace_back();auto hole=values.size()-1;
+        for(auto parent:path){values[hole]=std::move(values[parent]);hole=parent;}
+        values[hole]=std::move(item);++data->revision;
+        co_return standard_result(Value(static_cast<I>(values.size())),true,"int");
+    }
+    if(values.empty())co_return standard_result(Value(std::string("HEAP_EMPTY: heap is empty")),false,element);
+    const auto n=values.size()-1;std::vector<std::size_t> path;
+    if(n){
+        auto key=checked_key(co_await host.invoke(fn,{values[n]},s),s);unchanged();
+        for(std::size_t i=0;2*i+1<n;){
+            auto child=2*i+1;work.tick();
+            auto best=checked_key(co_await host.invoke(fn,{values[child]},s),s);unchanged();
+            if(child+1<n){auto other=checked_key(co_await host.invoke(fn,{values[child+1]},s),s);unchanged();if(compare_keys(other,best,work)<0){++child;best=std::move(other);}}
+            if(compare_keys(best,key,work)>=0)break;
+            path.push_back(child);i=child;
+        }
+    }
+    auto top=copy_value(read_only(values[0]));auto item=std::move(values[n]);values.pop_back();
+    if(n){std::size_t hole=0;for(auto child:path){values[hole]=std::move(values[child]);hole=child;}values[hole]=std::move(item);}
+    ++data->revision;
+    co_return standard_result(std::move(top),true,element);
+}
+
 Routine<Value> list_callback(const StandardFunction& f,std::vector<Value> args,const SourceSpan& s,CallbackHost& host,Work& work){
     auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
     if(!handle->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
@@ -156,6 +199,7 @@ Routine<Value> invoke_callback_standard(const StandardFunction& f,std::vector<Va
     Work work{s,context};
     if(f.module=="alg")co_return co_await alg_callback(f,std::move(args),s,host,work);
     if(f.module=="list")co_return co_await list_callback(f,std::move(args),s,host,work);
+    if(f.module=="heap")co_return co_await heap_callback(f,std::move(args),s,host,work);
     if(f.module=="maps"&&f.name=="update"){
         // Inline (one call per element in counting loops): read, call, then write;
         // a callback that changes this map meanwhile is overwritten for `key`.

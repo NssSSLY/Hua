@@ -42,6 +42,18 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
         else if(f.name=="merge")out.parameters[1]=types[0];
         return out;
     }
+    // deque/heap (static checks only; the runtime checks arguments itself).
+    if(f.since>=14&&(f.module=="deque"||(f.module=="heap"&&!f.callback))&&!types.empty()&&!types[0].empty()){
+        auto close=types[0].find(']');auto slice=types[0].starts_with('[')&&close!=std::string::npos?types[0].substr(close+1):"";
+        if(f.module=="deque"&&f.name=="from_slice"){out.result=slice.empty()?"":"Deque<"+slice+">";return out;}
+        if(f.name=="smallest"||f.name=="largest"){if(!slice.empty()){out.parameters[0]=types[0];out.result="Result<[]"+slice+",string>";}return out;}
+        auto items=type_arguments(types[0],f.module=="deque"?"Deque":"List");if(items.size()!=1)return out;const auto& e=items[0];
+        out.parameters[0]=types[0];
+        if(f.name=="push_back"||f.name=="push_front"||f.name=="push")out.parameters[1]=e;
+        if(f.name=="pop_back"||f.name=="pop_front"||f.name=="front"||f.name=="back"||f.name=="get"||f.name=="pop"||f.name=="peek")out.result="Result<"+e+",string>";
+        if(f.name=="snapshot")out.result="[]"+e;
+        return out;
+    }
     // random.shuffle/choice/sample: element types come from the second argument (static checks only).
     if(f.since>=13&&f.module=="random"&&types.size()>1&&!types[1].empty()){
         if(f.name=="shuffle")out.parameters[1]=types[1];

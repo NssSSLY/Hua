@@ -49,7 +49,7 @@ std::string canonical_type(std::string_view type) {
         auto count=fixed_extent(type.substr(1,close-1));
         return "["+(count?std::to_string(*count):std::string(type.substr(1,close-1)))+"]"+canonical_type(type.substr(close+1));
     }
-    for(auto name:{"map","Result","multi","List","Task","ref","ptr"}){
+    for(auto name:{"map","Result","multi","List","Deque","Task","ref","ptr"}){
         auto parts=type_arguments(type,name);if(parts.empty())continue;
         std::string result=std::string(name)+"<";
         for(std::size_t i=0;i<parts.size();++i){if(i)result+=',';result+=canonical_type(parts[i]);}
@@ -97,6 +97,7 @@ std::string value_type(const Value& v) {
     case 6: return std::get<StructValue>(v.data).data->name;
     case 21:return std::get<PlainRecord>(v.data).layout->name;
     case 22:return "std.random.Rng";
+    case 23:return "Deque<"+std::get<DequeValue>(v.data).data->element_type+">";
     case 7: { const auto& c=std::get<Callable>(v.data); return c.function ? "fn:"+declared_name(*c.function) : "builtin:"+c.builtin.str(); }
     case 8: {const auto& m=std::get<MapValue>(v.data);return "map<"+m.data->key_type+","+m.data->item_type+">";}
     case 9: {std::string out="multi<";const auto& vs=std::get<MultiValue>(v.data).data->values;for(std::size_t i=0;i<vs.size();++i){if(i)out+=',';out+=value_type(vs[i]);}return out+">";}
@@ -120,9 +121,9 @@ bool compatible(std::string_view expected, std::string_view actual) {
     if(numeric_widening(expected,actual))return true;
     if(current_relations){auto found=current_relations->find(std::string(expected));if(found!=current_relations->end()&&found->second.contains(std::string(actual)))return true;}
     if(expected.ends_with('?')) return actual=="nil" || compatible(expected.substr(0,expected.size()-1),actual);
-    for(auto name:{"map","Result","multi","List","Task"}) {
+    for(auto name:{"map","Result","multi","List","Deque","Task"}) {
         auto es=type_arguments(expected,name),as=type_arguments(actual,name);
-        if(!es.empty()&&!as.empty()){if(std::string_view(name)=="map"||std::string_view(name)=="List"||std::string_view(name)=="Task")return es==as;if(std::string_view(name)=="Result"&&es[0]=="void"&&as[0]=="nil")return false;if(es.size()!=as.size())return false;for(std::size_t i=0;i<es.size();++i)if(!compatible(es[i],as[i]))return false;return true;}
+        if(!es.empty()&&!as.empty()){if(std::string_view(name)=="map"||std::string_view(name)=="List"||std::string_view(name)=="Deque"||std::string_view(name)=="Task")return es==as;if(std::string_view(name)=="Result"&&es[0]=="void"&&as[0]=="nil")return false;if(es.size()!=as.size())return false;for(std::size_t i=0;i<es.size();++i)if(!compatible(es[i],as[i]))return false;return true;}
     }
     if(expected.starts_with('[') && actual.starts_with('[')) {
         auto close=expected.find(']');
@@ -246,6 +247,9 @@ bool values_equal(const Value& a,const Value& b,const SourceSpan& s,unsigned dep
         for(const auto& [key,item]:p->data->entries){auto other=q.data->entries.find(key);
             if(other==q.data->entries.end()||!values_equal(item,other->second,s,depth+1))return false;}
         return true;}
+    if(auto p=std::get_if<DequeValue>(&a.data)){const auto& q=std::get<DequeValue>(b.data);if(p->data==q.data)return true;
+        const auto& x=p->data->values;const auto& y=q.data->values;if(x.size()!=y.size())return false;
+        for(std::size_t i=0;i<x.size();++i)if(!values_equal(x[i],y[i],s,depth+1))return false;return true;}
     if(auto p=std::get_if<ListValue>(&a.data)){const auto& q=std::get<ListValue>(b.data);if(p->data==q.data)return true;
         const auto& x=p->data->values;const auto& y=q.data->values;if(x.size()!=y.size())return false;
         for(std::size_t i=0;i<x.size();++i)if(!values_equal(x[i],y[i],s,depth+1))return false;return true;}
@@ -338,6 +342,7 @@ Value read_only(Value v) {
     if(auto p=std::get_if<BufferValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<RngValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<ListValue>(&v.data))p->writable=false;
+    if(auto p=std::get_if<DequeValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<SliceValue>(&v.data)) p->writable=false;
     if(auto p=std::get_if<StructValue>(&v.data)) p->writable=false;
     if(auto p=std::get_if<MapValue>(&v.data)) p->writable=false;
@@ -377,6 +382,8 @@ bool scan_file(const Value& v,unsigned depth,FileScan& scan){
     if(auto p=std::get_if<MapValue>(&v.data);p&&first(p->data.get()))
         for(const auto& [_,x]:p->data->entries)if(nested(x))return true;
     if(auto p=std::get_if<ListValue>(&v.data);p&&first(p->data.get()))
+        for(const auto& x:p->data->values)if(nested(x))return true;
+    if(auto p=std::get_if<DequeValue>(&v.data);p&&first(p->data.get()))
         for(const auto& x:p->data->values)if(nested(x))return true;
     // Different views of one backing can expose different resources.
     if(auto p=std::get_if<SliceValue>(&v.data);p&&!p->packed&&first(p->storage.get(),p->start,p->length))
@@ -431,6 +438,7 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;m->values.reserve(p->data->values.size());for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1,resource_alias));return Value(MultiValue{m});}
     if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{managed<std::string>(*p->data),true});
     if(deep)if(auto p=std::get_if<RngValue>(&v.data))return Value(RngValue{managed<RngState>(*p->data),true});
+    if(deep)if(auto p=std::get_if<DequeValue>(&v.data)){auto data=managed<DequeData>();data->element_type=p->data->element_type;for(const auto& x:p->data->values)data->values.push_back(copy_value(x,deep,depth+1,resource_alias));return Value(DequeValue{data,true});}
     if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=managed<ListData>();data->element_type=p->data->element_type;data->values.reserve(p->data->values.size());for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1,resource_alias));return Value(ListValue{data,true});}
     if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=managed<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1,resource_alias));return Value(MapValue{data,true});}
     if(auto p=std::get_if<SliceValue>(&v.data);p&&(deep||p->fixed)) {
@@ -564,6 +572,7 @@ std::string show(const Value& v) {
     if(auto p=std::get_if<BufferValue>(&v.data))return "<Buffer:"+std::to_string(p->data->size())+">";
     if(std::holds_alternative<RngValue>(v.data))return "<Rng>";
     if(auto p=std::get_if<ListValue>(&v.data))return "<List:"+std::to_string(p->data->values.size())+">";
+    if(auto p=std::get_if<DequeValue>(&v.data))return "<Deque:"+std::to_string(p->data->values.size())+">";
     if(v.data.index()==0) return "nil";
     if(auto p=std::get_if<bool>(&v.data)) return *p ? "true":"false";
     if(auto p=std::get_if<I>(&v.data)) return std::to_string(*p);

@@ -1,0 +1,25 @@
+# 滑动窗口最大值：原生std.deque（对照02手写）
+import std.list as list
+import std.deque as deque
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    var x = 1
+    for i in 0..100000 {
+        x = (x * 1103515245 + 12345) % 2147483648
+        unwrap(list.append(src, x % 100000))
+    }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..3 {
+        var q = deque.from_slice(empty)
+        for i in 0..len(xs) {
+            let v = xs[i]
+            while deque.len(q) > 0 && xs[unwrap(deque.back(q))] <= v { unwrap(deque.pop_back(q)) }
+            unwrap(deque.push_back(q, i))
+            if unwrap(deque.front(q)) <= i - 50 { unwrap(deque.pop_front(q)) }
+            if i >= 49 { total += xs[unwrap(deque.front(q))] }
+        }
+    }
+    print(total)
+}

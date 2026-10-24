@@ -1,0 +1,39 @@
+# 网格BFS：原生std.deque（对照01手写）
+import std.list as list
+import std.deque as deque
+fn main() {
+    let w = 300
+    var empty []int = []
+    var total = 0
+    for round in 0..3 {
+        var dist = list.from_slice(empty)
+        for i in 0..w * w { unwrap(list.append(dist, -1)) }
+        unwrap(list.set(dist, 0, 0))
+        var q = deque.from_slice([0])
+        while deque.len(q) > 0 {
+            let c = unwrap(deque.pop_front(q))
+            let x = c % w
+            let y = c // w
+            let dc = unwrap(list.get(dist, c))
+            for k in 0..4 {
+                var nx = x
+                var ny = y
+                if k == 0 { nx = x + 1 }
+                if k == 1 { nx = x - 1 }
+                if k == 2 { ny = y + 1 }
+                if k == 3 { ny = y - 1 }
+                if nx >= 0 && nx < w && ny >= 0 && ny < w {
+                    let n = ny * w + nx
+                    if unwrap(list.get(dist, n)) < 0 && (nx * 7 + ny * 13) % 11 != 0 {
+                        unwrap(list.set(dist, n, dc + 1))
+                        unwrap(deque.push_back(q, n))
+                    }
+                }
+            }
+        }
+        for d in list.snapshot(dist) {
+            if d > 0 { total += d }
+        }
+    }
+    print(total)
+}

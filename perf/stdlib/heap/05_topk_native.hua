@@ -1,0 +1,20 @@
+# top-k：原生heap.smallest（对照02手写）
+import std.list as list
+import std.heap as heap
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    var x = 1
+    for i in 0..200000 {
+        x = (x * 1103515245 + 12345) % 2147483648
+        unwrap(list.append(src, x % 10000000))
+    }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..5 {
+        var s = 0
+        for v in unwrap(heap.smallest(xs, 100)) { s += v }
+        total += s + round
+    }
+    print(total)
+}

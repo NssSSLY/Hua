@@ -370,7 +370,7 @@ NodePtr Parser::type() {
                 while (accept(K::Comma)) result->add(type());
                 auto close = expect(K::Greater, "expected > after type arguments");
                 if ((name.text == "Result" && result->children.size() > 2) ||
-                    ((name.text=="ptr"||name.text=="ref"||name.text=="List"||name.text=="Task") && result->children.size() != 1))
+                    ((name.text=="ptr"||name.text=="ref"||name.text=="List"||name.text=="Deque"||name.text=="Task") && result->children.size() != 1))
                     fail(name, "incorrect number of type arguments", "E2006");
                 result->span.end_offset = close.span.end_offset;
             } else {

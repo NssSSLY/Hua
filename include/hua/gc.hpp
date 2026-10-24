@@ -17,11 +17,12 @@ public:
     HeapVisitor(const F& f):target_(&f),call_([](const void* t,const void* p){(*static_cast<const F*>(t))(p);}){}
     void operator()(const void* p) const {call_(target_,p);}
 };
-struct Value;struct StructData;struct MapData;struct ListData;struct MultiData;struct ErrorData;struct IOFailureData;
+struct Value;struct StructData;struct MapData;struct ListData;struct DequeData;struct MultiData;struct ErrorData;struct IOFailureData;
 void heap_edges(const Value&,const HeapVisitor&);
 void heap_edges(const StructData&,const HeapVisitor&);
 void heap_edges(const MapData&,const HeapVisitor&);
 void heap_edges(const ListData&,const HeapVisitor&);
+void heap_edges(const DequeData&,const HeapVisitor&);
 void heap_edges(const MultiData&,const HeapVisitor&);
 void heap_edges(const ErrorData&,const HeapVisitor&);
 void heap_edges(const IOFailureData&,const HeapVisitor&);

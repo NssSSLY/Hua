@@ -36,7 +36,7 @@ bool value_type_allowed(std::string_view type,bool allow_void,unsigned depth=0){
     if(type=="void")return allow_void;
     if(type.ends_with('?'))return value_type_allowed(type.substr(0,type.size()-1),false,depth+1);
     if(type.starts_with('[')){auto close=type.find(']');return close!=std::string_view::npos&&value_type_allowed(type.substr(close+1),false,depth+1);}
-    for(auto name:{"Result","Task","map","List","multi"}){
+    for(auto name:{"Result","Task","map","List","Deque","multi"}){
         auto ts=type_arguments(type,name);if(ts.empty())continue;
         for(std::size_t i=0;i<ts.size();++i)if(!value_type_allowed(ts[i],i==0&&(std::string_view(name)=="Result"||std::string_view(name)=="Task"),depth+1))return false;
     }
@@ -112,7 +112,7 @@ Code code(Reader& r,const Sources& sources,std::size_t& total) {
 }
 unsigned required_format(const Bytecode& bytecode,const SemanticModel& model){
     unsigned format=6;
-    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=std::max(format,7u);if(value.find("std.file.File")!=std::string::npos||value.find("std.file.IOFailure")!=std::string::npos)format=std::max(format,8u);if(value.find("std.random.Rng")!=std::string::npos)format=std::max(format,13u);};
+    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=std::max(format,7u);if(value.find("std.file.File")!=std::string::npos||value.find("std.file.IOFailure")!=std::string::npos)format=std::max(format,8u);if(value.find("std.random.Rng")!=std::string::npos)format=std::max(format,13u);if(value.find("Deque<")!=std::string::npos)format=std::max(format,14u);};
     std::function<void(const Node&)> declaration=[&](const Node& n){if(n.kind==NodeKind::TypeName||n.kind==NodeKind::GenericType)type(type_name(n));for(const auto& c:n.children)declaration(*c);};
     for(const auto& [_,n]:model.functions)declaration(*n);
     for(const auto& [_,n]:model.structures)declaration(*n);
@@ -258,7 +258,7 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     std::ifstream in(path,std::ios::binary|std::ios::ate);SourceSpan site{utf8(path),0,0,1,1};if(!in)bad(site,"cannot read file");auto size=in.tellg();if(size<32||size>static_cast<std::streamoff>(max_file))bad(site,"file size is outside 32 bytes..128 MiB");
     std::string data(static_cast<std::size_t>(size),'\0');in.seekg(0);if(!in.read(data.data(),size))bad(site,"truncated file");
     if(data.substr(0,8)!="HUAB\r\n\x1a\n")bad(site,"magic header mismatch");Reader header{std::string_view(data).substr(8,24),0,site};
-    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6&&format!=7&&format!=8&&format!=9&&format!=10&&format!=11&&format!=12&&format!=13)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
+    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6&&format!=7&&format!=8&&format!=9&&format!=10&&format!=11&&format!=12&&format!=13&&format!=14)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
     if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site,format};BytecodeImage image;
     auto source_count=r.count(128);if(!source_count)bad(site,"missing source table");std::size_t text_bytes=0;
     for(std::size_t i=0;i<source_count;++i){auto file=r.str(),text=r.str();if(file.empty()||file.size()>16384||file.find('\0')!=std::string::npos)bad(site,"invalid source id");text_bytes+=text.size();if(text_bytes>64*1024*1024)bad(site,"source table exceeds 64 MiB");auto source=std::make_unique<Source>(file,std::move(text));if(image.source(file))bad(site,"duplicate source id");image.sources.push_back(std::move(source));}

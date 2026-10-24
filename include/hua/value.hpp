@@ -5,6 +5,7 @@
 #include <atomic>
 #include <mutex>
 #include <array>
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -34,6 +35,7 @@ struct FileValue {std::shared_ptr<FileData> data;};
 struct IOFailureValue {std::shared_ptr<const IOFailureData> data;};
 struct ErrorValue { std::shared_ptr<const ErrorData> data; };
 struct ListData;
+struct DequeData;
 struct NumericValue { std::string type;std::variant<std::int64_t,std::uint64_t,double> number; };
 struct NumericSpec {char category;unsigned bits;};
 std::optional<NumericSpec> numeric_spec(std::string_view type);
@@ -44,6 +46,7 @@ Value unary_numeric(std::string_view op,const Value& value,const SourceSpan& spa
 struct BytesValue { std::shared_ptr<const std::string> data; };
 struct BufferValue { std::shared_ptr<std::string> data; bool writable{true}; };
 struct ListValue { std::shared_ptr<ListData> data; bool writable{true}; };
+struct DequeValue { std::shared_ptr<DequeData> data; bool writable{true}; };
 // std.random.Rng (since 13): xoshiro256** state behind a shared handle, like Buffer.
 struct RngState { std::uint64_t s[4]{}; };
 struct RngValue { std::shared_ptr<RngState> data; bool writable{true}; };
@@ -85,7 +88,7 @@ struct Callable { const Node* function{}; BuiltinName builtin; std::optional<Str
     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
 };
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue>;
     Data data;
     Value() = default;
     template<class T> explicit Value(T value) : data(std::move(value)) {}
@@ -199,6 +202,8 @@ struct IOFailureData {ErrorValue error;std::optional<std::int64_t> transferred;s
 // revision changes on every content mutation (std.list writers); in-place
 // callback functions use it to detect a callback that changed the same List.
 struct ListData { std::string element_type; std::vector<Value> values; std::uint64_t revision{}; };
+// std.deque Deque<T> (since 14): List rules with O(1) operations at both ends.
+struct DequeData { std::string element_type; std::deque<Value> values; };
 struct StructData {
     std::string name; RecordFields fields;
     std::shared_ptr<const EnumLayout> enumeration;
