@@ -1,0 +1,10 @@
+# Go风格时长格式化：原生time.format_duration（对照03手写）
+import std.time as time
+fn main() {
+    var total = 0
+    for i in 0..100000 {
+        let d = (i * 7919 * 104729) % 100000000000000 - 5000000000000
+        total += len(time.format_duration(d))
+    }
+    print(total)
+}

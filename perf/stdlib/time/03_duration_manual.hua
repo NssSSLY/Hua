@@ -1,0 +1,56 @@
+# Go风格时长格式化：手写（原生time.format_duration对照见06）
+fn frac(v int, prec int) (string, int) {
+    var out = ""
+    var printed = false
+    var x = v
+    for i in 0..prec {
+        let digit = x % 10
+        printed = printed || digit != 0
+        if printed { out = str(digit) + out }
+        x = x // 10
+    }
+    if printed { out = "." + out }
+    return out, x
+}
+fn go_format(d int) string {
+    let neg = d < 0
+    var u = d
+    if neg { u = 0 - d }
+    var s = ""
+    if u < 1000000000 {
+        if u == 0 { return "0s" }
+        var prec = 6
+        var unit = "ms"
+        if u < 1000 {
+            prec = 0
+            unit = "ns"
+        } else {
+            if u < 1000000 {
+                prec = 3
+                unit = "µs"
+            }
+        }
+        let f, rest = frac(u, prec)
+        s = str(rest) + f + unit
+    } else {
+        let f, rest = frac(u, 9)
+        var w = rest
+        s = str(w % 60) + f + "s"
+        w = w // 60
+        if w > 0 {
+            s = str(w % 60) + "m" + s
+            w = w // 60
+            if w > 0 { s = str(w) + "h" + s }
+        }
+    }
+    if neg { s = "-" + s }
+    return s
+}
+fn main() {
+    var total = 0
+    for i in 0..100000 {
+        let d = (i * 7919 * 104729) % 100000000000000 - 5000000000000
+        total += len(go_format(d))
+    }
+    print(total)
+}

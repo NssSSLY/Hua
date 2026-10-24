@@ -48,3 +48,5 @@
 - std.random dispatched early in invoke_standard with direct argument checks (generic checks made draws slower than a manual LCG)
 
 - Observed about +-7 percent build-to-build layout variance on string benchmarks, non-monotonic, not attributed
+
+- No new types: durations are int nanoseconds, time points are int Unix milliseconds

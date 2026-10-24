@@ -11,7 +11,8 @@ callback_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,11,
 math_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,12\},\s*$',registry,re.M)}
 random_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,13\},\s*$',registry,re.M)}
 container_later={(m,n) for m,n,_ in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,14(,true)?\},\s*$',registry,re.M)}
-later=text_later|collection_later|callback_later|math_later|random_later|container_later
+time_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,15\},\s*$',registry,re.M)}
+later=text_later|collection_later|callback_later|math_later|random_later|container_later|time_later
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
 expected=[m+"."+n for m,n in functions if m not in {"error","file"} and (m,n) not in later]
@@ -41,5 +42,7 @@ random_rows=re.findall(r"^\| ER0-X\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(random_rows)==len(set(random_rows))==len(random_later)==13 and set(random_rows)=={m+"."+n for m,n in random_later},(len(random_rows),len(random_later))
 container_rows=re.findall(r"^\| ER0-Y\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(container_rows)==len(set(container_rows))==len(container_later)==19 and set(container_rows)=={m+"."+n for m,n in container_later},(len(container_rows),len(container_later))
+time_rows=re.findall(r"^\| ER0-Z\d\d \| std\.([^ ]+) \|",text,re.M)
+assert len(time_rows)==len(set(time_rows))==len(time_later)==12 and set(time_rows)=={m+"."+n for m,n in time_later},(len(time_rows),len(time_later))
 assert len(callback_rows)==len(set(callback_rows))==len(callback_later)==15 and set(callback_rows)=={m+"."+n for m,n in callback_later},(len(callback_rows),len(callback_later))
-print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1, 21 slice-2, 15 L0-1 callback, 18 math/encoding, 13 random/crypto and 19 deque/heap APIs separately.")
+print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1, 21 slice-2, 15 L0-1 callback, 18 math/encoding, 13 random/crypto, 19 deque/heap and 12 time APIs separately.")

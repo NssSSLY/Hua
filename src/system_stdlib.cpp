@@ -68,17 +68,19 @@ Value environment(const std::string& name) {
 #endif
 }
 }
+// time.monotonic_ns and time.since_ns share this origin (first use in the process).
+std::int64_t monotonic_now_ns(const SourceSpan& span) {
+    static const auto origin = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::steady_clock::now() - origin;
+    auto count = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
+    if (count < 0) runtime_error(span, "monotonic clock range exceeded", "E4002");
+    return static_cast<std::int64_t>(count);
+}
 Value invoke_system_standard(const StandardFunction& f, const std::vector<Value>& args,
                              const SourceSpan& span, RuntimeContext* context) {
     task_checkpoint(context, span);
     if (f.module == "os") return environment(std::get<std::string>(args[0].data));
-    if (f.name == "monotonic_ns") {
-        static const auto origin = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::steady_clock::now() - origin;
-        auto count = std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
-        if (count < 0) runtime_error(span, "monotonic clock range exceeded", "E4002");
-        return Value(static_cast<std::int64_t>(count));
-    }
+    if (f.name == "monotonic_ns") return Value(monotonic_now_ns(span));
     if (f.name == "unix_ms")
         return Value(static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count()));

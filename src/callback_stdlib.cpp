@@ -58,7 +58,6 @@ template<class After> Routine<std::vector<std::size_t>> less_order(const std::ve
 std::vector<Value> elements(const SliceValue& xs){std::vector<Value> out;out.reserve(xs.length);for(std::size_t i=0;i<xs.length;++i)out.push_back(sequence_read(xs,i));return out;}
 Value read_only_slice(std::vector<Value> values,const std::string& element){auto storage=managed<std::vector<Value>>(std::move(values));auto n=storage->size();return Value(SliceValue{std::move(storage),0,n,false,element});}
 Value permuted(const std::vector<Value>& items,const std::vector<std::size_t>& order,const std::string& element){std::vector<Value> out;out.reserve(order.size());for(auto i:order)out.push_back(items[i]);return read_only_slice(std::move(out),element);}
-std::string optional_of(const std::string& type){return type.ends_with('?')?type:type+"?";}
 
 Routine<Value> alg_callback(const StandardFunction& f,std::vector<Value> args,const SourceSpan& s,CallbackHost& host,Work& work){
     const auto& name=f.name;const auto xs=slice_arg(args[0],s);const auto& element=xs.element_type;

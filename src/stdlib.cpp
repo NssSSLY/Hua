@@ -120,6 +120,18 @@ const std::vector<StandardFunction>& standard_functions() {
         {"heap","largest",{"","int"},"",false,false,14},
         {"heap","push_by_key",{"","",""},"Result<int,string>",true,false,14,true},
         {"heap","pop_by_key",{"",""},"",true,false,14,true},
+        {"time","since_ns",{"int"},"int",false,false,15},
+        {"time","format_duration",{"int"},"string",false,false,15},
+        {"time","parse_duration",{"string"},"Result<int,string>",false,false,15},
+        {"time","utc_parts",{"int"},"multi<int,int,int,int,int,int,int>",false,false,15},
+        {"time","utc_from_parts",{"int","int","int","int","int","int","int"},"Result<int,string>",false,false,15},
+        {"time","weekday",{"int"},"int",false,false,15},
+        {"time","day_of_year",{"int"},"int",false,false,15},
+        {"time","is_leap_year",{"int"},"bool",false,false,15},
+        {"time","days_in_month",{"int","int"},"int",false,false,15},
+        {"time","format_rfc3339",{"int"},"string",false,false,15},
+        {"time","format_rfc3339_offset",{"int","int"},"string",false,false,15},
+        {"time","parse_rfc3339",{"string"},"Result<int,string>",false,false,15},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -318,6 +330,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     // std.random draws are one-word operations: check the few argument kinds directly.
     if(f.since>=13&&f.module=="random")return invoke_random_standard(f,input,s);
     if(f.since>=14&&f.module=="deque")return invoke_deque_standard(f,input,s);
+    if(f.since>=15&&f.module=="time")return invoke_time_standard(f,input,s);
     if(f.since>=14&&f.module=="heap"&&!f.callback)return invoke_heap_standard(f,input,s);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.

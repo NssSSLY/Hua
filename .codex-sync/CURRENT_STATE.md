@@ -35,12 +35,12 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 唯一下一步
 
-**下一项：HUA-D038第5步第二组——Duration与UTC日期（std.time扩展）的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。之后按定稿顺序：os exit/平台 → fs walk/copy → test/log。
+**下一项：HUA-D038第5步第三组——os exit/平台的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。之后按定稿顺序：fs walk/copy → test/log。
 
-- 已完成（2026-10-24）：切片2（HUAB10）、L0-1回调（HUAB11）、math/encoding（HUAB12）、random/crypto（HUAB13，de8cb48，均已推送）；第5步第一组std.deque/std.heap（HUAB14，已提交推送），结果见docs/标准库设计与实现路线.md“第5步第一组Deque/Heap结果”。
-- 现有std.time只有2个函数（单调计时与现实时间），见docs/标准库与内建接口.md“std.time”；Duration若做成新类型，可参照`RngValue`（非泛型句柄）或纯int纳秒/毫秒约定，提案中定。
-- 实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项交替计时，必要时加同一base二进制两份对照）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
-- 经验：轻量标准调用在`invoke_standard`入口早分派；新增Value变体要同步`gc_cost`计数数组（已加`static_assert`）；构建间存在约±7%的代码布局波动，判定退化前用多份二进制交替复测。
+- 已完成（2026-10-24）：切片2（HUAB10）、L0-1回调（HUAB11）、math/encoding（HUAB12）、random/crypto（HUAB13）、deque/heap（HUAB14，f7428b4，均已推送）；第5步第二组std.time（HUAB15，已提交推送），结果见docs/标准库设计与实现路线.md“第5步第二组time结果”。
+- 现有std.os只有args/cwd/getenv（见docs/标准库与内建接口.md“std.os”）；入口返回Result与退出码的现有合同见语言设计“A06入口合同”，os exit须与defer/Task清理与文件关闭顺序一致，提案中定。
+- 实施沿用切片验收：先建手写基线（若无手写对照则只对参照语言）→实现→三路径测试→`ab_bench`（可疑项用两份同一base二进制交替复测）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 经验：轻量标准调用在`invoke_standard`入口早分派；新增Value变体要同步`gc_cost`计数数组；构建间约±7%布局波动，同一base两份也可差20%（strings/03），判定退化前多份交替复测。
 
 ## 待用户决定
 

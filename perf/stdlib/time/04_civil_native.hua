@@ -1,0 +1,13 @@
+# 由Unix毫秒拆出UTC分量并格式化：原生time.utc_parts/format_rfc3339（对照01手写）
+import std.time as time
+fn main() {
+    var total = 0
+    var length = 0
+    for i in 0..100000 {
+        let ms = (i * 86399937 * 13) % 4102444800000
+        let y, mo, d, h, mi, s, frac = time.utc_parts(ms)
+        total += y + mo + d + h + mi + s + frac
+        length += len(time.format_rfc3339(ms))
+    }
+    print(total, length)
+}

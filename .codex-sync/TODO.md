@@ -34,5 +34,6 @@
 - math P0与std.encoding已完成并推送（2026-10-24，HUAB12）；结果见docs/标准库设计与实现路线.md“第4步math/encoding结果”
 - std.random与std.crypto已完成并推送（2026-10-24，HUAB13）；结果见docs/标准库设计与实现路线.md“第4步后半random/crypto结果”
 - 第5步第一组std.deque与std.heap已完成并推送（2026-10-24，HUAB14）；结果见docs/标准库设计与实现路线.md“第5步第一组Deque/Heap结果”
-- 下一项：HUA-D038第5步第二组——Duration与UTC日期（std.time扩展），先写接口提案给用户审
+- 第5步第二组std.time时长与UTC日期已完成并推送（2026-10-24，HUAB15）；结果见docs/标准库设计与实现路线.md“第5步第二组time结果”
+- 下一项：HUA-D038第5步第三组os exit/平台，先写接口提案给用户审
 

@@ -30,6 +30,8 @@ Value invoke_system_standard(const StandardFunction&,const std::vector<Value>&,c
 Value invoke_binary_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_text_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_collection_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
+std::int64_t monotonic_now_ns(const SourceSpan& span);
+Value invoke_time_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_deque_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_heap_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_random_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
