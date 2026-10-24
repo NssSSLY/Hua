@@ -1,0 +1,22 @@
+# 按结构字段排序：原生alg.sorted_by比较器（n log n次回调，对照09按键）
+import std.list as list
+import std.alg as alg
+struct Item { id int
+    score int }
+fn less(a Item, b Item) bool { return a.score < b.score }
+fn main() {
+    var none []Item = []
+    var src = list.from_slice(none)
+    for i in 0..5000 { unwrap(list.append(src, Item{id: i, score: (i * 7919) % 1000})) }
+    let items = list.snapshot(src)
+    var check = 0
+    for round in 0..10 {
+        let ordered = alg.sorted_by(items, less)
+        var j = 0
+        while j < 5000 {
+            check += j * ordered[j].id
+            j += 97
+        }
+    }
+    print(check)
+}

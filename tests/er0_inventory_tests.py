@@ -7,7 +7,8 @@ functions=re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{',registry,re.M)
 # since-9/10 additions (HUA-D038 slices 1/2) have their own ER0-T/ER0-U rows; the original baseline stays 125.
 text_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,9\},\s*$',registry,re.M)}
 collection_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,10\},\s*$',registry,re.M)}
-later=text_later|collection_later
+callback_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,11,true\},\s*$',registry,re.M)}
+later=text_later|collection_later|callback_later
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
 expected=[m+"."+n for m,n in functions if m not in {"error","file"} and (m,n) not in later]
@@ -30,4 +31,6 @@ text_rows=re.findall(r"^\| ER0-T\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(text_rows)==len(set(text_rows))==len(text_later)==23 and set(text_rows)=={m+"."+n for m,n in text_later},(len(text_rows),len(text_later))
 collection_rows=re.findall(r"^\| ER0-U\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(collection_rows)==len(set(collection_rows))==len(collection_later)==21 and set(collection_rows)=={m+"."+n for m,n in collection_later},(len(collection_rows),len(collection_later))
-print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1 and 21 slice-2 APIs separately.")
+callback_rows=re.findall(r"^\| ER0-V\d\d \| std\.([^ ]+) \|",text,re.M)
+assert len(callback_rows)==len(set(callback_rows))==len(callback_later)==15 and set(callback_rows)=={m+"."+n for m,n in callback_later},(len(callback_rows),len(callback_later))
+print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1, 21 slice-2 and 15 L0-1 callback APIs separately.")

@@ -1,0 +1,16 @@
+# 归约：手写for调用二元函数累加（原生alg.fold对照见04）
+import std.list as list
+fn step(acc int, x int) int { return acc + x * x }
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(src, i % 1000)) }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..20 {
+        var acc = 0
+        for x in xs { acc = step(acc, x) }
+        total += acc
+    }
+    print(total)
+}

@@ -22,6 +22,7 @@ bool file_pump_pending(const RuntimeContext* c) noexcept{return c&&(!c->resumabl
 bool builtin_may_suspend(const std::string& name,const RuntimeContext* c){
     if(name=="task_await"||name=="task_group_end")return true;
     auto f=standard_function(name);if(!f)return false;
+    if(f->callback)return true;
     if(f->module=="task"&&(f->name=="timeout"||f->name=="yield"||f->name=="sleep"))return true;
     if(c&&c->in_task&&((f->module=="gc"&&f->name=="collect")||f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process"))return true;
     return false;

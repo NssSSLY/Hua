@@ -193,7 +193,9 @@ struct ErrorData {
     bool truncated{};
 };
 struct IOFailureData {ErrorValue error;std::optional<std::int64_t> transferred;std::optional<BytesValue> partial;};
-struct ListData { std::string element_type; std::vector<Value> values; };
+// revision changes on every content mutation (std.list writers); in-place
+// callback functions use it to detect a callback that changed the same List.
+struct ListData { std::string element_type; std::vector<Value> values; std::uint64_t revision{}; };
 struct StructData {
     std::string name; RecordFields fields;
     std::shared_ptr<const EnumLayout> enumeration;

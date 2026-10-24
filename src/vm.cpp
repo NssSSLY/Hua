@@ -312,9 +312,19 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
 Routine<void> VirtualMachine::call(const Callable& callable,const std::vector<Value>& args,const Instruction& site) {
     if(callable.builtin=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=site;if(!nested.contextual.empty())nested.contextual.erase(nested.contextual.begin());stack_.emplace_back(co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested));co_return;}
     if(callable.builtin=="parallel_map"){stack_.emplace_back(co_await parallel(args,site));co_return;}
+    if(!callable.builtin.empty()){if(const auto& info=builtin_info(callable.builtin);info.standard&&info.standard->callback){Callbacks host(*this,site.span);stack_.emplace_back(co_await invoke_callback_standard(*info.standard,args,site.span,host,context_));co_return;}}
     if(!callable.builtin.empty()){HUA_PROFILE_COUNT(builtin_calls);HUA_PROFILE_BUILTIN(callable.builtin);stack_.emplace_back(co_await invoke_resumable(callable.builtin,args,site.span,output_,site.contextual,site.type,context_));co_return;}
     enter_function(callable,args,site);
     co_return;
+}
+Routine<Value> VirtualMachine::Callbacks::invoke(const Callable& callable,std::vector<Value> args,const SourceSpan&){
+    // Same re-entry as a task wrapper: push the callee frame, run it to its return.
+    auto depth=vm.frames_.size();auto base=vm.stack_.size();
+    vm.enter_function(callable,args,site,route);
+    if(vm.frames_.size()>depth&&vm.frames_.back().site_ref==&site.span){auto& frame=vm.frames_.back();if(stable)frame.site_ref=stable;else{frame.site=site.span;frame.site_ref=nullptr;}}
+    co_await vm.dispatch(depth);
+    if(vm.stack_.size()!=base+1)runtime_error(site.span,"invalid callback return stack","E6001");
+    co_return vm.pop(site.span);
 }
 void VirtualMachine::enter_function(const Callable& callable,const std::vector<Value>& args,const Instruction& site,FunctionRoute* route) {
     if(!callable.function)invalid(site.span);
@@ -573,6 +583,8 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             auto& route=access(f).builtin;
             if(route.name!=&p->builtin.str()){route.name=&p->builtin.str();route.info=&builtin_info(p->builtin);}
             const auto& info=*route.info;
+            // L0-1 callback functions: run here with the resolved route (no call() frame or lookup).
+            if(info.standard&&info.standard->callback){Callbacks host(*this,s,&access(f).function,&op.span);stack_.emplace_back(co_await invoke_callback_standard(*info.standard,std::move(args),s,host,context_));poll_countdown_=1;break;}
             if(info.core!=CoreBuiltin::task_start&&info.core!=CoreBuiltin::parallel_map&&!builtin_may_suspend(info,context_)){
                 HUA_PROFILE_COUNT(builtin_calls);stack_.emplace_back(invoke_builtin(info,p->builtin,args,s,output_,op.contextual,op.type,context_));break;}
             (co_await call(*p,args,op));poll_countdown_=1;break;

@@ -12,7 +12,7 @@ else()
     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 add_library(hua_semantics src/entry.cpp src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/enum_value.cpp src/numeric.cpp src/array.cpp src/record_fields.cpp
-    src/plain_record.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/text_stdlib.cpp src/collections_stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
+    src/plain_record.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/text_stdlib.cpp src/collections_stdlib.cpp src/callback_stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(hua_semantics PUBLIC hua_frontend Threads::Threads)
 option(HUA_SEMA_PROFILE "Build diagnostic host semantic scale counters" OFF)
@@ -179,6 +179,7 @@ if(BUILD_TESTING)
         add_test(NAME error_foundation COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/error_foundation_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
         add_test(NAME stdlib_input COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/stdlib_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
         add_test(NAME strings_p0 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/strings_p0_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+        add_test(NAME callbacks_l01 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/callbacks_l01_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
         add_test(NAME collections_p0 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/collections_p0_tests.py $<TARGET_FILE:hua> ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
         add_test(NAME archives_extensions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/archive_extension_tests.py $<TARGET_FILE:hua>

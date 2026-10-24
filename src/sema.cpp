@@ -578,6 +578,45 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
             if(auto f=standard_function(name)){
                 if(args.size()!=f->parameters.size())error(n,"standard function argument count mismatch","E3005");
                 std::vector<std::string> types;for(const auto& a:args)types.push_back(a.type);
+                if(f->callback){
+                    // L0-1: the callback's declaration fixes element/accumulator/key/result
+                    // types; the standard call is treated as an unknown call for effects.
+                    const auto& name=f->name;const bool fold=name=="fold",update=f->module=="maps";
+                    const std::size_t at=fold?2:update?3:1;const auto& site=*n.children[at+1];std::string element;
+                    if(f->module=="alg"){if(!types[0].empty()&&!types[0].starts_with('['))error(*n.children[1],"callback algorithm requires an array or slice","E3004");element=element_type(types[0]);}
+                    if(f->module=="list"&&!types[0].empty()){auto ts=type_arguments(types[0],"List");if(ts.size()!=1)error(*n.children[1],"expected List<T>","E3004");element=ts[0];}
+                    if(update&&!types[0].empty()){auto kv=type_arguments(types[0],"map");if(kv.size()!=2)error(*n.children[1],"expected map","E3004");require(kv[0],args[1],*n.children[2]);require(kv[1],args[2],*n.children[3]);element=kv[1];}
+                    const std::size_t arity=fold||name=="sorted_by"||name=="sort_by"?2:1;std::string result;
+                    if(!types[at].empty()){
+                        if(!types[at].starts_with("fn:"))error(site,"callback requires a Hua function","E3004");
+                        auto fn=model_.functions.at(types[at].substr(3));auto ps=parameters(*fn);
+                        if(ps.size()!=arity)error(site,"callback parameter count mismatch","E3005");
+                        for(auto p:ps)if(p->children.empty()||mutable_parameter(*p))error(site,"callback parameters require non-mut type annotations","E3004");
+                        result=result_type(*fn);
+                        if(result.empty()||result.starts_with("multi<")||result.starts_with("Task<"))error(site,"callback requires one annotated non-async result","E3004");
+                        for(std::size_t i=fold?1:0;i<ps.size();++i)if(!element.empty()&&!compatible(type_name(*ps[i]->children[0]),element))error(site,"callback parameter does not accept the element type","E3004");
+                        if(fold){auto acc=type_name(*ps[0]->children[0]);require(acc,args[1],*n.children[2]);if(!compatible(acc,result))error(site,"fold callback must return its accumulator type","E3004");}
+                        if(update&&!element.empty()&&!compatible(element,result))error(site,"update callback must return the map value type","E3004");
+                        const bool predicate=name=="filter"||name=="any"||name=="all"||name=="find"||name=="find_index"||name=="sorted_by"||name=="sort_by"||name=="retain";
+                        if(predicate&&result!="bool")error(site,"callback must return bool","E3004");
+                        if(name.ends_with("by_key")&&result!="int"&&result!="float"&&result!="string")error(site,"key callback must return int/float/string","E3004");
+                    }
+                    if(f->mutates_first&&!args[0].writable&&!probing_)error(n,"standard mutation requires a writable argument","E3003");
+                    if(f->mutates_first&&probing_)for(const auto& origin:args[0].origins)pending_effects_.required.insert(origin);
+                    if(probing_)pending_effects_.unknown=true;
+                    forget_unknown(n);
+                    std::string type;
+                    if(name=="map")type=result.empty()?"":"[]"+result;
+                    else if(fold)type=result;
+                    else if(name=="filter"||name=="sorted_by_key"||name=="sorted_by")type=element.empty()?"":"[]"+element;
+                    else if(name=="any"||name=="all")type="bool";
+                    else if(name=="find_index"||name=="retain")type="int";
+                    else if(name=="find")type=element.empty()?"":element.ends_with('?')?element:element+"?";
+                    else if(name=="min_by_key"||name=="max_by_key")type=element.empty()?"":"Result<"+element+",string>";
+                    else if(update)type=element;
+                    else type="void";
+                    out={type,false};break;
+                }
                 if(f->module=="math")for(std::size_t i=0;i<types.size();++i)if(!types[i].empty()&&types[i]!="float")error(*n.children[i+1],"math requires explicit default float arguments","E3004");
                 if(f->module=="alg"&&!types[0].empty()){
                     auto element=element_type(types[0]);

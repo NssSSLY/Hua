@@ -39,3 +39,6 @@
 
 - D5 transparent comparator reverted: long keys +8 percent but SSO keys -7 percent and unrelated core -4 to -6 percent; keep map_find wrapper only
 - New module dispatch checks guarded by since>=10 first; unguarded string compares cost list/01 7 percent
+
+- Routine per-thread frame pool reverted: no gain
+- Callback frames point to bytecode span or own a copy; host span dangled during error unwinding

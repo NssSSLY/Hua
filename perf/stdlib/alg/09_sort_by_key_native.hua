@@ -1,0 +1,22 @@
+# 按结构字段排序：原生alg.sorted_by_key（对照06手写）
+import std.list as list
+import std.alg as alg
+struct Item { id int
+    score int }
+fn score(it Item) int { return it.score }
+fn main() {
+    var none []Item = []
+    var src = list.from_slice(none)
+    for i in 0..5000 { unwrap(list.append(src, Item{id: i, score: (i * 7919) % 1000})) }
+    let items = list.snapshot(src)
+    var check = 0
+    for round in 0..10 {
+        let ordered = alg.sorted_by_key(items, score)
+        var j = 0
+        while j < 5000 {
+            check += j * ordered[j].id
+            j += 97
+        }
+    }
+    print(check)
+}

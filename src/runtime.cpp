@@ -21,7 +21,7 @@ const BuiltinInfo& builtin_info(const std::string& name){
     else if(numeric_spec(name))info.core=CoreBuiltin::numeric;
     info.standard=standard_function(name);
     // Mirrors builtin_may_suspend(name, context) in tasks.cpp.
-    info.always_suspends=name=="task_await"||name=="task_group_end"||(info.standard&&info.standard->module=="task"&&(info.standard->name=="timeout"||info.standard->name=="yield"||info.standard->name=="sleep"));
+    info.always_suspends=(info.standard&&info.standard->callback)||name=="task_await"||name=="task_group_end"||(info.standard&&info.standard->module=="task"&&(info.standard->name=="timeout"||info.standard->name=="yield"||info.standard->name=="sleep"));
     info.suspends_in_task=info.standard&&((info.standard->module=="gc"&&info.standard->name=="collect")||info.standard->module=="file"||info.standard->module=="fs"||info.standard->module=="io"||info.standard->module=="process");
     return table.emplace(name,info).first->second;
 }

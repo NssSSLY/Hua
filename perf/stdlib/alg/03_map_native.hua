@@ -1,0 +1,13 @@
+# 逐项变换：原生alg.map（对照01手写）
+import std.list as list
+import std.alg as alg
+fn scale(x int) int { return x * 3 + 1 }
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(src, i % 1000)) }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..20 { total += unwrap(alg.sum(alg.map(xs, scale))) }
+    print(total)
+}

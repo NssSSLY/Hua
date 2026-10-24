@@ -19,7 +19,7 @@ struct RuntimeContext {
     const TypeRelations* type_relations{};
     bool resumable{},in_task{},cleanup{},unwinding{};
 };
-struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; };
+struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; bool callback{}; };
 struct StandardSignature { std::vector<std::string> parameters; std::string result; };
 StandardSignature standard_signature(const StandardFunction& function,const std::vector<std::string>& argument_types);
 std::string format_error(const ErrorValue& value);

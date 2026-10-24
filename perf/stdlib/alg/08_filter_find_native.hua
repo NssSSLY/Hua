@@ -1,0 +1,20 @@
+# 过滤、存在与查找：原生alg.filter/any/find_index（对照05手写）
+import std.list as list
+import std.alg as alg
+fn keep(x int) bool { return x % 3 == 0 }
+fn big(x int) bool { return x > 19990 }
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(src, (i * 7) % 20000)) }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..20 {
+        let target = 19999 - round
+        fn hit(x int) bool { return x == target }
+        total += len(alg.filter(xs, keep))
+        if alg.any(xs, big) { total += 1 }
+        total += alg.find_index(xs, hit)
+    }
+    print(total)
+}

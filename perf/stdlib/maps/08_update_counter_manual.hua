@@ -1,0 +1,16 @@
+# 单词计数：手写为m[w]=maps.get_or(m,w,0)+1（原生maps.update对照见09）
+import std.list as list
+import std.maps as maps
+fn main() {
+    var empty []string = []
+    var src = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(src, "w" + str((i * 7) % 500))) }
+    let words = list.snapshot(src)
+    var total = 0
+    for round in 0..20 {
+        var counts = map[string]int{}
+        for w in words { counts[w] = maps.get_or(counts, w, 0) + 1 }
+        total += unwrap(counts["w0"]) + unwrap(counts["w499"]) + len(counts)
+    }
+    print(total)
+}

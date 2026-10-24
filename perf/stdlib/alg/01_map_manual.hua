@@ -1,0 +1,18 @@
+# 逐项变换：手写for调用函数并append（原生alg.map对照见03）
+import std.list as list
+import std.alg as alg
+fn scale(x int) int { return x * 3 + 1 }
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(src, i % 1000)) }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..20 {
+        var out = list.from_slice(empty)
+        unwrap(list.reserve(out, len(xs)))
+        for x in xs { unwrap(list.append(out, scale(x))) }
+        total += unwrap(alg.sum(list.snapshot(out)))
+    }
+    print(total)
+}

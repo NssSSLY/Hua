@@ -1,0 +1,27 @@
+# 按结构字段排序：手写为把(键,下标)压成int后alg.sorted再回填（原生sorted_by_key对照见09）
+import std.list as list
+import std.alg as alg
+struct Item { id int
+    score int }
+fn main() {
+    var none []Item = []
+    var src = list.from_slice(none)
+    for i in 0..5000 { unwrap(list.append(src, Item{id: i, score: (i * 7919) % 1000})) }
+    let items = list.snapshot(src)
+    var check = 0
+    for round in 0..10 {
+        var empty []int = []
+        var packed = list.from_slice(empty)
+        for i in 0..len(items) { unwrap(list.append(packed, items[i].score * 100000 + i)) }
+        let order = unwrap(alg.sorted(list.snapshot(packed)))
+        var out = list.from_slice(none)
+        for p in order { unwrap(list.append(out, items[p % 100000])) }
+        let ordered = list.snapshot(out)
+        var j = 0
+        while j < 5000 {
+            check += j * ordered[j].id
+            j += 97
+        }
+    }
+    print(check)
+}

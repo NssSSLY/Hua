@@ -30,5 +30,6 @@
 - 用户选择HUA-D035方案；候选：A清单、C4多返回值不经堆、C3 map查找不复制键、C1 struct写时复制
 
 - 切片2（maps 6、sets 6、list 9，HUAB10）已完成并推送（2026-10-24）；D5透明比较器实测退化已回退
-- 下一项：L0-1回调入口（之后sort_by/map/filter/fold等回调类方法），先写接口提案给用户审
+- L0-1回调入口与15个回调函数已完成并推送（2026-10-24，HUAB11）；结果见docs/标准库设计与实现路线.md“L0-1回调结果”
+- 下一项：HUA-D038第4步math P0与encoding P0（整数gcd/lcm/pow/isqrt、反三角、浮点pow/cbrt/fmod、常数、is_nan/is_inf；hex/base64），先写接口提案给用户审
 

@@ -217,6 +217,21 @@ const std::vector<StandardFunction>& standard_functions() {
         {"sets","difference",{"",""},"",false,true,10},
         {"sets","is_subset",{"",""},"bool",false,false,10},
         {"sets","is_disjoint",{"",""},"bool",false,false,10},
+        {"alg","map",{"",""},"",false,false,11,true},
+        {"alg","fold",{"","",""},"",false,false,11,true},
+        {"alg","filter",{"",""},"",false,false,11,true},
+        {"alg","any",{"",""},"",false,false,11,true},
+        {"alg","all",{"",""},"",false,false,11,true},
+        {"alg","find",{"",""},"",false,false,11,true},
+        {"alg","find_index",{"",""},"",false,false,11,true},
+        {"alg","sorted_by_key",{"",""},"",false,false,11,true},
+        {"alg","sorted_by",{"",""},"",false,false,11,true},
+        {"alg","min_by_key",{"",""},"",false,false,11,true},
+        {"alg","max_by_key",{"",""},"",false,false,11,true},
+        {"list","sort_by_key",{"",""},"void",true,false,11,true},
+        {"list","sort_by",{"",""},"void",true,false,11,true},
+        {"list","retain",{"",""},"int",true,false,11,true},
+        {"maps","update",{"","","",""},"",true,false,11,true},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
@@ -263,7 +278,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=parameters[1])
         runtime_error(s,"algorithm target requires identical element type","E4003");
     std::vector<Value> args;args.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],parameters[i],s));}
-    if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data))writable=p->writable;if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
+    if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
     if(f.module=="file")return invoke_file_standard(f,args,s,context);
     if(f.module=="error")return invoke_error_standard(f,args,s);
     if(f.module=="path"||(f.module=="fs"&&(f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);

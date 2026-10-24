@@ -1,6 +1,7 @@
 #pragma once
 #include "hua/bytecode.hpp"
 #include "hua/stdlib.hpp"
+#include "hua/callback.hpp"
 #include <iosfwd>
 #include "hua/tasks.hpp"
 #include "hua/entry.hpp"
@@ -185,6 +186,17 @@ private:
     Value isolated(const Value& value,unsigned depth=0);
     Routine<Value> launch(const Callable&,const std::vector<Value>&,const Instruction&,std::vector<std::int64_t> batch={},std::string element={},bool contextual=false);
     Routine<Value> parallel(const std::vector<Value>&,const Instruction&);
+    // L0-1 host: callbacks re-enter this VM. The callback call site is only the
+    // standard call's span: no contextual literal flags reach callback parameters.
+    // `route` caches the callee layout across calls; from dispatch it is the standard
+    // call site's own (otherwise unused) function route.
+    struct Callbacks final:CallbackHost {
+        // Callback frames outlive this host while an error unwinds, so they name
+        // `stable` (the standard call's span in the loaded bytecode) or own a copy.
+        VirtualMachine& vm;Instruction site;FunctionRoute own;FunctionRoute* route;const SourceSpan* stable;
+        Callbacks(VirtualMachine& owner,const SourceSpan& span,FunctionRoute* cache=nullptr,const SourceSpan* bytecode_span=nullptr):vm(owner),route(cache?cache:&own),stable(bytecode_span){site.span=span;}
+        Routine<Value> invoke(const Callable&,std::vector<Value>,const SourceSpan&) override;
+    };
     Routine<void> dispatch(std::size_t stop_depth=0);
     Routine<void> drain(const std::shared_ptr<Environment>& env);
     Routine<void> cleanup_error();

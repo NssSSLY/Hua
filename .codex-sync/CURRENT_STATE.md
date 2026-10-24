@@ -35,13 +35,12 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 唯一下一步
 
-**下一项：HUA-D038第3步——L0-1回调入口的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。
+**下一项：HUA-D038第4步——math P0与encoding P0的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。
 
-- 目标：原生标准函数回调Hua函数值的统一入口，AST解释器与源码VM/HUAB一致；覆盖步数预算计入、Result/诊断传播、GC根、Task取消检查点、捕获与重入（回调里再调标准函数）。需求见docs/标准库设计与实现路线.md“前置基础”表L0-1行。
-- 首批依赖它的方法（提案中给出精确签名）：list/alg的`sort_by`、`map`、`filter`、`fold`、`find`、`any`/`all`、`min_by`/`max_by`，maps的`update`。
-- 提案写到.codex-sync/knowledge/bootstrap-performance/designs/（参照2026-10-24-slice2-map-list-set-proposal.md的格式：现状事实、签名表、语义/错误/复杂度、性能原则、基准、版本since 11/HUAB11、验收、待决定点）。
-- 实施时沿用切片验收：perf/stdlib先建手写基线→实现→三路径测试（参照tests/collections_p0_tests.py）→`ab_bench`（core与stdlib）无退化，可疑项用交替计时复核→reference_bench→CTest（archives_extensions为HUA-D037已知本机失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
-- 经验：新模块名判断不要放在每次标准调用的热路径上，先判`since`；内部改动必须A/B实测才能保留（D5即因此回退）。
+- 已完成并验收（2026-10-24）：切片2（maps/sets/list，HUAB10，已推送b07cbd8）；L0-1回调入口与15个回调函数（HUAB11，已提交推送），结果见docs/标准库设计与实现路线.md“L0-1回调结果”。
+- 范围（见docs/标准库设计与实现路线.md对齐清单std.math/std.encoding行）：math整数`gcd`/`lcm`/`pow`（溢出报错）/`isqrt`、`asin`/`acos`/`atan`/`atan2`、浮点`pow`/`cbrt`/`fmod`、常数`pi`/`e`、`is_nan`/`is_inf`；encoding `hex`、`base64`（标准与URL安全）编码/解码。全部原生、无回调依赖；版本预计`since` 12/HUAB12。
+- 提案格式参照.codex-sync/knowledge/bootstrap-performance/designs/2026-10-24-slice2-map-list-set-proposal.md；实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项交替计时复核）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 经验：新判断不要放在每次标准调用热路径；内部改动A/B实测才保留（D5、协程帧池均因无收益回退）；指针型缓存要考虑错误展开时的生命周期（L0-1回调帧span缺陷）。
 
 ## 待用户决定
 

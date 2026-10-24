@@ -3,6 +3,7 @@
 #include <exception>
 #include "hua/interpreter.hpp"
 #include "hua/runtime.hpp"
+#include "hua/callback.hpp"
 #include "hua/tasks.hpp"
 #include <algorithm>
 #include <charconv>
@@ -296,6 +297,14 @@ Routine<Value> Interpreter::call(const Callable& callable,const std::vector<Valu
 Routine<Value> Interpreter::builtin(const std::string& name,const std::vector<Value>& args,const Node& site) {
     if(name=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=Node(NodeKind::Call,site.span);for(std::size_t i=1;i<site.children.size();++i)nested.add(std::make_unique<Node>(site.children[i]->kind,site.children[i]->span,site.children[i]->text));co_return co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested);}
     if(name=="parallel_map")co_return co_await parallel(args,site);
+    if(const auto& info=builtin_info(name);info.standard&&info.standard->callback){
+        struct Host final:CallbackHost {
+            Interpreter& self;Node site;
+            Host(Interpreter& owner,const SourceSpan& span):self(owner),site(NodeKind::Call,span){}
+            Routine<Value> invoke(const Callable& callable,std::vector<Value> values,const SourceSpan&) override{co_return co_await self.call(callable,values,site);}
+        } host(*this,site.span);
+        co_return co_await invoke_callback_standard(*info.standard,args,site.span,host,context_);
+    }
     std::vector<bool> contextual;for(std::size_t i=1;i<site.children.size();++i)contextual.push_back(contextual_literal(*site.children[i]));auto inferred=model_.types.find(&site);co_return co_await invoke_resumable(name,args,site.span,output_,contextual,inferred==model_.types.end()?"":inferred->second,context_);
 }
 }

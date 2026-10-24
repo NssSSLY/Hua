@@ -1,0 +1,19 @@
+# 就地保留：手写为快照后逐项append到新List
+import std.list as list
+fn drop(x int) bool { return x % 4 == 0 }
+fn main() {
+    var empty []int = []
+    var check = 0
+    for round in 0..20 {
+        var l = list.from_slice(empty)
+        for i in 0..20000 { unwrap(list.append(l, (i * 13) % 1000)) }
+        let before = list.len(l)
+        var kept = list.from_slice(empty)
+        for x in list.snapshot(l) {
+            if !drop(x) { unwrap(list.append(kept, x)) }
+        }
+        l = kept
+        check += before - list.len(l) + unwrap(list.get(l, 0)) + unwrap(list.get(l, list.len(l) - 1))
+    }
+    print(check)
+}

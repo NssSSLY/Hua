@@ -1,0 +1,13 @@
+# 归约：原生alg.fold（对照02手写）
+import std.list as list
+import std.alg as alg
+fn step(acc int, x int) int { return acc + x * x }
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..20000 { unwrap(list.append(src, i % 1000)) }
+    let xs = list.snapshot(src)
+    var total = 0
+    for round in 0..20 { total += alg.fold(xs, 0, step) }
+    print(total)
+}
