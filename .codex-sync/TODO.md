@@ -32,5 +32,6 @@
 - 切片2（maps 6、sets 6、list 9，HUAB10）已完成并推送（2026-10-24）；D5透明比较器实测退化已回退
 - L0-1回调入口与15个回调函数已完成并推送（2026-10-24，HUAB11）；结果见docs/标准库设计与实现路线.md“L0-1回调结果”
 - math P0与std.encoding已完成并推送（2026-10-24，HUAB12）；结果见docs/标准库设计与实现路线.md“第4步math/encoding结果”
-- 下一项：HUA-D038第4步后半——random（可设种子PRNG）、安全随机/UUID、SHA-256/HMAC，先写接口提案给用户审
+- std.random与std.crypto已完成并推送（2026-10-24，HUAB13）；结果见docs/标准库设计与实现路线.md“第4步后半random/crypto结果”
+- 下一项：HUA-D038第5步——collections（Deque、Heap/优先队列）、Duration与UTC日期、os exit/平台、fs walk/copy、test/log；先按价值排序选第一组写接口提案给用户审
 

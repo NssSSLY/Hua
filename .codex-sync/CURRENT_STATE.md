@@ -35,12 +35,12 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 唯一下一步
 
-**下一项：HUA-D038第4步后半——random、安全随机/UUID、SHA-256/HMAC的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。
+**下一项：HUA-D038第5步——collections（Deque、Heap/优先队列）、Duration与UTC日期、os exit/平台、fs walk/copy、test/log；先选第一组写精确接口提案给用户审，审定后才实施。** 不推进自举（用户2026-10-23决定）。
 
-- 已完成（2026-10-24）：切片2（HUAB10，b07cbd8）、L0-1回调（HUAB11，eaef409，均已推送）；math P0与std.encoding（HUAB12，已提交推送），结果见docs/标准库设计与实现路线.md“第4步math/encoding结果”。
-- 范围（见docs/标准库设计与实现路线.md对齐清单std.random/安全随机/哈希行）：可设种子的PRNG实例（固定算法与版本，整数区间、float、shuffle、choice、sample——shuffle/choice等可能需要List或回调，提案中定）、操作系统CSPRNG字节、UUID v4、SHA-256与HMAC-SHA256（Bytes输入）。版本预计`since` 13/HUAB13；PRNG算法与种子的跨平台可复现是需要定的关键点。
-- 提案格式参照.codex-sync/knowledge/bootstrap-performance/designs/2026-10-24-math-encoding-p0-proposal.md；实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项交替计时复核）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
-- 经验：新判断不要放在每次标准调用热路径；内部改动A/B实测才保留；指针型缓存考虑错误展开时的生命周期；机器负载会使ab_bench整体变慢，可疑项用交替计时复核。
+- 已完成（2026-10-24）：切片2（HUAB10）、L0-1回调（HUAB11）、math/encoding（HUAB12，35b19c6，均已推送）；std.random与std.crypto（HUAB13，已提交推送），结果见docs/标准库设计与实现路线.md“第4步后半random/crypto结果”。
+- 第5步范围见docs/标准库设计与实现路线.md“建议执行顺序”第5条与对齐清单std.collections/std.time/std.os/std.fs/test行；Deque/Heap需要新句柄（可参照本步`RngValue`的接入清单）或基于List的函数，提案中定。
+- 实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项交替计时复核）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 经验：新模块若是轻量标准调用，在`invoke_standard`入口早分派并自行检查实参，避免通用参数检查的类型串开销；新判断不要放在每次标准调用热路径；内部改动A/B实测才保留；机器负载会使单次测量偏高，可疑项交替复测。
 
 ## 待用户决定
 

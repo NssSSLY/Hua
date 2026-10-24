@@ -1,0 +1,12 @@
+# 生成UUID v4（只校验格式，无手写对照）
+import std.crypto as crypto
+import std.strings as strings
+fn main() {
+    var ok = 0
+    for i in 0..100000 {
+        let u = unwrap(crypto.uuid4())
+        let v = unwrap(strings.slice(u, 19, 20))
+        if len(u) == 36 && unwrap(strings.slice(u, 14, 15)) == "4" && strings.contains("89ab", v) { ok += 1 }
+    }
+    print(ok)
+}

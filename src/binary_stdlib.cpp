@@ -42,6 +42,14 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
         else if(f.name=="merge")out.parameters[1]=types[0];
         return out;
     }
+    // random.shuffle/choice/sample: element types come from the second argument (static checks only).
+    if(f.since>=13&&f.module=="random"&&types.size()>1&&!types[1].empty()){
+        if(f.name=="shuffle")out.parameters[1]=types[1];
+        auto close=types[1].find(']');auto element=types[1].starts_with('[')&&close!=std::string::npos?types[1].substr(close+1):"";
+        if(f.name=="choice"&&!element.empty())out.result="Result<"+element+",string>";
+        if(f.name=="sample"&&!element.empty())out.result="Result<[]"+element+",string>";
+        return out;
+    }
     if(f.module!="list"||types.empty())return out;
     if(f.name=="from_slice"){auto end=types[0].find(']');auto element=types[0].starts_with('[')&&end!=std::string::npos?types[0].substr(end+1):"";out.result=element.empty()?"":"List<"+element+">";return out;}
     auto element=item_type(types[0]);out.parameters[0]=element.empty()?"":"List<"+element+">";

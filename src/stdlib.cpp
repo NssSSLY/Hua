@@ -88,6 +88,19 @@ const std::vector<StandardFunction>& standard_functions() {
         {"encoding","base64_decode",{"string"},"Result<Bytes,string>",false,false,12},
         {"encoding","base64url_encode",{"Bytes"},"string",false,false,12},
         {"encoding","base64url_decode",{"string"},"Result<Bytes,string>",false,false,12},
+        {"random","new",{"int"},"std.random.Rng",false,true,13},
+        {"random","int",{"std.random.Rng","int","int"},"int",true,false,13},
+        {"random","float",{"std.random.Rng"},"float",true,false,13},
+        {"random","bool",{"std.random.Rng"},"bool",true,false,13},
+        {"random","bytes",{"std.random.Rng","int"},"Bytes",true,false,13},
+        {"random","shuffle",{"std.random.Rng",""},"void",true,false,13},
+        {"random","choice",{"std.random.Rng",""},"",true,false,13},
+        {"random","sample",{"std.random.Rng","","int"},"",true,false,13},
+        {"crypto","random_bytes",{"int"},"Result<Bytes,string>",false,false,13},
+        {"crypto","uuid4",{},"Result<string,string>",false,false,13},
+        {"crypto","sha256",{"Bytes"},"Bytes",false,false,13},
+        {"crypto","hmac_sha256",{"Bytes","Bytes"},"Bytes",false,false,13},
+        {"crypto","equal",{"Bytes","Bytes"},"bool",false,false,13},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -283,6 +296,8 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(input.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
     // maps/sets check their own map arguments without building signature strings.
     if(f.since>=10&&(f.module=="maps"||f.module=="sets"))return invoke_collection_standard(f,input,s,context);
+    // std.random draws are one-word operations: check the few argument kinds directly.
+    if(f.since>=13&&f.module=="random")return invoke_random_standard(f,input,s);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.
     const bool typed=f.module=="alg"||f.module=="simd"||f.module=="task"||f.module=="list";
@@ -297,7 +312,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=parameters[1])
         runtime_error(s,"algorithm target requires identical element type","E4003");
     std::vector<Value> args;args.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],parameters[i],s));}
-    if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
+    if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<RngValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
     if(f.module=="file")return invoke_file_standard(f,args,s,context);
     if(f.module=="error")return invoke_error_standard(f,args,s);
     if(f.module=="path"||(f.module=="fs"&&(f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
@@ -308,6 +323,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.module=="task")return task_standard(f.name,args,s,context);
     if(f.since>=10&&f.module=="list")return invoke_list_extra(f,args,s,context);
     if(f.since>=12&&f.module=="encoding")return invoke_encoding_standard(f,args,s);
+    if(f.since>=13&&f.module=="crypto")return invoke_crypto_standard(f,args,s,context);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
     if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);
     if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);

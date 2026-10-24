@@ -1,0 +1,13 @@
+# 随机整数与浮点：原生std.random（对照01手写）
+import std.random as random
+fn main() {
+    var r = random.new(42)
+    var n = 0
+    for i in 0..300000 {
+        let v = random.int(r, 0, 1000)
+        if v >= 0 && v < 1000 { n += 1 }
+        let f = random.float(r)
+        if f >= 0.0 && f < 1.0 { n += 1 }
+    }
+    print(n)
+}

@@ -24,6 +24,8 @@ bool file_type(const std::string& type,const SemanticModel& model,std::set<std::
         for(const auto& field:found->second->children)if(field->kind==N::Field&&!field->children.empty()&&file_type(type_name(*field->children[0]),model,seen))return true;
     return false;
 }
+// Shared mutable handles whose write capability flows like a container.
+bool shared_handle(std::string_view type){return type=="Buffer"||type=="std.random.Rng";}
 bool mutable_parameter(const Node& p) { return p.text.find(" mut")!=std::string::npos || (!p.children.empty() && p.children[0]->kind==N::MutableType); }
 bool definitely_returns(const Node& n) {
     if(n.kind==N::Return)return true;
@@ -66,7 +68,7 @@ void SemanticAnalyzer::define(const std::string& name,Symbol symbol,const Source
 void SemanticAnalyzer::validate_type(const Node& n,bool allow_void) {
     if(n.kind==N::TypeName&&n.text=="void"&&!allow_void)error(n,"void is only a no-value function/Result/Task success type","E3004");
     if(n.kind==N::ArrayType){auto count=fixed_extent(n.text);if(!count||*count>1000000)error(n,"fixed array size must be an integer literal in 0..1000000","E3004");}
-    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","std.file.File","std.file.IOFailure","Json","Bytes","Buffer","Task"};
+    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","std.random.Rng","std.file.File","std.file.IOFailure","Json","Bytes","Buffer","Task"};
     if(n.kind==N::TypeName&&n.text.empty())return;
     if(n.kind==N::TypeName && !types.contains(n.text) && !model_.structures.contains(n.text)) {
         if(n.text.find('.')==std::string::npos)error(n,"unknown type `"+n.text+"`","E3004");
@@ -262,7 +264,7 @@ std::pair<SemanticAnalyzer::Symbol*,std::string> SemanticAnalyzer::projection(co
 }
 void SemanticAnalyzer::remember(const Node& destination,const Node& source,Info value) {
     auto [root,path]=projection(destination);if(!root)return;
-    if(!path.empty()&&!value.type.starts_with('[')&&!value.type.starts_with("map<")&&!value.type.starts_with("Result<")&&!value.type.starts_with("List<")&&value.type!="Buffer"&&!record(value.type))return;
+    if(!path.empty()&&!value.type.starts_with('[')&&!value.type.starts_with("map<")&&!value.type.starts_with("Result<")&&!value.type.starts_with("List<")&&!shared_handle(value.type)&&!record(value.type))return;
     auto views=node_views_.contains(&source)?node_views_.at(&source):fields(value);
     Views inherited;
     for(auto [field,view]:views){
@@ -290,7 +292,7 @@ void SemanticAnalyzer::statement(const Node& n) {
         std::optional<Value> folded;
         if(n.kind==N::Const){folded=enforce_type(constant(*n.children.back()),declared,n.span,numeric_literal(*n.children.back()));model_.constants[&n]=*folded;}
         bool writable=n.kind==N::Var;
-        if(declared.starts_with('[')||declared.starts_with("map<")||declared.starts_with("Result<")||declared.starts_with("List<")||declared=="Buffer")writable=writable && info.writable;
+        if(declared.starts_with('[')||declared.starts_with("map<")||declared.starts_with("Result<")||declared.starts_with("List<")||shared_handle(declared))writable=writable && info.writable;
         define(n.text,{declared,n.kind==N::Var,writable,folded},n.span);lookup(n.text,n.span).declaration=&n;Node destination(N::Name,n.span,n.text);remember(destination,*n.children.back(),info);model_.types[&n]=declared;break;
     }
     case N::MultiBinding:case N::MultiAssignment: {
@@ -307,7 +309,7 @@ void SemanticAnalyzer::statement(const Node& n) {
             else {require(targets[i].type,item,source);if(p.kind==N::Name){auto& symbol=lookup(p.text,p.span);symbol.type=symbol.declared.ends_with('?')?(item.type=="nil"?"nil":item.type.ends_with('?')?symbol.declared:symbol.declared.substr(0,symbol.declared.size()-1)):symbol.declared;}}
         }
         if(n.kind==N::MultiBinding)for(std::size_t i=0;i<list.children.size();++i){const auto& p=*list.children[i];if(p.text=="_")continue;auto t=model_.types.at(&p);bool writable=n.text=="var";
-            if(t.starts_with('[')||t.starts_with("map<")||t.starts_with("Result<")||t.starts_with("List<")||t=="Buffer"){const Node& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];writable=writable&&(node_positions_.contains(&source)&&i<node_positions_.at(&source).size()?node_positions_.at(&source)[i].writable:model_.writable.at(&source));}
+            if(t.starts_with('[')||t.starts_with("map<")||t.starts_with("Result<")||t.starts_with("List<")||shared_handle(t)){const Node& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];writable=writable&&(node_positions_.contains(&source)&&i<node_positions_.at(&source).size()?node_positions_.at(&source)[i].writable:model_.writable.at(&source));}
             define(p.text,{t,n.text=="var",writable,{}},p.span);const auto& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];Node destination(N::Name,p.span,p.text);auto value=node_positions_.contains(&source)&&i<node_positions_.at(&source).size()?node_positions_.at(&source)[i]:infos_.at(&source);value.type=t;
             auto original=node_views_[&source];if(node_position_views_.contains(&source)&&i<node_position_views_.at(&source).size())node_views_[&source]=node_position_views_.at(&source)[i];remember(destination,source,value);node_views_[&source]=std::move(original);}
 
@@ -315,7 +317,7 @@ void SemanticAnalyzer::statement(const Node& n) {
             const auto& p=*list.children[i];if(p.text=="_")continue;
             const auto& source=n.children[1]->kind==N::Pack?*n.children[1]->children[i]:*n.children[1];
             auto value=node_positions_.contains(&source)&&i<node_positions_.at(&source).size()?node_positions_.at(&source)[i]:infos_.at(&source);value.type=targets[i].type;
-            if(p.kind==N::Name&&(value.type.starts_with('[')||value.type.starts_with("map<")||value.type.starts_with("Result<")||value.type.starts_with("List<")||value.type=="Buffer"))lookup(p.text,p.span).writable=value.writable;
+            if(p.kind==N::Name&&(value.type.starts_with('[')||value.type.starts_with("map<")||value.type.starts_with("Result<")||value.type.starts_with("List<")||shared_handle(value.type)))lookup(p.text,p.span).writable=value.writable;
             auto original=node_views_[&source];if(node_position_views_.contains(&source)&&i<node_position_views_.at(&source).size())node_views_[&source]=node_position_views_.at(&source)[i];
             remember(p,source,value);if(p.kind==N::Index)update_aliases(infos_.at(p.children[0].get()),"[]",value,node_views_[&source]);node_views_[&source]=std::move(original);
         }
@@ -471,7 +473,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
             if((n.text=="%=" || n.text=="//=") && !lhs.type.empty() && (!numeric_spec(lhs.type)||numeric_spec(lhs.type)->category=='f'))error(n,"integer compound operator requires int","E3004");
             if(n.text=="/=" && numeric_spec(lhs.type)&&numeric_spec(lhs.type)->category!='f')error(n,"/= produces float; use a float binding or explicit conversion","E3004");
             if(n.children[0]->kind==N::Name){auto& symbol=lookup(n.children[0]->text,n.span);symbol.type=symbol.declared.ends_with('?')?(rhs.type=="nil"?"nil":rhs.type.ends_with('?')?symbol.declared:symbol.declared.substr(0,symbol.declared.size()-1)):symbol.declared;}
-            if(n.children[0]->kind==N::Name && (lhs.type.starts_with('[')||lhs.type.starts_with("map<")||lhs.type.starts_with("Result<")||lhs.type.starts_with("List<")||lhs.type=="Buffer"))lookup(n.children[0]->text,n.span).writable=rhs.writable;
+            if(n.children[0]->kind==N::Name && (lhs.type.starts_with('[')||lhs.type.starts_with("map<")||lhs.type.starts_with("Result<")||lhs.type.starts_with("List<")||shared_handle(lhs.type)))lookup(n.children[0]->text,n.span).writable=rhs.writable;
             if(n.text=="="){remember(*n.children[0],*n.children[1],rhs);if(n.children[0]->kind==N::Index)update_aliases(infos_.at(n.children[0]->children[0].get()),"[]",rhs,node_views_[n.children[1].get()]);}
         } else if(!numeric_spec(lhs.type)||numeric_spec(lhs.type)->category=='f')require("int",lhs,n);
         out={lhs.type,false};break;
@@ -496,6 +498,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
     case N::StructLiteral: {
         if(n.text=="std.error.Value")error(n,"standard Error must be constructed through std.error","E3004");
         if(n.text=="std.file.File"||n.text=="std.file.IOFailure")error(n,"opaque File/IOFailure must be constructed through std.file","E3004");
+        if(n.text=="std.random.Rng")error(n,"opaque Rng must be constructed through std.random","E3004");
         auto found=model_.structures.find(n.text);if(found==model_.structures.end())error(n,"unknown struct `"+n.text+"`","E3004");
         if(found->second->text.find(" interface")!=std::string::npos)error(n,"interface cannot be constructed directly","E3004");
         std::unordered_set<std::string> seen;
@@ -628,6 +631,14 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}
                     else if(type_arguments(types[0],"List").size()!=1)error(n,"expected List<T>","E3004");
                     else if(f->name=="sort"){auto e=type_arguments(types[0],"List")[0];if(e!="int"&&e!="float"&&e!="string")error(n,"list.sort requires int/float/string elements","E3004");}
+                }
+                if(f->module=="random"&&(f->name=="shuffle"||f->name=="choice"||f->name=="sample")&&types.size()>1&&!types[1].empty()){
+                    if(f->name=="shuffle"){
+                        if(type_arguments(types[1],"List").size()!=1)error(*n.children[2],"random.shuffle requires List<T>","E3004");
+                        if(!args[1].writable&&!probing_)error(*n.children[2],"standard mutation requires a writable argument","E3003");
+                        if(probing_)for(const auto& origin:args[1].origins)pending_effects_.required.insert(origin);
+                    }
+                    else if(!types[1].starts_with('['))error(*n.children[2],"random.choice/sample require an array or slice","E3004");
                 }
                 if((f->module=="maps"||f->module=="sets")&&!types[0].empty()){
                     if(f->module=="sets"&&f->name=="from_slice"){auto e=element_type(types[0]);if(!types[0].starts_with('[')||(e!="bool"&&e!="int"&&e!="string"))error(n,"set from_slice requires a bool/int/string slice or array","E3004");}
@@ -873,7 +884,7 @@ void SemanticAnalyzer::apply_effects(const Effects& effects,const Node& site){
 }
 void SemanticAnalyzer::forget_unknown(const Node& site){
     HUA_SEMA_AREA(unknown);
-    auto shared=[](const std::string& type){return type.starts_with('[')||type.starts_with("map<")||type.starts_with("List<")||type.starts_with("Result<")||type=="Buffer";};
+    auto shared=[](const std::string& type){return type.starts_with('[')||type.starts_with("map<")||type.starts_with("List<")||type.starts_with("Result<")||shared_handle(type);};
     auto reset=[&](Symbol& symbol,bool global){
         if(!shared(symbol.type)&&!record(symbol.type))return;
         if(global&&shared(symbol.type))symbol.writable=false;

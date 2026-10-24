@@ -44,3 +44,5 @@
 - Callback frames point to bytecode span or own a copy; host span dangled during error unwinding
 
 - No is_nan/is_inf (float always finite) and no math.pow (** covers)
+
+- std.random dispatched early in invoke_standard with direct argument checks (generic checks made draws slower than a manual LCG)

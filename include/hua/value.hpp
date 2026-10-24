@@ -44,6 +44,9 @@ Value unary_numeric(std::string_view op,const Value& value,const SourceSpan& spa
 struct BytesValue { std::shared_ptr<const std::string> data; };
 struct BufferValue { std::shared_ptr<std::string> data; bool writable{true}; };
 struct ListValue { std::shared_ptr<ListData> data; bool writable{true}; };
+// std.random.Rng (since 13): xoshiro256** state behind a shared handle, like Buffer.
+struct RngState { std::uint64_t s[4]{}; };
+struct RngValue { std::shared_ptr<RngState> data; bool writable{true}; };
 struct JsonValue { std::shared_ptr<const JsonData> data; };
 using MapKey = std::variant<bool, std::int64_t, std::string>;
 struct MapValue { std::shared_ptr<MapData> data; bool writable{true}; };
@@ -82,7 +85,7 @@ struct Callable { const Node* function{}; BuiltinName builtin; std::optional<Str
     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
 };
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue>;
     Data data;
     Value() = default;
     template<class T> explicit Value(T value) : data(std::move(value)) {}

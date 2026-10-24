@@ -96,6 +96,7 @@ std::string value_type(const Value& v) {
     case 5: {const auto& s=std::get<SliceValue>(v.data);return (s.fixed?"["+std::to_string(s.length)+"]":"[]")+s.element_type;}
     case 6: return std::get<StructValue>(v.data).data->name;
     case 21:return std::get<PlainRecord>(v.data).layout->name;
+    case 22:return "std.random.Rng";
     case 7: { const auto& c=std::get<Callable>(v.data); return c.function ? "fn:"+declared_name(*c.function) : "builtin:"+c.builtin.str(); }
     case 8: {const auto& m=std::get<MapValue>(v.data);return "map<"+m.data->key_type+","+m.data->item_type+">";}
     case 9: {std::string out="multi<";const auto& vs=std::get<MultiValue>(v.data).data->values;for(std::size_t i=0;i<vs.size();++i){if(i)out+=',';out+=value_type(vs[i]);}return out+">";}
@@ -335,6 +336,7 @@ Value binary_value(std::string_view op,const Value& a,const Value& b,const Sourc
 Value read_only(Value v) {
     if(auto p=std::get_if<PlainRecord>(&v.data))p->writable=false;
     if(auto p=std::get_if<BufferValue>(&v.data))p->writable=false;
+    if(auto p=std::get_if<RngValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<ListValue>(&v.data))p->writable=false;
     if(auto p=std::get_if<SliceValue>(&v.data)) p->writable=false;
     if(auto p=std::get_if<StructValue>(&v.data)) p->writable=false;
@@ -428,6 +430,7 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1,resource_alias));if(deep)r.writable=true;return Value(r);}
     if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;m->values.reserve(p->data->values.size());for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1,resource_alias));return Value(MultiValue{m});}
     if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{managed<std::string>(*p->data),true});
+    if(deep)if(auto p=std::get_if<RngValue>(&v.data))return Value(RngValue{managed<RngState>(*p->data),true});
     if(deep)if(auto p=std::get_if<ListValue>(&v.data)){auto data=managed<ListData>();data->element_type=p->data->element_type;data->values.reserve(p->data->values.size());for(const auto& x:p->data->values)data->values.push_back(copy_value(x,true,depth+1,resource_alias));return Value(ListValue{data,true});}
     if(deep) if(auto p=std::get_if<MapValue>(&v.data)){auto data=managed<MapData>();data->key_type=p->data->key_type;data->item_type=p->data->item_type;for(const auto& [k,x]:p->data->entries)data->entries.emplace(k,copy_value(x,true,depth+1,resource_alias));return Value(MapValue{data,true});}
     if(auto p=std::get_if<SliceValue>(&v.data);p&&(deep||p->fixed)) {
@@ -559,6 +562,7 @@ std::string show(const Value& v) {
     if(auto p=std::get_if<NumericValue>(&v.data))return std::visit([](auto x)->std::string{if constexpr(std::is_same_v<decltype(x),std::uint64_t>)return std::to_string(x);else return show(Value(x));},p->number);
     if(auto p=std::get_if<BytesValue>(&v.data))return "<Bytes:"+std::to_string(p->data->size())+">";
     if(auto p=std::get_if<BufferValue>(&v.data))return "<Buffer:"+std::to_string(p->data->size())+">";
+    if(std::holds_alternative<RngValue>(v.data))return "<Rng>";
     if(auto p=std::get_if<ListValue>(&v.data))return "<List:"+std::to_string(p->data->values.size())+">";
     if(v.data.index()==0) return "nil";
     if(auto p=std::get_if<bool>(&v.data)) return *p ? "true":"false";

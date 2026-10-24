@@ -1,0 +1,11 @@
+# 大量短消息HMAC-SHA256（无手写对照）
+import std.bytes as bytes
+import std.crypto as crypto
+import std.encoding as encoding
+fn main() {
+    let key = bytes.from_text("benchmark-key")
+    var empty []int = []
+    var mac = unwrap(bytes.from_ints(empty))
+    for i in 0..5000 { mac = crypto.hmac_sha256(key, unwrap(bytes.concat(bytes.from_text("message-" + str(i)), mac))) }
+    print(encoding.hex_encode(mac))
+}
