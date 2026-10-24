@@ -1,0 +1,15 @@
+# 整数平方根：手写浮点初值加整数校正（原生math.isqrt对照见05）
+fn isqrt(n int) int {
+    var x = int(sqrt(float(n)))
+    while x * x > n { x -= 1 }
+    while (x + 1) * (x + 1) <= n { x += 1 }
+    return x
+}
+fn main() {
+    var total = 0
+    for i in 0..200000 {
+        let n = i * 999983 + (i * i) % 1000003
+        total += isqrt(n)
+    }
+    print(total)
+}

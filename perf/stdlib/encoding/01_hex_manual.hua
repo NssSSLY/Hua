@@ -1,0 +1,30 @@
+# 十六进制编码/解码往返：手写查表＋Buffer、parse_int（原生encoding对照见03）
+import std.list as list
+import std.bytes as bytes
+import std.buffer as buffer
+import std.strings as strings
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..4096 { unwrap(list.append(src, i % 256)) }
+    let data = unwrap(bytes.from_ints(list.snapshot(src)))
+    let digits = "0123456789abcdef"
+    var none []string = []
+    var pairs = list.from_slice(none)
+    for v in 0..256 { unwrap(list.append(pairs, unwrap(strings.slice(digits, v >> 4, (v >> 4) + 1)) + unwrap(strings.slice(digits, v & 15, (v & 15) + 1)))) }
+    let table = list.snapshot(pairs)
+    var total = 0
+    for round in 0..50 {
+        var out = buffer.new()
+        for v in unwrap(bytes.to_ints(data)) { buffer.write_str(out, table[v]) }
+        let text = unwrap(buffer.take_text(out))
+        var back = list.from_slice(empty)
+        var i = 0
+        while i < len(text) {
+            unwrap(list.append(back, unwrap(strings.parse_int(unwrap(strings.slice(text, i, i + 2)), 16))))
+            i += 2
+        }
+        total += len(text) + bytes.crc32(unwrap(bytes.from_ints(list.snapshot(back))))
+    }
+    print(total)
+}

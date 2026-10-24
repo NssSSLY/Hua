@@ -1,0 +1,7 @@
+# 整数平方根：原生math.isqrt（对照02手写）
+import std.math as math
+fn main() {
+    var total = 0
+    for i in 0..200000 { total += math.isqrt(i * 999983 + (i * i) % 1000003) }
+    print(total)
+}

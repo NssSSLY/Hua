@@ -1,0 +1,16 @@
+# 十六进制编码/解码往返：原生std.encoding（对照01手写）
+import std.list as list
+import std.bytes as bytes
+import std.encoding as encoding
+fn main() {
+    var empty []int = []
+    var src = list.from_slice(empty)
+    for i in 0..4096 { unwrap(list.append(src, i % 256)) }
+    let data = unwrap(bytes.from_ints(list.snapshot(src)))
+    var total = 0
+    for round in 0..50 {
+        let text = encoding.hex_encode(data)
+        total += len(text) + bytes.crc32(unwrap(encoding.hex_decode(text)))
+    }
+    print(total)
+}

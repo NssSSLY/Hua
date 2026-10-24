@@ -1,0 +1,10 @@
+# 反三角、立方根与浮点余数（无手写对照，只对参照语言）
+import std.math as math
+fn main() {
+    var total = 0.0
+    for i in 0..100000 {
+        let x = float(i % 2000) / 1000.0 - 1.0
+        total += unwrap(math.asin(x)) + unwrap(math.acos(x)) + unwrap(math.atan2(x, 0.5)) + unwrap(math.cbrt(x * 8.0)) + unwrap(math.fmod(float(i), 7.5))
+    }
+    print(math.isqrt(int(total * 1000.0)))
+}

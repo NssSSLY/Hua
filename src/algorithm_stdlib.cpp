@@ -1,8 +1,10 @@
 #include "hua/stdlib.hpp"
 #include "hua/tasks.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace hua {
 namespace {
@@ -30,6 +32,69 @@ double round_even(double x) {
     if (fraction > 0.5 || (fraction == 0.5 && std::fmod(integral, 2.0) != 0.0))
         integral += 1.0;
     return std::copysign(integral, x);
+}
+// math P0 (since 12). Integer functions follow the integer operators: overflow is
+// E4002 and a negative isqrt input E4003. Float functions keep the Result contract.
+std::uint64_t magnitude(I x) { return x < 0 ? std::uint64_t(0) - static_cast<std::uint64_t>(x) : static_cast<std::uint64_t>(x); }
+std::uint64_t binary_gcd(std::uint64_t a, std::uint64_t b) {
+    if (!a) return b;
+    if (!b) return a;
+    auto shift = std::countr_zero(a | b);
+    a >>= std::countr_zero(a);
+    while (b) {
+        b >>= std::countr_zero(b);
+        if (a > b) std::swap(a, b);
+        b -= a;
+    }
+    return a << shift;
+}
+Value math_p0(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
+    const auto& name = f.name;
+    if (name == "pi") return Value(std::numbers::pi);
+    if (name == "e") return Value(std::numbers::e);
+    if (name == "tau") return Value(2 * std::numbers::pi);
+    if (name == "gcd" || name == "lcm") {
+        auto a = magnitude(std::get<I>(args[0].data)), b = magnitude(std::get<I>(args[1].data));
+        auto g = binary_gcd(a, b);
+        std::uint64_t result = g;
+        if (name == "lcm") {
+            if (!a || !b) return Value(I{0});
+            auto q = a / g;
+            if (b && q > std::numeric_limits<std::uint64_t>::max() / b) runtime_error(span, "math.lcm overflow", "E4002");
+            result = q * b;
+        }
+        if (result > static_cast<std::uint64_t>(std::numeric_limits<I>::max())) runtime_error(span, "math." + name + " overflow", "E4002");
+        return Value(static_cast<I>(result));
+    }
+    if (name == "isqrt") {
+        auto n = std::get<I>(args[0].data);
+        if (n < 0) runtime_error(span, "math.isqrt requires a non-negative integer", "E4003");
+        // The float estimate is within a few units; correct it exactly in 128-bit.
+        auto x = static_cast<unsigned __int128>(std::sqrt(static_cast<double>(n)));
+        const auto target = static_cast<unsigned __int128>(n);
+        while (x * x > target) --x;
+        while ((x + 1) * (x + 1) <= target) ++x;
+        return Value(static_cast<I>(x));
+    }
+    for (const auto& arg : args)
+        if (!std::isfinite(std::get<double>(arg.data)))
+            return failure("MATH_DOMAIN: finite input required", "float");
+    double x = std::get<double>(args[0].data), result{};
+    if ((name == "asin" || name == "acos") && std::abs(x) > 1.0)
+        return failure("MATH_DOMAIN: " + name + " requires -1 <= x <= 1", "float");
+    if (name == "asin") result = std::asin(x);
+    else if (name == "acos") result = std::acos(x);
+    else if (name == "atan") result = std::atan(x);
+    else if (name == "atan2") result = std::atan2(x, std::get<double>(args[1].data));
+    else if (name == "cbrt") result = std::cbrt(x);
+    else if (name == "fmod") {
+        auto y = std::get<double>(args[1].data);
+        if (y == 0.0) return failure("MATH_DOMAIN: fmod requires y != 0", "float");
+        result = std::fmod(x, y);
+    }
+    else runtime_error(span, "unknown math operation", "E4003");
+    if (!std::isfinite(result)) return failure("MATH_OVERFLOW: non-finite result", "float");
+    return standard_result(Value(result), true, "float");
 }
 Value math(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
     double x = std::get<double>(args[0].data), result{};
@@ -133,7 +198,7 @@ Value copied(const StandardFunction& f, const SliceValue& input, Work& work) {
 Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Value>& args,
                                 const SourceSpan& span, RuntimeContext* context) {
     task_checkpoint(context, span);
-    if (f.module == "math") return math(f, args, span);
+    if (f.module == "math") return f.since >= 12 ? math_p0(f, args, span) : math(f, args, span);
     auto input = std::get_if<SliceValue>(&args[0].data);
     if (!input || (input->element_type != "int" && input->element_type != "float" && input->element_type != "string"))
         runtime_error(span, "algorithm requires int/float/string slice or array", "E4003");

@@ -617,7 +617,7 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                     else type="void";
                     out={type,false};break;
                 }
-                if(f->module=="math")for(std::size_t i=0;i<types.size();++i)if(!types[i].empty()&&types[i]!="float")error(*n.children[i+1],"math requires explicit default float arguments","E3004");
+                if(f->module=="math")for(std::size_t i=0;i<types.size();++i)if(!types[i].empty()&&types[i]!=f->parameters[i])error(*n.children[i+1],"math requires explicit default "+f->parameters[i]+" arguments","E3004");
                 if(f->module=="alg"&&!types[0].empty()){
                     auto element=element_type(types[0]);
                     if(!types[0].starts_with('[')||(element!="int"&&element!="float"&&element!="string"))error(n,"algorithm requires int/float/string array or slice","E3004");

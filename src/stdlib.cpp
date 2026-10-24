@@ -70,6 +70,24 @@ const std::vector<StandardFunction>& standard_functions() {
         {"math","log2",{"float"},"Result<float,string>",false,false,6},
         {"math","log10",{"float"},"Result<float,string>",false,false,6},
         {"math","hypot",{"float","float"},"Result<float,string>",false,false,6},
+        {"math","gcd",{"int","int"},"int",false,false,12},
+        {"math","lcm",{"int","int"},"int",false,false,12},
+        {"math","isqrt",{"int"},"int",false,false,12},
+        {"math","asin",{"float"},"Result<float,string>",false,false,12},
+        {"math","acos",{"float"},"Result<float,string>",false,false,12},
+        {"math","atan",{"float"},"Result<float,string>",false,false,12},
+        {"math","atan2",{"float","float"},"Result<float,string>",false,false,12},
+        {"math","cbrt",{"float"},"Result<float,string>",false,false,12},
+        {"math","fmod",{"float","float"},"Result<float,string>",false,false,12},
+        {"math","pi",{},"float",false,false,12},
+        {"math","e",{},"float",false,false,12},
+        {"math","tau",{},"float",false,false,12},
+        {"encoding","hex_encode",{"Bytes"},"string",false,false,12},
+        {"encoding","hex_decode",{"string"},"Result<Bytes,string>",false,false,12},
+        {"encoding","base64_encode",{"Bytes"},"string",false,false,12},
+        {"encoding","base64_decode",{"string"},"Result<Bytes,string>",false,false,12},
+        {"encoding","base64url_encode",{"Bytes"},"string",false,false,12},
+        {"encoding","base64url_decode",{"string"},"Result<Bytes,string>",false,false,12},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -272,7 +290,8 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     const auto signature=typed?standard_signature(f,types):StandardSignature{};
     const auto& parameters=typed?signature.parameters:f.parameters;
     if(f.module=="math"){
-        for(const auto& value:input)if(value_type(value)!="float")runtime_error(s,"math requires explicit default float arguments","E4003");
+        // Each math parameter is exactly default float or int: no implicit numeric widening.
+        for(std::size_t i=0;i<input.size();++i)if(value_type(input[i])!=f.parameters[i])runtime_error(s,"math requires explicit default "+f.parameters[i]+" arguments","E4003");
         return invoke_algorithm_standard(f,input,s,context);
     }
     if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=parameters[1])
@@ -288,6 +307,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.module=="gc"){auto& heap=managed_heap();auto n=f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected();if(f.name=="collect"&&(!context||!context->resumable||!context->in_task))file_checkpoint(context);return Value(static_cast<I>(n));}
     if(f.module=="task")return task_standard(f.name,args,s,context);
     if(f.since>=10&&f.module=="list")return invoke_list_extra(f,args,s,context);
+    if(f.since>=12&&f.module=="encoding")return invoke_encoding_standard(f,args,s);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
     if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);
     if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);

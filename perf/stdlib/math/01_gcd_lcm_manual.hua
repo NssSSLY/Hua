@@ -1,0 +1,21 @@
+# 最大公约数与最小公倍数：手写欧几里得（原生math.gcd/lcm对照见04）
+fn gcd(a int, b int) int {
+    var x = a
+    var y = b
+    while y != 0 {
+        let t = x % y
+        x = y
+        y = t
+    }
+    return x
+}
+fn main() {
+    var total = 0
+    for i in 0..200000 {
+        let a = i % 1000 + 1
+        let b = (i * 7) % 1000 + 1
+        let g = gcd(a, b)
+        total += g + a // g * b
+    }
+    print(total)
+}
