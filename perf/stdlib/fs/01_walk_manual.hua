@@ -1,0 +1,55 @@
+# 递归遍历：手写list_dir＋stat判种类（原生fs.walk对照见03）
+import std.fs as fs
+import std.path as path
+import std.json as json
+import std.list as list
+import std.strings as strings
+fn temp_root(name string) string {
+    let probe = unwrap(fs.temp_file("", "hua-bench-"))
+    let base = unwrap(path.dirname(probe))
+    unwrap(fs.remove(probe))
+    return unwrap(path.join([base, name]))
+}
+fn walk(dir string, prefix string, mut out List<string>) {
+    for name in unwrap(fs.list_dir(dir)) {
+        let full = unwrap(path.join([dir, name]))
+        let kind = unwrap(json.as_string(unwrap(json.get(unwrap(fs.stat(full)), "kind"))))
+        if kind == "directory" {
+            unwrap(list.append(out, prefix + name + "/"))
+            walk(full, prefix + name + "/", out)
+        } else {
+            unwrap(list.append(out, prefix + name))
+        }
+    }
+}
+fn main() {
+    let root = temp_root("hua_bench_walk_hua")
+    for a in 0..10 {
+        for b in 0..10 {
+            let d = unwrap(path.join([root, "d" + str(a), "e" + str(b)]))
+            unwrap(fs.mkdir_all(d))
+            for c in 0..10 { unwrap(fs.write_text(unwrap(path.join([d, "f" + str(c) + ".txt"])), "x")) }
+        }
+    }
+    var total = 0
+    var dirs = 0
+    var none []string = []
+    var last = list.from_slice(none)
+    for r in 0..30 {
+        var out = list.from_slice(none)
+        walk(root, "", out)
+        for p in list.snapshot(out) {
+            total += 1
+            if strings.ends_with(p, "/") { dirs += 1 }
+        }
+        last = out
+    }
+    let entries = list.snapshot(last)
+    var i = len(entries) - 1
+    while i >= 0 {
+        unwrap(fs.remove(unwrap(path.join([root, entries[i]]))))
+        i -= 1
+    }
+    unwrap(fs.remove(root))
+    print(total, dirs)
+}

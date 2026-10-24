@@ -1,6 +1,7 @@
 #include "hua/stdlib.hpp"
 #include "hua/json.hpp"
 #include "hua/tasks.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -250,12 +251,152 @@ std::string temporary(const std::string& directory,std::string prefix,RuntimeCon
     }
     fail("FS_EXISTS","temporary name collision limit reached");
 }
+// fs walk/copy (since 17). Links are never followed; every directory is listed
+// in UTF-8 byte order (as list_dir), so results are deterministic.
+constexpr std::size_t max_tree_items=1000000,max_tree_depth=256;
+struct Tree {RuntimeContext* context;const SourceSpan& span;std::size_t items{};
+    void tick(){if(++items>max_tree_items)fail("FS_LIMIT","more than 1000000 entries");if(items%256==0)task_checkpoint(context,span);}
+};
+// Windows: the tree functions address everything through the \\?\ form of the
+// lexically normalized absolute root, so trees deeper than MAX_PATH (260) work;
+// ".." in the root is folded lexically. Messages show paths without the prefix.
+fs::path host_path(const fs::path& p){
+#ifdef _WIN32
+    auto n=p.lexically_normal().make_preferred().native();
+    if(n.rfind(L"\\\\?\\",0)==0)return p;
+    if(n.rfind(L"\\\\",0)==0)return fs::path(L"\\\\?\\UNC\\"+n.substr(2));
+    return fs::path(L"\\\\?\\"+n);
+#else
+    return p;
+#endif
+}
+std::string shown(const fs::path& p){
+    auto text=utf8(p);
+    if(text.rfind("//?/UNC/",0)==0)return "//"+text.substr(8);
+    if(text.rfind("//?/",0)==0)return text.substr(4);
+    return text;
+}
+std::vector<std::pair<std::string,fs::path>> children(const fs::path& dir){
+    std::error_code ec;fs::directory_iterator it(dir,ec),end;
+    if(ec)throw Failure{system_message("list directory",ec)+" at "+shown(dir)};
+    std::vector<std::pair<std::string,fs::path>> out;
+    for(;it!=end;it.increment(ec)){if(ec)throw Failure{system_message("list directory",ec)+" at "+shown(dir)};out.emplace_back(utf8(it->path().filename()),it->path());}
+    std::sort(out.begin(),out.end(),[](const auto& a,const auto& b){return a.first<b.first;});
+    return out;
+}
+bool real_directory(const fs::file_status& s){return fs::is_directory(s)&&!fs::is_symlink(s);}
+fs::file_status require_directory(const fs::path& p,const char* what){
+    auto s=inspect_node(p);if(!fs::exists(s))fail("FS_NOT_FOUND",std::string(what)+" does not exist");
+    if(!real_directory(s))fail("FS_TYPE",std::string(what)+" must be a directory (links are not followed)");
+    return s;
+}
+void walk_tree(const fs::path& dir,const std::string& prefix,std::size_t depth,Tree& tree,std::vector<Value>& out){
+    if(depth>max_tree_depth)fail("FS_LIMIT","directory depth exceeds 256");
+    for(const auto& [name,child]:children(dir)){
+        tree.tick();
+        if(real_directory(inspect_node(child))){out.emplace_back(prefix+name+"/");walk_tree(child,prefix+name+"/",depth+1,tree,out);}
+        else out.emplace_back(prefix+name);
+    }
+}
+void copy_regular(const fs::path& from,const fs::path& to){
+    auto s=inspect_node(from);if(!fs::exists(s))fail("FS_NOT_FOUND","source does not exist");
+    if(!fs::is_regular_file(s)||fs::is_symlink(s))fail("FS_TYPE","source must be a regular file (links are not followed): "+shown(from));
+    // The target is created exclusively (the system decides "exists" atomically) and
+    // the contents are streamed through one reused 64 KiB buffer; a failed copy removes
+    // the partial target. This avoids CopyFileExW's per-file metadata work, which
+    // dominated for small files; timestamps/attributes are not copied (documented).
+    thread_local std::vector<char> buffer(64*1024);
+#ifdef _WIN32
+    auto in=CreateFileW(from.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
+    if(in==INVALID_HANDLE_VALUE)system_failure("copy_file",std::error_code(static_cast<int>(GetLastError()),std::system_category()));
+    auto out=CreateFileW(to.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(out==INVALID_HANDLE_VALUE){
+        auto code=GetLastError();CloseHandle(in);
+        if(code==ERROR_FILE_EXISTS||code==ERROR_ALREADY_EXISTS)fail("FS_EXISTS","target already exists: "+shown(to));
+        system_failure("copy_file",std::error_code(static_cast<int>(code),std::system_category()));
+    }
+    DWORD failure=0;
+    for(;;){
+        DWORD got=0;if(!ReadFile(in,buffer.data(),static_cast<DWORD>(buffer.size()),&got,nullptr)){failure=GetLastError();break;}
+        if(!got)break;
+        DWORD put=0;if(!WriteFile(out,buffer.data(),got,&put,nullptr)||put!=got){failure=GetLastError();if(!failure)failure=ERROR_WRITE_FAULT;break;}
+    }
+    if(!CloseHandle(out)&&!failure)failure=GetLastError();CloseHandle(in);
+    if(failure){DeleteFileW(to.c_str());system_failure("copy_file",std::error_code(static_cast<int>(failure),std::system_category()));}
+#else
+    int in=::open(from.c_str(),O_RDONLY|O_CLOEXEC);if(in<0)system_failure("copy_file",std::error_code(errno,std::generic_category()));
+    int out=::open(to.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0666);
+    if(out<0){int code=errno;::close(in);if(code==EEXIST)fail("FS_EXISTS","target already exists: "+shown(to));system_failure("copy_file",std::error_code(code,std::generic_category()));}
+    int failure=0;
+    for(;;){
+        auto got=::read(in,buffer.data(),buffer.size());if(got<0){if(errno==EINTR)continue;failure=errno;break;}
+        if(!got)break;
+        for(ssize_t done=0;done<got;){auto put=::write(out,buffer.data()+done,static_cast<std::size_t>(got-done));if(put<0){if(errno==EINTR)continue;failure=errno;break;}done+=put;}
+        if(failure)break;
+    }
+    if(::close(out)!=0&&!failure)failure=errno;::close(in);
+    if(failure){::unlink(to.c_str());system_failure("copy_file",std::error_code(failure,std::generic_category()));}
+#endif
+}
+std::int64_t copy_tree(const fs::path& from,const fs::path& to,std::size_t depth,Tree& tree){
+    if(depth>max_tree_depth)fail("FS_LIMIT","directory depth exceeds 256");
+    std::error_code ec;if(!fs::create_directory(to,ec)){if(ec)system_failure("create_directory",ec);fail("FS_EXISTS","target already exists: "+shown(to));}
+    std::int64_t files=0;
+    for(const auto& [name,child]:children(from)){
+        tree.tick();auto s=inspect_node(child);auto target=to/fs::path(std::u8string(name.begin(),name.end()));
+        if(real_directory(s))files+=copy_tree(child,target,depth+1,tree);
+        else if(fs::is_regular_file(s)&&!fs::is_symlink(s)){copy_regular(child,target);++files;}
+        else fail("FS_TYPE","copy_dir does not copy links or special files: "+shown(child));
+    }
+    return files;
+}
+std::int64_t remove_tree(const fs::path& p,std::size_t depth,Tree& tree){
+    if(depth>max_tree_depth)fail("FS_LIMIT","directory depth exceeds 256");
+    std::int64_t removed=0;
+    if(real_directory(inspect_node(p)))for(const auto& entry:children(p)){tree.tick();removed+=remove_tree(entry.second,depth+1,tree);}
+    std::error_code ec;if(fs::remove(p,ec))++removed;else if(ec)system_failure("remove",ec);
+    return removed;
+}
+fs::path comparable(const fs::path& p){std::error_code ec;auto out=fs::weakly_canonical(p,ec);return ec?p.lexically_normal():out;}
+bool inside(const fs::path& child,const fs::path& parent){
+    auto c=utf8(comparable(child)),q=utf8(comparable(parent));if(!q.empty()&&q.back()!='/')q+='/';
+    return same(c.substr(0,std::min(c.size(),q.size())),q)||same(c+"/",q);
+}
+Value tree_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context,const std::string& success){
+    const auto& name=f.name;Tree tree{context,span};
+    auto from=host_path(native(std::get<std::string>(args[0].data),context));
+    if(name=="walk"){
+        require_directory(from,"walk root");std::vector<Value> out;walk_tree(from,"",1,tree,out);
+        auto storage=managed<std::vector<Value>>(std::move(out));auto n=storage->size();
+        return standard_result(Value(SliceValue{std::move(storage),0,n,false,"string"}),true,success);
+    }
+    if(name=="canonical"){
+        std::error_code ec;auto out=fs::canonical(from,ec);
+        if(ec)system_failure("canonical",ec);
+        return standard_result(Value(shown(out)),true,success);
+    }
+    if(name=="remove_all"){
+        auto cwd=context&&!context->working_directory.empty()?context->working_directory:fs::current_path();
+        if(from.relative_path().empty()||from.lexically_normal().relative_path().empty())fail("FS_TYPE","remove_all refuses a filesystem root");
+        if(inside(host_path(cwd),from))fail("FS_TYPE","remove_all refuses the startup directory and its ancestors");
+        if(!fs::exists(inspect_node(from)))return standard_result(Value(I{0}),true,success);
+        return standard_result(Value(remove_tree(from,1,tree)),true,success);
+    }
+    auto to=host_path(native(std::get<std::string>(args[1].data),context));
+    if(same(utf8(from),utf8(to)))fail("FS_SAME_PATH","source and destination are identical");
+    if(name=="copy_file"){copy_regular(from,to);return standard_result(Value(true),true,success);}
+    require_directory(from,"copy_dir source");
+    if(fs::exists(inspect_node(to)))fail("FS_EXISTS","target already exists: "+shown(to));
+    if(inside(to,from))fail("FS_TYPE","copy_dir target is inside the source");
+    return standard_result(Value(copy_tree(from,to,1,tree)),true,success);
+}
 }
 Value invoke_filesystem_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context){
     task_checkpoint(context,span);
-    auto success=f.name=="stat"?"Json":(f.module=="path"||f.name=="temp_file")?"string":"bool";
+    auto success=f.name=="stat"?"Json":(f.module=="path"||f.name=="temp_file"||f.name=="canonical")?"string":f.name=="walk"?"[]string":(f.name=="copy_dir"||f.name=="remove_all")?"int":"bool";
     try{
         if(f.module=="path")return lexical(f,args,span,context);
+        if(f.since>=17)return tree_standard(f,args,span,context,success);
         if(f.name=="temp_file")return standard_result(Value(temporary(std::get<std::string>(args[0].data),std::get<std::string>(args[1].data),context,span)),true,success);
         auto from=native(std::get<std::string>(args[0].data),context);
         if(f.name=="stat")return standard_result(metadata(from),true,success);

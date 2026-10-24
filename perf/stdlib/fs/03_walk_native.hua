@@ -1,0 +1,30 @@
+# 递归遍历：原生fs.walk（对照01手写）
+import std.fs as fs
+import std.path as path
+import std.strings as strings
+fn temp_root(name string) string {
+    let probe = unwrap(fs.temp_file("", "hua-bench-"))
+    let base = unwrap(path.dirname(probe))
+    unwrap(fs.remove(probe))
+    return unwrap(path.join([base, name]))
+}
+fn main() {
+    let root = temp_root("hua_bench_walk_hua")
+    for a in 0..10 {
+        for b in 0..10 {
+            let d = unwrap(path.join([root, "d" + str(a), "e" + str(b)]))
+            unwrap(fs.mkdir_all(d))
+            for c in 0..10 { unwrap(fs.write_text(unwrap(path.join([d, "f" + str(c) + ".txt"])), "x")) }
+        }
+    }
+    var total = 0
+    var dirs = 0
+    for r in 0..30 {
+        for p in unwrap(fs.walk(root)) {
+            total += 1
+            if strings.ends_with(p, "/") { dirs += 1 }
+        }
+    }
+    unwrap(fs.remove_all(root))
+    print(total, dirs)
+}

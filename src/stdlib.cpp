@@ -137,6 +137,11 @@ const std::vector<StandardFunction>& standard_functions() {
         {"os","arch",{},"string",false,false,16},
         {"os","pid",{},"int",false,false,16},
         {"os","cpu_count",{},"int",false,false,16},
+        {"fs","walk",{"string"},"Result<[]string,string>",false,false,17},
+        {"fs","copy_file",{"string","string"},"Result<bool,string>",false,false,17},
+        {"fs","copy_dir",{"string","string"},"Result<int,string>",false,false,17},
+        {"fs","remove_all",{"string"},"Result<int,string>",false,false,17},
+        {"fs","canonical",{"string"},"Result<string,string>",false,false,17},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -355,7 +360,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<RngValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<DequeValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
     if(f.module=="file")return invoke_file_standard(f,args,s,context);
     if(f.module=="error")return invoke_error_standard(f,args,s);
-    if(f.module=="path"||(f.module=="fs"&&(f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
+    if(f.module=="path"||(f.module=="fs"&&(f.since>=17||f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
     if(f.module=="alg")return invoke_algorithm_standard(f,args,s,context);
     if(f.module=="time"||(f.module=="os"&&f.name=="getenv"))return invoke_system_standard(f,args,s,context);
     if(f.module=="simd")return simd_standard(f.name,args,s,context);

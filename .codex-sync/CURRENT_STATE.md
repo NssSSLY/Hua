@@ -35,11 +35,11 @@ Hua编译器已在Windows上自举并到达代际不动点。2026-10-23 P4-S1（
 
 ## 唯一下一步
 
-**下一项：HUA-D038第5步第四组——fs walk/copy的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。之后：test/log。
+**下一项：HUA-D038第5步第五组——test/log（`assert`系列与最小测试运行器、结构日志）的精确接口提案（先写提案给用户审，审定后才实施）。** 不推进自举（用户2026-10-23决定）。第5步完成后按路线第6步“之后按需求”，或回补P0缺口（alg `unique`/`chunk`/`product`、io stderr写出），由用户选择。
 
-- 已完成（2026-10-24）：切片2（HUAB10）、L0-1回调（HUAB11）、math/encoding（HUAB12）、random/crypto（HUAB13）、deque/heap（HUAB14）、time（HUAB15，701f943，均已推送）；第5步第三组std.os exit/平台（HUAB16，已提交推送），结果见docs/标准库设计与实现路线.md“第5步第三组os exit/平台结果”。
-- 现有std.fs（文本/二进制读写、stat/rename/replace/temp_file）与std.path合同见docs/标准库与内建接口.md“std.fs”“S1a：路径与文件状态详细合同”；walk/copy需与既有路径规则（Windows驱动器相对路径拒绝等）、File资源与Task阻塞适配一致，提案中定。
-- 实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项用两份同一base二进制交替复测；**疑似退化先用相同源码重建一次排除构建布局波动**）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 已完成（2026-10-24）：切片2（HUAB10）至os exit/平台（HUAB16，7980e6f，均已推送）；第5步第四组std.fs walk/copy（HUAB17，已提交推送），结果见docs/标准库设计与实现路线.md“第5步第四组fs walk/copy结果”；进度总览见同文档“进度总览（2026-10-24）”。2026-10-24完整三代自举复验通过（gen2=gen3，身份不变）。
+- 实施沿用切片验收：先建手写基线→实现→三路径测试→`ab_bench`（可疑项用两份同一base二进制交替复测；疑似退化先用相同源码重建一次）→reference_bench→CTest（archives_extensions为HUA-D037已知失败）→C2逐字节不变（f73869fa…，1,281,255,218步）。
+- 经验：宿主“便利”接口不一定快（`CopyFileExW`比手写读写慢）；每次调用不要分配大缓冲；Windows深层路径需`\\?\`形式。
 
 ## 待用户决定
 

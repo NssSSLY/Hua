@@ -1,0 +1,39 @@
+# 复制200个4 KiB文件：手写read_bytes＋write_bytes（原生fs.copy_file/copy_dir对照见04/05）
+import std.fs as fs
+import std.path as path
+import std.bytes as bytes
+import std.list as list
+fn temp_root(name string) string {
+    let probe = unwrap(fs.temp_file("", "hua-bench-"))
+    let base = unwrap(path.dirname(probe))
+    unwrap(fs.remove(probe))
+    return unwrap(path.join([base, name]))
+}
+fn main() {
+    let root = temp_root("hua_bench_copy_hua")
+    let src = unwrap(path.join([root, "src"]))
+    unwrap(fs.mkdir_all(src))
+    var empty []int = []
+    var cells = list.from_slice(empty)
+    for i in 0..4096 { unwrap(list.append(cells, (i * 7) % 256)) }
+    let data = unwrap(bytes.from_ints(list.snapshot(cells)))
+    for i in 0..200 { unwrap(fs.write_bytes(unwrap(path.join([src, "f" + str(i) + ".bin"])), data)) }
+    var copied = 0
+    for r in 0..5 {
+        let dst = unwrap(path.join([root, "dst" + str(r)]))
+        unwrap(fs.mkdir_all(dst))
+        for name in unwrap(fs.list_dir(src)) {
+            unwrap(fs.write_bytes(unwrap(path.join([dst, name])), unwrap(fs.read_bytes(unwrap(path.join([src, name]))))))
+            copied += 1
+        }
+    }
+    for r in 0..5 {
+        let dst = unwrap(path.join([root, "dst" + str(r)]))
+        for name in unwrap(fs.list_dir(dst)) { unwrap(fs.remove(unwrap(path.join([dst, name])))) }
+        unwrap(fs.remove(dst))
+    }
+    for name in unwrap(fs.list_dir(src)) { unwrap(fs.remove(unwrap(path.join([src, name])))) }
+    unwrap(fs.remove(src))
+    unwrap(fs.remove(root))
+    print(copied)
+}
