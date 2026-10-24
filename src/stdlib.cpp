@@ -132,6 +132,11 @@ const std::vector<StandardFunction>& standard_functions() {
         {"time","format_rfc3339",{"int"},"string",false,false,15},
         {"time","format_rfc3339_offset",{"int","int"},"string",false,false,15},
         {"time","parse_rfc3339",{"string"},"Result<int,string>",false,false,15},
+        {"os","exit",{"int"},"void",false,false,16},
+        {"os","platform",{},"string",false,false,16},
+        {"os","arch",{},"string",false,false,16},
+        {"os","pid",{},"int",false,false,16},
+        {"os","cpu_count",{},"int",false,false,16},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -331,6 +336,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.since>=13&&f.module=="random")return invoke_random_standard(f,input,s);
     if(f.since>=14&&f.module=="deque")return invoke_deque_standard(f,input,s);
     if(f.since>=15&&f.module=="time")return invoke_time_standard(f,input,s);
+    if(f.since>=16&&f.module=="os")return invoke_os_standard(f,input,s,context);
     if(f.since>=14&&f.module=="heap"&&!f.callback)return invoke_heap_standard(f,input,s);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.

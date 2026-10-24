@@ -6,7 +6,10 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
+#include <thread>
 
 namespace hua {
 namespace {
@@ -67,6 +70,57 @@ Value environment(const std::string& name) {
     return standard_result(Value(std::move(text)), true, "string?");
 #endif
 }
+}
+// std.os exit and platform information (since 16). Values describe the host that
+// runs the program, not the one that built its HUAB.
+Value invoke_os_standard(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span, RuntimeContext* context) {
+    if (args.size() != f.parameters.size()) runtime_error(span, "standard function argument count mismatch", "E4003");
+    const auto& name = f.name;
+    if (name == "exit") {
+        auto code = std::get_if<std::int64_t>(&args[0].data);
+        if (!code) runtime_error(span, "expected int", "E4003");
+        if (*code < 0 || *code > 125) runtime_error(span, "os.exit code must be 0..125", "E4003");
+        if (context && context->in_task) runtime_error(span, "os.exit is only allowed in the main execution", "E4104");
+        if (context && context->exiting) runtime_error(span, "os.exit during exit cleanup", "E4104");
+        if (context) context->exiting = true;
+        throw ProgramExit{static_cast<int>(*code)};
+    }
+    if (name == "platform") {
+#if defined(_WIN32)
+        return Value(std::string("windows"));
+#elif defined(__APPLE__)
+        return Value(std::string("macos"));
+#elif defined(__linux__)
+        return Value(std::string("linux"));
+#else
+        return Value(std::string("other"));
+#endif
+    }
+    if (name == "arch") {
+#if defined(__x86_64__) || defined(_M_X64)
+        return Value(std::string("x86_64"));
+#elif defined(__aarch64__) || defined(_M_ARM64)
+        return Value(std::string("aarch64"));
+#elif defined(__i386__) || defined(_M_IX86)
+        return Value(std::string("x86"));
+#elif defined(__arm__) || defined(_M_ARM)
+        return Value(std::string("arm"));
+#else
+        return Value(std::string("other"));
+#endif
+    }
+    if (name == "pid") {
+#ifdef _WIN32
+        return Value(static_cast<std::int64_t>(GetCurrentProcessId()));
+#else
+        return Value(static_cast<std::int64_t>(getpid()));
+#endif
+    }
+    if (name == "cpu_count") {
+        auto n = std::thread::hardware_concurrency();
+        return Value(static_cast<std::int64_t>(n ? n : 1));
+    }
+    runtime_error(span, "unknown os operation", "E4003");
 }
 // time.monotonic_ns and time.since_ns share this origin (first use in the process).
 std::int64_t monotonic_now_ns(const SourceSpan& span) {

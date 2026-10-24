@@ -50,3 +50,5 @@
 - Observed about +-7 percent build-to-build layout variance on string benchmarks, non-monotonic, not attributed
 
 - No new types: durations are int nanoseconds, time points are int Unix milliseconds
+
+- async main body runs as a task, so os.exit there is E4104 under X3

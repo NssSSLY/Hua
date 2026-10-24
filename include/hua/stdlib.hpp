@@ -17,7 +17,7 @@ struct RuntimeContext {
     std::shared_ptr<ManagedHeap> heap;
     std::uint64_t task_id{};std::shared_ptr<FileScope> files;
     const TypeRelations* type_relations{};
-    bool resumable{},in_task{},cleanup{},unwinding{};
+    bool resumable{},in_task{},cleanup{},unwinding{},exiting{};
 };
 struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; bool callback{}; };
 struct StandardSignature { std::vector<std::string> parameters; std::string result; };
@@ -31,6 +31,7 @@ Value invoke_binary_standard(const StandardFunction& function,const std::vector<
 Value invoke_text_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_collection_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 std::int64_t monotonic_now_ns(const SourceSpan& span);
+Value invoke_os_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 Value invoke_time_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_deque_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_heap_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <array>
 #include <deque>
+#include <exception>
 #include <map>
 #include <memory>
 #include <optional>
@@ -46,6 +47,10 @@ Value unary_numeric(std::string_view op,const Value& value,const SourceSpan& spa
 struct BytesValue { std::shared_ptr<const std::string> data; };
 struct BufferValue { std::shared_ptr<std::string> data; bool writable{true}; };
 struct ListValue { std::shared_ptr<ListData> data; bool writable{true}; };
+// std.os.exit (since 16): unwinds like a return through every pending defer and the
+// entry's Task/File cleanup; command_boundary turns it into the process exit code.
+struct ProgramExit { int code{}; };
+inline bool is_program_exit(const std::exception_ptr& error){if(!error)return false;try{std::rethrow_exception(error);}catch(const ProgramExit&){return true;}catch(...){return false;}}
 struct DequeValue { std::shared_ptr<DequeData> data; bool writable{true}; };
 // std.random.Rng (since 13): xoshiro256** state behind a shared handle, like Buffer.
 struct RngState { std::uint64_t s[4]{}; };

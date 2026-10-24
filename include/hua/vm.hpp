@@ -200,6 +200,7 @@ private:
     Routine<void> dispatch(std::size_t stop_depth=0);
     Routine<void> drain(const std::shared_ptr<Environment>& env);
     Routine<void> cleanup_error();
+    Routine<std::exception_ptr> cleanup_exit(std::exception_ptr exit);
     Routine<void> finish_return(Value value,const Instruction& op,bool early=false);
 };
 }

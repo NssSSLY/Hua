@@ -37,6 +37,7 @@ int diagnostic_exit_code(std::string_view code) {
 }
 int command_boundary(const std::function<int()>& command,std::ostream& error) {
     try{return command();}
+    catch(const ProgramExit& exit){return exit.code;}
     catch(const Diagnostic& failure) {
         error<<"error["<<failure.code()<<"]: "<<failure.what()<<'\n';
         if(!failure.span().file_id.empty())error<<" --> "<<failure.span().file_id<<':'<<failure.span().line<<':'<<failure.span().column<<'\n';

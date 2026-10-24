@@ -304,7 +304,8 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
             if(std::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
         }
     }catch(...){error=std::current_exception();}
-    if(error)(co_await cleanup_error());
+    if(is_program_exit(error))error=co_await cleanup_exit(error);
+    else if(error)(co_await cleanup_error());
     try{co_await execution.finish_async(bool(error));}catch(...){if(!error)error=std::current_exception();}
     global_->clear();stack_.clear();frames_.clear();completed_.reset();if(error)std::rethrow_exception(error);
     entry_=entry_result(returned,entry_span);co_return;
@@ -409,6 +410,13 @@ Routine<void> VirtualMachine::drain(const std::shared_ptr<Environment>& env){
     }
     if(first)std::rethrow_exception(first);
     co_return;
+}
+Routine<std::exception_ptr> VirtualMachine::cleanup_exit(std::exception_ptr exit){
+    // Same frames and order as cleanup_error, but a defer failure replaces the exit
+    // (the interpreter's block unwinding treats the exit like a return).
+    std::unordered_set<Environment*> seen;auto frames=frames_;std::exception_ptr first;
+    for(auto i=frames.rbegin();i!=frames.rend();++i)for(auto env=i->environment;env;env=env->parent)if(seen.insert(env.get()).second)try{(co_await drain(env));}catch(...){if(!first)first=std::current_exception();}
+    co_return first?first:exit;
 }
 Routine<void> VirtualMachine::cleanup_error(){
     struct Unwinding {bool& flag;bool old;Unwinding(bool& f):flag(f),old(f){flag=true;}~Unwinding(){flag=old;}} failed(context_->unwinding);
