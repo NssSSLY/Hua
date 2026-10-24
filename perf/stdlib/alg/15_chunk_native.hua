@@ -1,0 +1,15 @@
+# 按固定块长切分：原生alg.chunk（对照12手写）
+import std.alg as alg
+import std.list as list
+fn main() {
+    var ints []int = []
+    var a = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, i)) }
+    let xs = list.snapshot(a)
+    var total = 0
+    for round in 0..10 {
+        let c = alg.chunk(xs, 16)
+        total += len(c) + c[len(c) - 1][0] + len(c[len(c) - 1])
+    }
+    print(total)
+}

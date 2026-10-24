@@ -153,6 +153,9 @@ const std::vector<StandardFunction>& standard_functions() {
         {"log","error",{"string"},"void",false,false,18},
         {"log","with_fields",{"string","string","map<string,string>"},"void",false,false,18},
         {"log","set_level",{"string"},"void",false,false,18},
+        {"alg","unique",{""},"",false,false,19},
+        {"alg","chunk",{"","int"},"",false,false,19},
+        {"alg","product",{""},"",false,false,19},
         {"alg","sorted",{""},"",false,false,6},
         {"alg","reverse",{""},"",false,false,6},
         {"alg","contains",{"",""},"",false,false,6},
@@ -355,6 +358,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.since>=16&&f.module=="os")return invoke_os_standard(f,input,s,context);
     if(f.since>=18&&(f.module=="io"||f.module=="test"||f.module=="log"))return invoke_report_standard(f,input,s);
     if(f.since>=14&&f.module=="heap"&&!f.callback)return invoke_heap_standard(f,input,s);
+    if(f.since>=19&&f.module=="alg")return invoke_algorithm_standard(f,input,s,context);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.
     const bool typed=f.module=="alg"||f.module=="simd"||f.module=="task"||f.module=="list";

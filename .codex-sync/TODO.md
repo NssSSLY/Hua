@@ -37,7 +37,10 @@
 - 第5步第二组std.time时长与UTC日期已完成并推送（2026-10-24，HUAB15）；结果见docs/标准库设计与实现路线.md“第5步第二组time结果”
 - 第5步第三组std.os exit/平台已完成并推送（2026-10-24，HUAB16）；结果见docs/标准库设计与实现路线.md“第5步第三组os exit/平台结果”
 - 第5步第四组std.fs walk/copy已完成并推送（2026-10-24，HUAB17）；结果见docs/标准库设计与实现路线.md“第5步第四组fs walk/copy结果”
-- 第5步第五组test/log与io.write_err已完成（2026-10-24，HUAB18，未提交）；结果见docs/标准库设计与实现路线.md“第5步第五组test/log结果”
-- 下一项（用户选择）：回补P0缺口alg `unique`/`chunk`/`product`（先写接口提案），或路线第6步按需求
+- 第5步第五组test/log与io.write_err已完成并推送（2026-10-24，HUAB18，8358f22）；结果见docs/标准库设计与实现路线.md“第5步第五组test/log结果”
+- P0缺口alg `unique`/`chunk`/`product`已完成（2026-10-24，HUAB19，未提交）；结果见docs/标准库设计与实现路线.md“P0缺口alg unique/chunk/product结果”；P0 11组全部完成
+- 下一项（用户选择）：P1剩余项（alg `partition`/`zip`/`windows`、list `dedup`、按行缓冲读取与Reader/Writer、strings Unicode等，先写接口提案），或路线第6步按需求
 
 - 用户选择：回补P0缺口alg unique/chunk/product（先写提案）或第6步按需求；提交推送待用户要求
+
+- 用户选择：P1剩余项（先写提案）或第6步按需求；提交推送待用户要求

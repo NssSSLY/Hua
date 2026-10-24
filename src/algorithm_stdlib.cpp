@@ -160,6 +160,143 @@ std::size_t bound(const SliceValue& input, const Value& target, bool upper, Work
     }
     return left;
 }
+// alg P0 (since 19): unique/chunk/product. Dispatched before the generic argument
+// checks, so they check argument kinds themselves.
+Value read_only_slice(std::vector<Value> values, const std::string& element) {
+    auto storage = managed<std::vector<Value>>(std::move(values));
+    auto n = storage->size();
+    return Value(SliceValue{std::move(storage), 0, n, false, element});
+}
+std::uint64_t mix(std::uint64_t x) {
+    x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL;
+    return x ^ (x >> 33);
+}
+// Elements as one contiguous range: unpacked slices are read in place, packed arrays
+// are loaded once.
+struct Elements {
+    std::vector<Value> loaded;
+    const Value* data{};
+    Elements(const SliceValue& input) {
+        if (input.packed) {
+            loaded.reserve(input.length);
+            for (std::size_t i = 0; i < input.length; ++i) loaded.push_back(sequence_read(input, i));
+            data = loaded.data();
+        } else data = input.storage->data() + input.start;
+    }
+};
+// Positions of first occurrences, in order: open addressing over input positions
+// (load factor <= 1/2), expected O(n).
+template <class Hash, class Same>
+std::vector<std::size_t> first_positions(std::size_t n, Hash hash, Same same, Work& work) {
+    std::size_t capacity = 16;
+    while (capacity < n * 2) capacity *= 2;
+    std::vector<std::uint32_t> slots(capacity);
+    std::vector<std::size_t> kept;
+    const auto mask = capacity - 1;
+    for (std::size_t i = 0; i < n; ++i) {
+        work.tick();
+        for (auto h = mix(hash(i)) & mask;; h = (h + 1) & mask) {
+            auto slot = slots[h];
+            if (!slot) { slots[h] = static_cast<std::uint32_t>(i + 1); kept.push_back(i); break; }
+            if (same(slot - 1, i)) break;
+        }
+    }
+    return kept;
+}
+const SliceValue& slice_argument(const Value& value, const SourceSpan& span) {
+    auto input = std::get_if<SliceValue>(&value.data);
+    if (!input) runtime_error(span, "algorithm requires an array or slice", "E4003");
+    if (input->length > max_items) runtime_error(span, "algorithm item limit exceeded (1000000)", "E4099");
+    return *input;
+}
+Value unique(const SliceValue& input, Work& work) {
+    const auto& type = input.element_type;
+    Elements items(input);
+    const auto* x = items.data;
+    auto mismatch = [&] { runtime_error(work.span, "algorithm element type mismatch", "E4003"); };
+    std::vector<std::size_t> kept;
+    if (type == "int") {
+        for (std::size_t i = 0; i < input.length; ++i) if (!std::holds_alternative<I>(x[i].data)) mismatch();
+        kept = first_positions(input.length, [&](std::size_t i) { return static_cast<std::uint64_t>(std::get<I>(x[i].data)); },
+                               [&](std::size_t a, std::size_t b) { return std::get<I>(x[a].data) == std::get<I>(x[b].data); }, work);
+    } else if (type == "float") {
+        for (std::size_t i = 0; i < input.length; ++i) {
+            auto real = std::get_if<double>(&x[i].data);
+            if (!real) mismatch();
+            if (!std::isfinite(*real)) runtime_error(work.span, "algorithm requires finite float values", "E4003");
+        }
+        // == semantics: -0.0 and 0.0 hash alike (finite inputs, so no NaN).
+        kept = first_positions(input.length, [&](std::size_t i) { auto v = std::get<double>(x[i].data); return std::bit_cast<std::uint64_t>(v == 0.0 ? 0.0 : v); },
+                               [&](std::size_t a, std::size_t b) { return std::get<double>(x[a].data) == std::get<double>(x[b].data); }, work);
+    } else if (type == "string") {
+        for (std::size_t i = 0; i < input.length; ++i) {
+            auto text = std::get_if<std::string>(&x[i].data);
+            if (!text) mismatch();
+            work.count += text->size() / 64;
+        }
+        kept = first_positions(input.length, [&](std::size_t i) { return static_cast<std::uint64_t>(std::hash<std::string_view>{}(std::get<std::string>(x[i].data))); },
+                               [&](std::size_t a, std::size_t b) { return std::get<std::string>(x[a].data) == std::get<std::string>(x[b].data); }, work);
+    } else runtime_error(work.span, "alg.unique requires int/float/string elements", "E4003");
+    std::vector<Value> out;
+    out.reserve(kept.size());
+    std::size_t text_bytes = 0;
+    for (auto i : kept) {
+        if (auto text = std::get_if<std::string>(&x[i].data)) {
+            if (text->size() > max_text - text_bytes) runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
+            text_bytes += text->size();
+        }
+        out.push_back(x[i]);
+    }
+    return read_only_slice(std::move(out), type);
+}
+Value chunk(const SliceValue& input, const Value& width, Work& work) {
+    auto size = std::get_if<I>(&width.data);
+    if (!size) runtime_error(work.span, "alg.chunk size must be an int", "E4003");
+    if (*size <= 0) runtime_error(work.span, "alg.chunk size must be positive", "E4003");
+    const auto n = input.length, step = static_cast<std::size_t>(std::min<I>(*size, static_cast<I>(max_items)));
+    std::vector<Value> blocks;
+    blocks.reserve((n + step - 1) / step);
+    std::size_t text_bytes = 0;
+    for (std::size_t start = 0; start < n; start += step) {
+        std::vector<Value> block;
+        block.reserve(std::min(step, n - start));
+        for (auto i = start; i < std::min(start + step, n); ++i) {
+            work.tick();
+            auto value = sequence_read(input, i);
+            if (auto text = std::get_if<std::string>(&value.data)) {
+                if (text->size() > max_text - text_bytes) runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
+                text_bytes += text->size();
+            }
+            block.push_back(std::move(value));
+        }
+        blocks.push_back(read_only_slice(std::move(block), input.element_type));
+    }
+    return read_only_slice(std::move(blocks), "[]" + input.element_type);
+}
+Value product(const SliceValue& input, Work& work) {
+    const auto& type = input.element_type;
+    if (type != "int" && type != "float") runtime_error(work.span, "product requires int/float slice or array", "E4003");
+    Elements items(input);
+    if (type == "int") {
+        I result = 1;
+        for (std::size_t i = 0; i < input.length; ++i) {
+            work.tick();
+            auto x = std::get_if<I>(&items.data[i].data);
+            if (!x) runtime_error(work.span, "algorithm element type mismatch", "E4003");
+            if (__builtin_mul_overflow(result, *x, &result)) return failure("ALG_OVERFLOW: int64 product overflow", "int");
+        }
+        return standard_result(Value(result), true, "int");
+    }
+    double result = 1.0;
+    for (std::size_t i = 0; i < input.length; ++i) {
+        work.tick();
+        auto x = std::get_if<double>(&items.data[i].data);
+        if (!x) runtime_error(work.span, "algorithm element type mismatch", "E4003");
+        result *= *x;
+        if (!std::isfinite(result)) return failure("ALG_OVERFLOW: float product overflow", "float");
+    }
+    return standard_result(Value(result), true, "float");
+}
 Value copied(const StandardFunction& f, const SliceValue& input, Work& work) {
     auto values = managed<std::vector<Value>>();
     values->reserve(input.length);
@@ -199,6 +336,13 @@ Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Val
                                 const SourceSpan& span, RuntimeContext* context) {
     task_checkpoint(context, span);
     if (f.module == "math") return f.since >= 12 ? math_p0(f, args, span) : math(f, args, span);
+    if (f.since >= 19) {
+        const auto& input = slice_argument(args[0], span);
+        Work work{context, span};
+        if (f.name == "unique") return unique(input, work);
+        if (f.name == "chunk") return chunk(input, args[1], work);
+        return product(input, work);
+    }
     auto input = std::get_if<SliceValue>(&args[0].data);
     if (!input || (input->element_type != "int" && input->element_type != "float" && input->element_type != "string"))
         runtime_error(span, "algorithm requires int/float/string slice or array", "E4003");

@@ -1,0 +1,20 @@
+# 去重保留首次出现顺序：原生alg.unique（对照11手写）
+import std.alg as alg
+import std.list as list
+fn main() {
+    var ints []int = []
+    var strs []string = []
+    var a = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, (i * 7919) % 10000)) }
+    var b = list.from_slice(strs)
+    for i in 0..5000 { unwrap(list.append(b, "k" + str((i * 31) % 2500))) }
+    let xs = list.snapshot(a)
+    let ss = list.snapshot(b)
+    var total = 0
+    for round in 0..10 {
+        let u = alg.unique(xs)
+        total += len(u) + u[0] + u[len(u) - 1]
+        total += len(alg.unique(ss))
+    }
+    print(total)
+}

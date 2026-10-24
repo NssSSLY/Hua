@@ -1,0 +1,27 @@
+# 按固定块长切分：手写下标循环逐块list.append再snapshot（原生alg.chunk对照见15）
+import std.list as list
+fn main() {
+    var ints []int = []
+    var blocks [][]int = []
+    var a = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, i)) }
+    let xs = list.snapshot(a)
+    var total = 0
+    for round in 0..10 {
+        var out = list.from_slice(blocks)
+        var i = 0
+        while i < len(xs) {
+            var block = list.from_slice(ints)
+            var j = i
+            while j < i + 16 && j < len(xs) {
+                unwrap(list.append(block, xs[j]))
+                j += 1
+            }
+            unwrap(list.append(out, list.snapshot(block)))
+            i += 16
+        }
+        let c = list.snapshot(out)
+        total += len(c) + c[len(c) - 1][0] + len(c[len(c) - 1])
+    }
+    print(total)
+}

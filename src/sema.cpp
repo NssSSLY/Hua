@@ -187,7 +187,7 @@ SemanticModel SemanticAnalyzer::analyze(const Node& program,std::shared_ptr<Exte
             if(n->text.find(" @test")!=std::string::npos){
                 if(!parameters(*n).empty())error(*n,"@test functions take no parameters","E3004");
                 auto result=result_type(*n);
-                if(n->text.find(" async")!=std::string::npos||!(result.empty()||result=="void"||type_arguments(result,"Result").size()==2&&type_arguments(result,"Result")[0]=="void"))
+                if(n->text.find(" async")!=std::string::npos||!(result.empty()||result=="void"||(type_arguments(result,"Result").size()==2&&type_arguments(result,"Result")[0]=="void")))
                     error(*n,"@test functions return void or Result<void,E> and are not async","E3004");
             }
         } else if(n->kind==N::Struct) {
@@ -635,9 +635,10 @@ SemanticAnalyzer::Info SemanticAnalyzer::expression(const Node& n) {
                 if(f->module=="math")for(std::size_t i=0;i<types.size();++i)if(!types[i].empty()&&types[i]!=f->parameters[i])error(*n.children[i+1],"math requires explicit default "+f->parameters[i]+" arguments","E3004");
                 if(f->module=="alg"&&!types[0].empty()){
                     auto element=element_type(types[0]);
-                    if(!types[0].starts_with('[')||(element!="int"&&element!="float"&&element!="string"))error(n,"algorithm requires int/float/string array or slice","E3004");
-                    if(f->name=="sum"&&element=="string")error(n,"sum requires int/float array or slice","E3004");
-                    if(types.size()==2&&!types[1].empty()&&types[1]!=element)error(*n.children[2],"algorithm target requires identical element type","E3004");
+                    const bool chunk=f->name=="chunk";
+                    if(!types[0].starts_with('[')||(!chunk&&element!="int"&&element!="float"&&element!="string"))error(n,chunk?"alg.chunk requires an array or slice":"algorithm requires int/float/string array or slice","E3004");
+                    if((f->name=="sum"||f->name=="product")&&element=="string")error(n,f->name+" requires int/float array or slice","E3004");
+                    if(!chunk&&types.size()==2&&!types[1].empty()&&types[1]!=element)error(*n.children[2],"algorithm target requires identical element type","E3004");
                 }
                 if(f->module=="list"&&!types.empty()&&!types[0].empty()){
                     if(f->name=="from_slice"){if(!types[0].starts_with('[')||element_type(types[0]).empty())error(n,"from_slice requires a typed slice/array","E3004");}

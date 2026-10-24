@@ -1,0 +1,29 @@
+# 连乘：手写for循环（int与float；原生alg.product对照见16）
+import std.list as list
+fn main() {
+    var ints []int = []
+    var reals []float = []
+    var a = list.from_slice(ints)
+    var b = list.from_slice(reals)
+    for i in 0..10000 {
+        var x = 1
+        if i % 1000 == 999 { x = 3 }
+        unwrap(list.append(a, x))
+        var f = 0.9999
+        if i % 2 == 0 { f = 1.0001 }
+        unwrap(list.append(b, f))
+    }
+    let xs = list.snapshot(a)
+    let fs = list.snapshot(b)
+    var total = 0
+    var near = 0
+    for round in 0..100 {
+        var p = 1
+        for x in xs { p = p * x }
+        total += p
+        var q = 1.0
+        for f in fs { q = q * f }
+        if q > 0.99 && q < 1.01 { near += 1 }
+    }
+    print(total, near)
+}

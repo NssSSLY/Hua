@@ -56,3 +56,5 @@
 - Replaced CopyFileExW with exclusive create plus streamed copy (CopyFileExW was slower than manual read/write)
 
 - test/log按T1-T7推荐定稿（2026-10-24）
+
+- alg提案按U1-U7推荐定稿（2026-10-24）
