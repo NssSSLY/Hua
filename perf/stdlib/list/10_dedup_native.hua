@@ -1,0 +1,20 @@
+# 去相邻重复：原生list.dedup（对照09手写）
+import std.list as list
+fn main() {
+    var ints []int = []
+    var strs []string = []
+    var a = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, (i // 2 * 7) % 1000)) }
+    var b = list.from_slice(strs)
+    for i in 0..20000 { unwrap(list.append(b, "k" + str((i // 2) % 2500))) }
+    let xs = list.snapshot(a)
+    let ss = list.snapshot(b)
+    var total = 0
+    for round in 0..10 {
+        var l = list.from_slice(xs)
+        total += list.dedup(l) + list.len(l)
+        var m = list.from_slice(ss)
+        total += list.dedup(m) + list.len(m) * 2
+    }
+    print(total)
+}

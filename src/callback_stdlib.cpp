@@ -61,6 +61,13 @@ Value permuted(const std::vector<Value>& items,const std::vector<std::size_t>& o
 
 Routine<Value> alg_callback(const StandardFunction& f,std::vector<Value> args,const SourceSpan& s,CallbackHost& host,Work& work){
     const auto& name=f.name;const auto xs=slice_arg(args[0],s);const auto& element=xs.element_type;
+    if(name=="zip_with"){
+        // Pairs up to the shorter input (Python zip, Kotlin zip).
+        const auto ys=slice_arg(args[1],s);const auto& fn=callable_arg(args[2],s);auto shape=callback_shape(fn,2,s);
+        const auto n=std::min(xs.length,ys.length);std::vector<Value> out;out.reserve(n);
+        for(std::size_t i=0;i<n;++i){work.tick();out.push_back(co_await host.invoke(fn,{sequence_read(xs,i),sequence_read(ys,i)},s));}
+        co_return read_only_slice(std::move(out),shape.result);
+    }
     const bool fold=name=="fold",binary=name=="sorted_by";
     const auto& fn=callable_arg(args[fold?2:1],s);auto shape=callback_shape(fn,fold||binary?2:1,s);
     if(name=="map"){
@@ -72,6 +79,12 @@ Routine<Value> alg_callback(const StandardFunction& f,std::vector<Value> args,co
         auto acc=std::move(args[1]);
         for(std::size_t i=0;i<xs.length;++i){work.tick();acc=co_await host.invoke(fn,{std::move(acc),sequence_read(xs,i)},s);}
         co_return acc;
+    }
+    if(name=="partition"){
+        // Stable: matching elements, then the rest, each in input order.
+        require_result(shape,"bool",s);std::vector<Value> yes,no;
+        for(std::size_t i=0;i<xs.length;++i){work.tick();auto x=sequence_read(xs,i);(as_bool(co_await host.invoke(fn,{x},s),s)?yes:no).push_back(std::move(x));}
+        co_return make_multi({read_only_slice(std::move(yes),element),read_only_slice(std::move(no),element)});
     }
     if(name=="filter"||name=="any"||name=="all"||name=="find"||name=="find_index"){
         require_result(shape,"bool",s);std::vector<Value> kept;

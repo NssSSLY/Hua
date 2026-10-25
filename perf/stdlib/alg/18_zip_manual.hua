@@ -1,0 +1,24 @@
+# 两两组合：手写下标循环调用二元函数＋list.append（原生alg.zip_with对照见21）
+import std.list as list
+fn mix(x int, y int) int { return x * 3 + y }
+fn main() {
+    var ints []int = []
+    var a = list.from_slice(ints)
+    var b = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, (i * 7919) % 10007)) }
+    for i in 0..19000 { unwrap(list.append(b, (i * 31) % 997)) }
+    let xs = list.snapshot(a)
+    let ys = list.snapshot(b)
+    var total = 0
+    for round in 0..10 {
+        var out = list.from_slice(ints)
+        var n = len(xs)
+        if len(ys) < n {
+            n = len(ys)
+        }
+        for i in 0..n { unwrap(list.append(out, mix(xs[i], ys[i]))) }
+        let z = list.snapshot(out)
+        total += len(z) + z[0] + z[len(z) - 1]
+    }
+    print(total)
+}

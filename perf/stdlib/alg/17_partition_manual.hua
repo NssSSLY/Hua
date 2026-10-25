@@ -1,0 +1,25 @@
+# 稳定二分：手写for循环调用谓词＋两个List分别append（原生alg.partition对照见20）
+import std.list as list
+fn keep(x int) bool { return x % 3 == 0 }
+fn main() {
+    var ints []int = []
+    var a = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, (i * 7919) % 10007)) }
+    let xs = list.snapshot(a)
+    var total = 0
+    for round in 0..10 {
+        var yes = list.from_slice(ints)
+        var no = list.from_slice(ints)
+        for x in xs {
+            if keep(x) {
+                unwrap(list.append(yes, x))
+            } else {
+                unwrap(list.append(no, x))
+            }
+        }
+        let ys = list.snapshot(yes)
+        let ns = list.snapshot(no)
+        total += len(ys) + ys[0] + ns[len(ns) - 1]
+    }
+    print(total)
+}

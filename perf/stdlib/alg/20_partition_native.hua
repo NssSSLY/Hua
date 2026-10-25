@@ -1,0 +1,16 @@
+# 稳定二分：原生alg.partition（对照17手写）
+import std.alg as alg
+import std.list as list
+fn keep(x int) bool { return x % 3 == 0 }
+fn main() {
+    var ints []int = []
+    var a = list.from_slice(ints)
+    for i in 0..20000 { unwrap(list.append(a, (i * 7919) % 10007)) }
+    let xs = list.snapshot(a)
+    var total = 0
+    for round in 0..10 {
+        let ys, ns = alg.partition(xs, keep)
+        total += len(ys) + ys[0] + ns[len(ns) - 1]
+    }
+    print(total)
+}

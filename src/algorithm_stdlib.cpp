@@ -160,7 +160,7 @@ std::size_t bound(const SliceValue& input, const Value& target, bool upper, Work
     }
     return left;
 }
-// alg P0 (since 19): unique/chunk/product. Dispatched before the generic argument
+// alg P0 (since 19): unique/chunk/product; windows (since 20). Dispatched before the generic argument
 // checks, so they check argument kinds themselves.
 Value read_only_slice(std::vector<Value> values, const std::string& element) {
     auto storage = managed<std::vector<Value>>(std::move(values));
@@ -273,6 +273,37 @@ Value chunk(const SliceValue& input, const Value& width, Work& work) {
     }
     return read_only_slice(std::move(blocks), "[]" + input.element_type);
 }
+// windows (since 20): the input is copied once into read-only storage and every
+// window is a read-only view of it, so copying and memory stay O(n).
+Value windows(const SliceValue& input, const Value& width, Work& work) {
+    auto size = std::get_if<I>(&width.data);
+    if (!size) runtime_error(work.span, "alg.windows size must be an int", "E4003");
+    if (*size <= 0) runtime_error(work.span, "alg.windows size must be positive", "E4003");
+    const auto n = input.length;
+    std::vector<Value> out;
+    if (static_cast<std::uint64_t>(*size) <= n) {
+        const auto step = static_cast<std::size_t>(*size);
+        std::vector<Value> copy;
+        copy.reserve(n);
+        std::size_t text_bytes = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            work.tick();
+            auto value = sequence_read(input, i);
+            if (auto text = std::get_if<std::string>(&value.data)) {
+                if (text->size() > max_text - text_bytes) runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
+                text_bytes += text->size();
+            }
+            copy.push_back(std::move(value));
+        }
+        auto storage = managed<std::vector<Value>>(std::move(copy));
+        out.reserve(n - step + 1);
+        for (std::size_t start = 0; start + step <= n; ++start) {
+            work.tick();
+            out.push_back(Value(SliceValue{storage, start, step, false, input.element_type}));
+        }
+    }
+    return read_only_slice(std::move(out), "[]" + input.element_type);
+}
 Value product(const SliceValue& input, Work& work) {
     const auto& type = input.element_type;
     if (type != "int" && type != "float") runtime_error(work.span, "product requires int/float slice or array", "E4003");
@@ -341,6 +372,7 @@ Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Val
         Work work{context, span};
         if (f.name == "unique") return unique(input, work);
         if (f.name == "chunk") return chunk(input, args[1], work);
+        if (f.name == "windows") return windows(input, args[1], work);
         return product(input, work);
     }
     auto input = std::get_if<SliceValue>(&args[0].data);

@@ -14,9 +14,9 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
     StandardSignature out{f.parameters,f.result};
     if(f.module=="alg"&&!types.empty()){
         auto close=types[0].find(']');auto element=types[0].starts_with('[')&&close!=std::string::npos?types[0].substr(close+1):"";
-        out.parameters[0]="[]"+element;if(out.parameters.size()==2&&f.name!="chunk")out.parameters[1]=element;
+        out.parameters[0]="[]"+element;if(out.parameters.size()==2&&f.name!="chunk"&&f.name!="windows")out.parameters[1]=element;
         if(f.name=="unique")out.result=element.empty()?"":"[]"+element;
-        else if(f.name=="chunk")out.result=element.empty()?"":"[][]"+element;
+        else if(f.name=="chunk"||f.name=="windows")out.result=element.empty()?"":"[][]"+element;
         else if(f.name=="product")out.result=element.empty()?"":"Result<"+element+",string>";
         else if(f.name=="sorted"||f.name=="reverse")out.result="Result<[]"+element+",string>";
         else if(f.name=="contains")out.result="bool";

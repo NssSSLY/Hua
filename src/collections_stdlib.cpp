@@ -160,6 +160,16 @@ Value invoke_list_extra(const StandardFunction& f,const std::vector<Value>& args
         for(std::size_t i=0;i<values.size();++i){work.tick();if(same_scalar(values[i],target,s,work))return name=="contains"?Value(true):Value(static_cast<I>(i));}
         return name=="contains"?Value(false):Value(I{-1});
     }
+    if(name=="dedup"){
+        // Keep the first of each run of == neighbours (Rust Vec::dedup). Compare
+        // first and compact after, so an error raised by == leaves the List unchanged.
+        std::vector<char> keep(values.size(),1);std::size_t last=0;
+        for(std::size_t i=1;i<values.size();++i){work.tick();if(same_scalar(values[i],values[last],s,work))keep[i]=0;else last=i;}
+        std::size_t kept=0;
+        for(std::size_t i=0;i<values.size();++i)if(keep[i]){if(i!=kept)values[kept]=std::move(values[i]);++kept;}
+        auto removed=values.size()-kept;values.erase(values.begin()+static_cast<std::ptrdiff_t>(kept),values.end());
+        return Value(static_cast<I>(removed));
+    }
     if(name=="reverse"){work.tick(values.size());std::reverse(values.begin(),values.end());return {};}
     if(name=="sort"){
         const auto& type=data.element_type;

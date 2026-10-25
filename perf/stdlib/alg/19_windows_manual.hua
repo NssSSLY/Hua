@@ -1,0 +1,22 @@
+# 滑动窗口：手写逐窗list.append再snapshot（原生alg.windows对照见22）
+import std.list as list
+fn main() {
+    var ints []int = []
+    var a = list.from_slice(ints)
+    for i in 0..5000 { unwrap(list.append(a, (i * 7919) % 10007)) }
+    let xs = list.snapshot(a)
+    var total = 0
+    for round in 0..10 {
+        var blocks [][]int = []
+        var out = list.from_slice(blocks)
+        for i in 0..len(xs) - 7 {
+            var w = list.from_slice(ints)
+            for j in i..i + 8 { unwrap(list.append(w, xs[j])) }
+            unwrap(list.append(out, list.snapshot(w)))
+        }
+        let ws = list.snapshot(out)
+        total += len(ws)
+        for w in ws { total += w[0] + w[7] }
+    }
+    print(total)
+}

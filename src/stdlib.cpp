@@ -318,6 +318,10 @@ const std::vector<StandardFunction>& standard_functions() {
         {"list","sort_by",{"",""},"void",true,false,11,true},
         {"list","retain",{"",""},"int",true,false,11,true},
         {"maps","update",{"","","",""},"",true,false,11,true},
+        {"alg","partition",{"",""},"",false,false,20,true},
+        {"alg","zip_with",{"","",""},"",false,false,20,true},
+        {"list","dedup",{""},"int",true,false,20},
+        {"alg","windows",{"","int"},"",false,false,20},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
