@@ -92,12 +92,29 @@ public:
 struct Callable { const Node* function{}; BuiltinName builtin; std::optional<StructValue> receiver; std::shared_ptr<void> closure;std::function<bool(unsigned)> resource_guard;
     Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
 };
+// Language strings are immutable. Short text stays inline; long text is shared
+// across loads, calls, snapshots and terminal Task copies. No writable host view.
+class StringValue {
+    std::shared_ptr<const std::string> shared_;
+public:
+    explicit StringValue(std::string text):shared_(std::make_shared<const std::string>(std::move(text))){}
+    const std::string& text()const{return *shared_;}
+};
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue>;
     Data data;
     Value() = default;
+    explicit Value(const char* text):Value(std::string(text)){}
+    explicit Value(std::string text){
+        if(text.size()<=std::string{}.capacity())data=std::move(text);
+        else data=StringValue(std::move(text));
+    }
     template<class T> explicit Value(T value) : data(std::move(value)) {}
 };
+inline const std::string& string_value(const Value::Data& data){if(auto p=std::get_if<std::string>(&data))return *p;return std::get<StringValue>(data).text();}
+inline const std::string* string_data(const Value::Data* data){if(auto p=std::get_if<std::string>(data))return p;auto p=std::get_if<StringValue>(data);return p?&p->text():nullptr;}
+inline std::size_t value_kind(const Value& value){auto kind=value.data.index();return kind==24?4:kind;}
+inline bool is_string(const Value::Data& data){return data.index()==4||data.index()==24;}
 // Names and field positions are immutable and own their storage independently of a model.
 struct RecordLayout {
     const std::vector<std::string> names;
@@ -125,9 +142,21 @@ class RecordFields {
         std::shared_ptr<const RecordLayout> layout;
         std::vector<std::optional<Value>> slots;
         std::size_t count{};
-        explicit Flat(std::shared_ptr<const RecordLayout> shape):layout(std::move(shape)),slots(layout->names.size()){}
+        bool exposed{},cycle_free{};
+        mutable std::atomic<bool> tracked{false};
+        mutable std::atomic<unsigned> copy_depth{0};
+        explicit Flat(std::shared_ptr<const RecordLayout> shape,bool initialize=true):layout(std::move(shape)),slots(initialize?layout->names.size():0){}
+        Flat(const Flat& other):layout(other.layout),slots(other.slots),count(other.count),exposed(other.exposed),cycle_free(other.cycle_free),copy_depth(other.copy_depth.load()){}
+        Flat(Flat&& other)noexcept:layout(std::move(other.layout)),slots(std::move(other.slots)),count(other.count),exposed(other.exposed),cycle_free(other.cycle_free),copy_depth(other.copy_depth.load()){}
+        Flat& operator=(Flat&& other)noexcept{layout=std::move(other.layout);slots=std::move(other.slots);count=other.count;exposed=other.exposed;cycle_free=other.cycle_free;copy_depth=other.copy_depth.load();tracked=false;return *this;}
+        Flat& operator=(const Flat& other){Flat copy(other);return *this=std::move(copy);}
+        void clear(){slots.clear();count=0;copy_depth=0;}
+        friend void heap_edges(const Flat& f,const HeapVisitor& visit){for(const auto& slot:f.slots)if(slot)heap_edges(*slot,visit);}
     };
-    std::variant<Tree,Flat> storage_;
+    mutable std::variant<Tree,Flat,std::shared_ptr<Flat>> storage_;
+    Flat* flat()const{if(auto p=std::get_if<Flat>(&storage_))return p;auto p=std::get_if<std::shared_ptr<Flat>>(&storage_);return p?p->get():nullptr;}
+    void detach();
+    void expose(){detach();if(auto f=flat()){f->exposed=true;f->copy_depth=0;}}
 public:
     template<bool Const> class Iterator {
         using Owner=std::conditional_t<Const,const RecordFields,RecordFields>;
@@ -136,50 +165,60 @@ public:
         friend class RecordFields;
         Iterator(Owner* owner,std::size_t position):owner_(owner),position_(position){skip();}
         Iterator(Owner* owner,TreeIterator tree):owner_(owner),tree_(tree){}
-        void skip(){if(auto* f=std::get_if<Flat>(&owner_->storage_))while(position_<f->slots.size()&&!f->slots[position_])++position_;}
+        void skip(){if(auto* f=owner_->flat())while(position_<f->slots.size()&&!f->slots[position_])++position_;}
     public:
         using reference=std::pair<const std::string&,std::conditional_t<Const,const Value&,Value&>>;
         struct Arrow {reference entry;const reference* operator->()const{return &entry;}};
         Iterator()=default;
         reference operator*()const{
-            if(auto* f=std::get_if<Flat>(&owner_->storage_))return {f->layout->names[position_],*f->slots[position_]};
+            if constexpr(!Const)owner_->expose();
+            if(auto* f=owner_->flat())return {f->layout->names[position_],*f->slots[position_]};
             return {tree_->first,tree_->second};
         }
         Arrow operator->()const{return {**this};}
-        Iterator& operator++(){if(std::holds_alternative<Flat>(owner_->storage_)){++position_;skip();}else ++tree_;return *this;}
+        Iterator& operator++(){if(owner_->flat()!=nullptr){++position_;skip();}else ++tree_;return *this;}
         bool operator==(const Iterator& other)const{
             if(owner_!=other.owner_)return false;
             if(!owner_)return true;
-            return std::holds_alternative<Flat>(owner_->storage_)?position_==other.position_:tree_==other.tree_;
+            return owner_->flat()!=nullptr?position_==other.position_:tree_==other.tree_;
         }
     };
     using iterator=Iterator<false>;using const_iterator=Iterator<true>;
     RecordFields()=default;
     explicit RecordFields(std::shared_ptr<const RecordLayout> layout):storage_(std::in_place_type<Flat>,std::move(layout)){}
-    const RecordLayout* layout()const{auto* f=std::get_if<Flat>(&storage_);return f?f->layout.get():nullptr;}
-    std::shared_ptr<const RecordLayout> retain_layout()const{auto* f=std::get_if<Flat>(&storage_);return f?f->layout:nullptr;}
-    RecordFields empty_copy()const{auto* f=std::get_if<Flat>(&storage_);return f?RecordFields(f->layout):RecordFields();}
-    Value* value_at(std::size_t index){auto* f=std::get_if<Flat>(&storage_);return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
-    const Value* value_at(std::size_t index)const{auto* f=std::get_if<Flat>(&storage_);return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
-    iterator begin(){if(std::holds_alternative<Flat>(storage_))return iterator(this,std::size_t{0});return iterator(this,std::get<Tree>(storage_).begin());}
-    iterator end(){if(auto* f=std::get_if<Flat>(&storage_))return iterator(this,f->slots.size());return iterator(this,std::get<Tree>(storage_).end());}
-    const_iterator begin()const{if(std::holds_alternative<Flat>(storage_))return const_iterator(this,std::size_t{0});return const_iterator(this,std::get<Tree>(storage_).begin());}
-    const_iterator end()const{if(auto* f=std::get_if<Flat>(&storage_))return const_iterator(this,f->slots.size());return const_iterator(this,std::get<Tree>(storage_).end());}
+    const RecordLayout* layout()const{auto* f=flat();return f?f->layout.get():nullptr;}
+    std::shared_ptr<const RecordLayout> retain_layout()const{auto* f=flat();return f?f->layout:nullptr;}
+    RecordFields empty_copy()const{auto* f=flat();return f?RecordFields(f->layout):RecordFields();}
+    Value* value_at(std::size_t index){expose();auto* f=flat();return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
+    const Value* value_at(std::size_t index)const{auto* f=flat();return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
+    iterator begin(){detach();if(flat()!=nullptr)return iterator(this,std::size_t{0});return iterator(this,std::get<Tree>(storage_).begin());}
+    iterator end(){detach();if(auto* f=flat())return iterator(this,f->slots.size());return iterator(this,std::get<Tree>(storage_).end());}
+    const_iterator begin()const{if(flat()!=nullptr)return const_iterator(this,std::size_t{0});return const_iterator(this,std::get<Tree>(storage_).begin());}
+    const_iterator end()const{if(auto* f=flat())return const_iterator(this,f->slots.size());return const_iterator(this,std::get<Tree>(storage_).end());}
     iterator find(const std::string& name);
     const_iterator find(const std::string& name)const;
     bool contains(const std::string& name)const{return find(name)!=end();}
     Value& at(const std::string& name);
     const Value& at(const std::string& name)const;
     std::pair<iterator,bool> emplace(const std::string& name,Value value);
-    iterator emplace_hint(iterator,const std::string& name,Value value){if(auto* tree=std::get_if<Tree>(&storage_))return iterator(this,tree->emplace_hint(tree->end(),name,std::move(value)));return emplace(name,std::move(value)).first;}
+    iterator emplace_hint(iterator,const std::string& name,Value value){detach();if(auto* tree=std::get_if<Tree>(&storage_))return iterator(this,tree->emplace_hint(tree->end(),name,std::move(value)));return emplace(name,std::move(value)).first;}
     iterator erase(iterator where);
-    std::size_t size()const{auto* f=std::get_if<Flat>(&storage_);return f?f->count:std::get<Tree>(storage_).size();}
+    std::size_t size()const{auto* f=flat();return f?f->count:std::get<Tree>(storage_).size();}
     bool empty()const{return size()==0;}
-    void clear(){if(auto* f=std::get_if<Flat>(&storage_)){f->slots.clear();f->count=0;}else std::get<Tree>(storage_).clear();}
+    void clear(){if(auto* f=flat()){if(auto p=std::get_if<std::shared_ptr<Flat>>(&storage_);p&&p->use_count()!=1)storage_=Flat(f->layout,false);else f->clear();}else std::get<Tree>(storage_).clear();}
+    // Sharing is allowed only until a mutable field reference escapes. Such a
+    // reference can outlive a later snapshot, so exposed bodies use eager copies.
+    RecordFields snapshot(unsigned depth)const;
+    const void* backing_identity()const{return flat();}
+    friend void heap_edges(const RecordFields& f,const HeapVisitor& visit){
+        if(auto body=f.flat();body&&body->cycle_free)return;
+        if(auto body=f.flat();body&&body->tracked.load(std::memory_order_acquire))visit(body);
+        else f.each_value([&](const Value& v){heap_edges(v,visit);});
+    }
     template<class F> RecordFields transform(F&& copy)const{
         auto result=empty_copy();
-        if(auto* f=std::get_if<Flat>(&storage_)){
-            auto& target=std::get<Flat>(result.storage_);
+        if(auto* f=flat()){
+            auto& target=*result.flat();
             for(std::size_t i=0;i<f->slots.size();++i)if(f->slots[i]){target.slots[i].emplace(copy(*f->slots[i]));++target.count;}
         }else{
             auto& target=std::get<Tree>(result.storage_);
@@ -187,12 +226,15 @@ public:
         }
         return result;
     }
+    // Internal consuming normalization does not publish field references.
+    void normalize_owned(bool readonly,unsigned depth,bool resource_alias);
     template<class F> void each_value(F&& visit){
-        if(auto* f=std::get_if<Flat>(&storage_)){for(auto& slot:f->slots)if(slot)visit(*slot);}
+        expose();
+        if(auto* f=flat()){for(auto& slot:f->slots)if(slot)visit(*slot);}
         else for(auto& [_,value]:std::get<Tree>(storage_))visit(value);
     }
     template<class F> void each_value(F&& visit)const{
-        if(auto* f=std::get_if<Flat>(&storage_)){for(const auto& slot:f->slots)if(slot)visit(*slot);}
+        if(auto* f=flat()){for(const auto& slot:f->slots)if(slot)visit(*slot);}
         else for(const auto& [_,value]:std::get<Tree>(storage_))visit(value);
     }
 };

@@ -23,7 +23,7 @@ bool leap(I y){return (y%4==0&&y%100!=0)||y%400==0;}
 I month_days(I y,I m){static constexpr I table[]{31,28,31,30,31,30,31,31,30,31,30,31};return m==2&&leap(y)?29:table[m-1];}
 I floor_div(I a,I b){I q=a/b;if((a%b!=0)&&((a<0)!=(b<0)))--q;return q;}
 I integer(const Value& v,const SourceSpan& s){auto p=std::get_if<I>(&v.data);if(!p)runtime_error(s,"expected int","E4003");return *p;}
-const std::string& text(const Value& v,const SourceSpan& s){auto p=std::get_if<std::string>(&v.data);if(!p)runtime_error(s,"expected string","E4003");return *p;}
+const std::string& text(const Value& v,const SourceSpan& s){auto p=hua::string_data(&v.data);if(!p)runtime_error(s,"expected string","E4003");return *p;}
 void in_range(I ms,const SourceSpan& s){if(ms<min_ms||ms>max_ms)runtime_error(s,"time outside years 0001..9999","E4003");}
 struct Parts{I year,month,day,hour,minute,second,millis;};
 Parts parts(I ms){

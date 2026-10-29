@@ -64,7 +64,7 @@ int main(int argc,char** argv){
         std::set<std::string> names;
         for(int i=0;i<32;++i){
             auto v=call("fs$temp_file",{text("."),text("file-")},&context);check(success(v),"temp_file");
-            auto name=std::get<std::string>(result_payload(v,true,{}).data);
+            auto name=hua::string_value(result_payload(v,true,{}).data);
             check(names.insert(name).second,"temporary collision");
             check(std::filesystem::file_size(std::filesystem::path(std::u8string(name.begin(),name.end())))==0,"temporary not empty");
         }
@@ -75,7 +75,7 @@ int main(int argc,char** argv){
                 try{
                     auto v=call("fs$temp_file",{text("."),text("parallel-")},&context);
                     if(!success(v)){temp_bad=true;continue;}
-                    auto name=std::get<std::string>(result_payload(v,true,{}).data);
+                    auto name=hua::string_value(result_payload(v,true,{}).data);
                     std::lock_guard lock(names_mutex);if(!names.insert(name).second)temp_bad=true;
                 }catch(...){temp_bad=true;}
             }

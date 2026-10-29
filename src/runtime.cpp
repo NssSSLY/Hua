@@ -38,7 +38,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
     auto arity=(info.core==CoreBuiltin::min||info.core==CoreBuiltin::max||info.core==CoreBuiltin::has||info.core==CoreBuiltin::delete_||info.core==CoreBuiltin::unwrap_or)?2u:info.core==CoreBuiltin::clamp?3u:1u;
     if(info.core!=CoreBuiltin::print && !(info.core==CoreBuiltin::ok&&args.empty()) && args.size()!=arity)runtime_error(span,"builtin argument count mismatch","E4003");
     if(info.core==CoreBuiltin::numeric){
-        if(auto text=std::get_if<std::string>(&args[0].data)){auto spec=*numeric_spec(name);if(spec.category=='u'){std::uint64_t value{};auto [end,err]=std::from_chars(text->data(),text->data()+text->size(),value);if(err!=std::errc{}||end!=text->data()+text->size())runtime_error(span,"invalid unsigned conversion","E4003");return convert_numeric(Value(NumericValue{"u64",value}),name,span,true);}return convert_numeric(invoke_builtin(spec.category=='i'?"int":"float",args,span,output),name,span,true);}
+        if(auto text=hua::string_data(&args[0].data)){auto spec=*numeric_spec(name);if(spec.category=='u'){std::uint64_t value{};auto [end,err]=std::from_chars(text->data(),text->data()+text->size(),value);if(err!=std::errc{}||end!=text->data()+text->size())runtime_error(span,"invalid unsigned conversion","E4003");return convert_numeric(Value(NumericValue{"u64",value}),name,span,true);}return convert_numeric(invoke_builtin(spec.category=='i'?"int":"float",args,span,output),name,span,true);}
         return convert_numeric(args[0],name,span,true);
     }
     if((info.core==CoreBuiltin::int_||info.core==CoreBuiltin::float_)&&std::holds_alternative<NumericValue>(args[0].data))return convert_numeric(args[0],name,span,true);
@@ -69,7 +69,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
     if(info.core==CoreBuiltin::len) {
         if(auto p=std::get_if<MapValue>(&args[0].data))return Value(static_cast<I>(p->data->entries.size()));
         if(auto p=std::get_if<SliceValue>(&args[0].data))return Value(static_cast<I>(p->length));
-        if(auto p=std::get_if<std::string>(&args[0].data))return Value(static_cast<I>(p->size()));
+        if(auto p=hua::string_data(&args[0].data))return Value(static_cast<I>(p->size()));
         runtime_error(span,"len requires a slice or string","E4003");
     }
     if(info.core==CoreBuiltin::int_) {
@@ -77,7 +77,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
         if(auto p=std::get_if<double>(&args[0].data)) {
             if(!std::isfinite(*p) || *p< -9223372036854775808.0 || *p>=9223372036854775808.0)runtime_error(span,"float is outside int64 range","E4002");return Value(static_cast<I>(*p));
         }
-        if(auto p=std::get_if<std::string>(&args[0].data)) {
+        if(auto p=hua::string_data(&args[0].data)) {
             I value{};auto [end,err]=std::from_chars(p->data(),p->data()+p->size(),value);
             if(err!=std::errc{} || end!=p->data()+p->size())runtime_error(span,"invalid int conversion","E4003");return Value(value);
         }
@@ -85,7 +85,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
     if(info.core==CoreBuiltin::float_) {
         if(args[0].data.index()==3)return args[0];
         if(auto p=std::get_if<I>(&args[0].data))return Value(static_cast<double>(*p));
-        if(auto p=std::get_if<std::string>(&args[0].data)) {
+        if(auto p=hua::string_data(&args[0].data)) {
             double value{};auto [end,err]=std::from_chars(p->data(),p->data()+p->size(),value);
             if(err!=std::errc{} || end!=p->data()+p->size() || !std::isfinite(value))runtime_error(span,"invalid float conversion","E4003");return Value(value);
         }

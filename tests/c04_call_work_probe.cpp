@@ -6,7 +6,7 @@
 using namespace hua;
 namespace {
 Value member(const Value& v,const std::string& key){if(auto p=std::get_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
-std::string str(const Value& v){return std::get<std::string>(v.data);}
+std::string str(const Value& v){return hua::string_value(v.data);}
 bool flag(const Value& v){return std::get<bool>(v.data);}
 const auto& entries(const Value& v){return std::get<MapValue>(v.data).data->entries;}
 void append(std::string& out,const std::string& s){out+=std::to_string(s.size())+":"+s;}

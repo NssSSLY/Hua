@@ -116,18 +116,18 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
         if(f.name=="clear"){out.clear();return {};}
         // Text fast path (since 9): strings are valid UTF-8, so write_str appends without
         // re-validating; take_text moves the bytes out (validated once) and empties the buffer.
-        if(f.name=="write_str"){const auto& t=std::get<std::string>(args[1].data);if(t.size()>max_bytes-out.size())runtime_error(s,"buffer exceeds 128 MiB","E4099");out+=t;return {};}
+        if(f.name=="write_str"){const auto& t=hua::string_value(args[1].data);if(t.size()>max_bytes-out.size())runtime_error(s,"buffer exceeds 128 MiB","E4099");out+=t;return {};}
         if(f.name=="write_int"){char digits[24];auto done=std::to_chars(digits,digits+sizeof digits,integer(1));if(static_cast<std::size_t>(done.ptr-digits)>max_bytes-out.size())runtime_error(s,"buffer exceeds 128 MiB","E4099");out.append(digits,done.ptr);return {};}
         if(f.name=="reserve"){auto n=integer(1);if(n<0)runtime_error(s,"buffer reserve must not be negative","E4003");if(static_cast<std::uint64_t>(n)>max_bytes)runtime_error(s,"buffer exceeds 128 MiB","E4099");out.reserve(static_cast<std::size_t>(n));return {};}
         if(f.name=="take_text"){if(out.size()>max_text)return err("TEXT_SIZE: text exceeds 16 MiB");auto invalid=text_utf8_error(out);if(!invalid.empty())return err("TEXT_UTF8: "+invalid);std::string taken=std::move(out);out.clear();return ok(Value(std::move(taken)));}
         std::string addition;
         if(f.name=="append")addition=*std::get<BytesValue>(args[1].data).data;
-        else if(f.name=="write_text"){addition=std::get<std::string>(args[1].data);if(addition.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(addition);if(!invalid.empty())return err(invalid);}
+        else if(f.name=="write_text"){addition=hua::string_value(args[1].data);if(addition.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(addition);if(!invalid.empty())return err(invalid);}
         else {auto value=integer(1);if(f.name=="write_u8"){if(value<0||value>255)return err("byte outside 0..255");addition=integer_bytes(static_cast<std::uint64_t>(value),1);}else if(f.name=="write_u32_le"){if(value<0||value>4294967295LL)return err("u32 outside 0..4294967295");addition=integer_bytes(static_cast<std::uint64_t>(value),4);}else addition=integer_bytes(std::bit_cast<std::uint64_t>(value),8);}
         if(addition.size()>max_bytes-out.size())return err("buffer exceeds 128 MiB");out+=addition;return ok(Value(static_cast<I>(out.size())));
     }
     if(f.module=="bytes"){
-        if(f.name=="from_text"){const auto& text=std::get<std::string>(args[0].data);if(text.size()>max_text)runtime_error(s,"text exceeds 16 MiB","E4099");auto invalid=text_utf8_error(text);if(!invalid.empty())runtime_error(s,invalid,"E4003");return bytes(text);}
+        if(f.name=="from_text"){const auto& text=hua::string_value(args[0].data);if(text.size()>max_text)runtime_error(s,"text exceeds 16 MiB","E4099");auto invalid=text_utf8_error(text);if(!invalid.empty())runtime_error(s,invalid,"E4003");return bytes(text);}
         if(f.name=="from_ints"){const auto& source=std::get<SliceValue>(args[0].data);if(source.length>max_items)return err("byte input exceeds 1000000 items");std::string out;out.reserve(source.length);for(std::size_t i=0;i<source.length;++i){auto value=as_int(sequence_read(source,i),s);if(value<0||value>255)return err("byte outside 0..255");out+=static_cast<char>(value);}return ok(bytes(std::move(out)));}
         if(f.name=="u32_le"){auto value=integer(0);if(value<0||value>4294967295LL)return err("u32 outside 0..4294967295");return ok(bytes(integer_bytes(static_cast<std::uint64_t>(value),4)));}
         if(f.name=="i64_le")return bytes(integer_bytes(std::bit_cast<std::uint64_t>(integer(0)),8));

@@ -17,14 +17,14 @@ struct Observer final:VMCallObserver{
   if(n==(lazy?"flat_instantiate_view":"instantiate_view_at")){++counts["view_substitutions"];counts["substitution_origin_visits"]+=map(field(args[1],"origins")).size();}
   if(n=="raw_field"){++counts["queried_fields"];if(slice(field(args[offset],"plan")))++counts["queried_deferred_fields"];}
   if(n=="materialized"){
-   auto v=args[offset];bool flatten=!std::get<std::string>(field(v,"prefix").data).empty()||std::get<bool>(field(v,"readonly_fields").data)||(lazy&&slice(field(v,"plan")));
+   auto v=args[offset];bool flatten=!hua::string_value(field(v,"prefix").data).empty()||std::get<bool>(field(v,"readonly_fields").data)||(lazy&&slice(field(v,"plan")));
    if(flatten){++counts["materializations"];counts["materialization_backing_slots"]+=slots(v);}
   }
   if(n=="join")counts["join_candidate_bindings"]+=map(args[1+offset]).size();
   if(n=="join_branches"){
    std::set<std::string> keys;for(int p:{1,2})for(auto& [k,v]:map(field(args[p+offset],"touched")))keys.insert(std::get<std::string>(k));counts["join_candidate_bindings"]+=keys.size();
   }
-  if(n=="commit"&&lazy){auto journals=field(args[0],"journals");auto key=std::get<std::string>(args[1].data);for(auto& [id,j]:map(journals))if(!map(field(j,"touched")).contains(key))++counts["journal_first_writes"];}
+  if(n=="commit"&&lazy){auto journals=field(args[0],"journals");auto key=hua::string_value(args[1].data);for(auto& [id,j]:map(journals))if(!map(field(j,"touched")).contains(key))++counts["journal_first_writes"];}
  }
  void leave(const Node* fn,const Value* result)override{
   auto i=session.helpers.find(fn);if(result&&i!=session.helpers.end()&&i->second=="saved")counts["journal_saved_bindings"]+=map(field(*result,"after")).size();session.leave(fn,result);

@@ -52,7 +52,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
     const std::string success = result.empty() ? "" : result[0];
     auto ok = [&](Value v) { return standard_result(std::move(v), true, success); };
     auto err = [&](std::string text) { return standard_result(Value(std::move(text)), false, success); };
-    auto text = [&](std::size_t i) -> const std::string& { return std::get<std::string>(args[i].data); };
+    auto text = [&](std::size_t i) -> const std::string& { return hua::string_value(args[i].data); };
     const auto& n = f.name;
 
     if (n == "format_int") {
@@ -279,7 +279,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
                 index = static_cast<std::size_t>(value);
             }
             if (index >= items.length) return err("FORMAT_ARGS: placeholder index out of range");
-            out += std::get<std::string>((*items.storage)[items.start + index].data);
+            out += hua::string_value((*items.storage)[items.start + index].data);
             if (out.size() > max_text) runtime_error(s, "format text exceeds 16 MiB", "E4099");
             i = close;
         }

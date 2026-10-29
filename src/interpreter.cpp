@@ -235,10 +235,15 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     }
     case N::Member: {
         auto base=(co_await evaluate(*n.children[0]));
-        if(n.text=="len" && (std::holds_alternative<SliceValue>(base.data)||std::holds_alternative<MapValue>(base.data)||std::holds_alternative<std::string>(base.data)))co_return aggregate_member(base,n.text,n.span);
+        if(n.text=="len" && (std::holds_alternative<SliceValue>(base.data)||std::holds_alternative<MapValue>(base.data)||is_string(base.data)))co_return aggregate_member(base,n.text,n.span);
         if(auto p=std::get_if<PlainRecord>(&base.data))if(auto item=plain_record_field(*p,n.text))co_return std::move(*item);
         auto object=materialize_record(base);if(!object)runtime_error(n.span,"member access requires a struct","E4003");
-        if(auto field=object->data->fields.find(n.text);field!=object->data->fields.end()){retain_record_alias(field->second);co_return read_member(field->second,object->writable);}
+        if(auto field=std::as_const(object->data->fields).find(n.text);field!=std::as_const(object->data->fields).end()){
+            const Value* item=&field->second;
+            if(std::holds_alternative<StructValue>(item->data)||std::holds_alternative<PlainRecord>(item->data)){
+                auto& alias=object->data->fields.at(n.text);retain_record_alias(alias);item=&alias;
+            }
+            co_return read_member(*item,object->writable);}
         auto key=object->data->name+"."+n.text;auto method=model_.functions.find(key);
         if(method==model_.functions.end())runtime_error(n.span,"unknown struct member","E4003");
         if(method->second->span.file_id!=n.span.file_id && method->second->text.find(" pub")==std::string::npos)

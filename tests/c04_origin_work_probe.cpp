@@ -7,7 +7,7 @@
 using namespace hua;
 namespace {
 Value member(const Value& value,const std::string& key){if(auto p=std::get_if<PlainRecord>(&value.data))return *plain_record_field(*p,key);return std::get<StructValue>(value.data).data->fields.at(key);}
-std::string string(const Value& value){return std::get<std::string>(value.data);}
+std::string string(const Value& value){return hua::string_value(value.data);}
 std::int64_t integer(const Value& value){return std::get<std::int64_t>(value.data);}
 const auto& entries(const Value& value){return std::get<MapValue>(value.data).data->entries;}
 std::string owner(const Value& state,const Value& environment,const Value& id){

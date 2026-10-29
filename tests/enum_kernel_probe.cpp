@@ -29,7 +29,7 @@ hua::Value make_value(const Layout& layout,int active,hua::Value payload,bool sp
 }
 I read_value(const Layout& layout,const hua::Value& value){
  const auto& fields=std::get<hua::StructValue>(value.data).data->fields;
- const auto& tag=std::get<std::string>(fields.at("$case").data);
+ const auto& tag=hua::string_value(fields.at("$case").data);
  for(int i=0;i<layout.count;++i)if(tag==layout.names[i])return std::get<I>(fields.at(layout.fields[i]).data)+i;
  return -1;
 }

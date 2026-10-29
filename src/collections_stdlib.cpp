@@ -77,7 +77,7 @@ Value sets_standard(const StandardFunction& f,const std::vector<Value>& args,con
         Entries out;
         for(std::size_t i=0;i<input->length;++i){
             work.tick();auto v=sequence_read(*input,i);MapKey k;
-            if(auto p=std::get_if<bool>(&v.data))k=*p;else if(auto p=std::get_if<I>(&v.data))k=*p;else if(auto p=std::get_if<std::string>(&v.data))k=std::move(*p);else runtime_error(s,"set element type mismatch","E4003");
+            if(auto p=std::get_if<bool>(&v.data))k=*p;else if(auto p=std::get_if<I>(&v.data))k=*p;else if(auto p=hua::string_data(&v.data))k=std::move(*p);else runtime_error(s,"set element type mismatch","E4003");
             // Ascending runs (common for generated keys) append at the end in O(1).
             if(!out.empty()&&std::prev(out.end())->first<k)add_key(out,k,s);
             else if(!out.contains(k)){if(out.size()>=max_entries)runtime_error(s,"map entry limit exceeded","E4099");out.emplace(std::move(k),Value(true));}
@@ -112,7 +112,7 @@ Value sets_standard(const StandardFunction& f,const std::vector<Value>& args,con
 
 bool same_scalar(const Value& a,const Value& b,const SourceSpan& s,Work& work){
     if(auto x=std::get_if<I>(&a.data))if(auto y=std::get_if<I>(&b.data))return *x==*y;
-    if(auto x=std::get_if<std::string>(&a.data))if(auto y=std::get_if<std::string>(&b.data)){work.tick(x->size()/64);return *x==*y;}
+    if(auto x=hua::string_data(&a.data))if(auto y=hua::string_data(&b.data)){work.tick(x->size()/64);return *x==*y;}
     if(auto x=std::get_if<double>(&a.data))if(auto y=std::get_if<double>(&b.data))return *x==*y;
     if(auto x=std::get_if<bool>(&a.data))if(auto y=std::get_if<bool>(&b.data))return *x==*y;
     return as_bool(binary_value("==",a,b,s),s);
@@ -121,7 +121,7 @@ int compare_sorted(const Value& a,const Value& b,Work& work){
     work.tick();
     if(auto x=std::get_if<I>(&a.data)){auto y=std::get<I>(b.data);return *x<y?-1:*x>y?1:0;}
     if(auto x=std::get_if<double>(&a.data)){auto y=std::get<double>(b.data);return *x<y?-1:*x>y?1:0;}
-    const auto& x=std::get<std::string>(a.data);const auto& y=std::get<std::string>(b.data);
+    const auto& x=hua::string_value(a.data);const auto& y=hua::string_value(b.data);
     auto n=std::min(x.size(),y.size());work.tick(n/64);
     if(auto c=n?std::memcmp(x.data(),y.data(),n):0)return c<0?-1:1;
     return x.size()<y.size()?-1:x.size()>y.size()?1:0;

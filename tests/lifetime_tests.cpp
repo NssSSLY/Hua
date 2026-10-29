@@ -82,7 +82,7 @@ void compiler_roots(){
         witnesses.push_back(node);
     }
     auto address=witnesses[0].lock().get();auto before=heap.live();check(heap.collect()==0&&heap.live()==before,"AST/symbol roots");
-    for(unsigned i=0;i<witnesses.size();++i){auto node=witnesses[i].lock();check(node&&node->fields.at("text").data.index()==4,"AST/string root retained");}
+    for(unsigned i=0;i<witnesses.size();++i){auto node=witnesses[i].lock();check(node&&value_kind(node->fields.at("text"))==4,"AST/string root retained");}
     check(witnesses[0].lock().get()==address,"AST address stable");
     auto payload=std::get<ResultValue>(symbols->entries.at("0").data).payload;
     auto view=nodes->values[0];nodes.reset();symbols.reset();heap.collect();

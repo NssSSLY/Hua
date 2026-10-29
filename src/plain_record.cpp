@@ -1,6 +1,7 @@
 #include "hua/value.hpp"
 #include <algorithm>
 #include <bit>
+#include <utility>
 namespace hua {
 namespace {
 unsigned scalar_tag(const Value& value){
@@ -27,7 +28,7 @@ bool encode(const Value& value,const PlainRecordLayout::Field& field,std::array<
     return true;
 }
 bool fill(const StructValue& input,PlainRecord& output,unsigned depth){
-    for(const auto& field:output.layout->fields){auto item=input.data->fields.find(field.name);if(item==input.data->fields.end()||!encode(item->second,field,output.cells,depth+1))return false;}
+    for(const auto& field:output.layout->fields){auto item=std::as_const(input.data->fields).find(field.name);if(item==std::as_const(input.data->fields).end()||!encode(item->second,field,output.cells,depth+1))return false;}
     return true;
 }
 }
@@ -43,7 +44,7 @@ bool pack_plain_record(const StructValue& input,PlainRecord& output,unsigned dep
     }
     auto layout=std::make_shared<PlainRecordLayout>();layout->shape=shape;layout->name=input.data->name;
     for(const auto& name:shape->names){
-        auto found=input.data->fields.find(name);if(found==input.data->fields.end())return false;
+        auto found=std::as_const(input.data->fields).find(name);if(found==std::as_const(input.data->fields).end())return false;
         const auto& value=found->second;PlainRecordLayout::Field field;field.name=name;field.type=value_type(value);field.offset=layout->slots;field.tag=scalar_tag(value);
         auto annotation=shape->annotations.find(name);
         if(annotation==shape->annotations.end()||annotation->second!=field.type)return false;

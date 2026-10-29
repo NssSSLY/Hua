@@ -86,7 +86,7 @@ template<class T> int get(hua_env e,hua_value h,T* out){auto p=ctx(e).get(h);if(
 int n_as_int(hua_env e,hua_value h,std::int64_t* p){return get(e,h,p);}
 int n_as_float(hua_env e,hua_value h,double* p){return get(e,h,p);}
 int n_as_bool(hua_env e,hua_value h,int* out){bool b{};if(!out||!get(e,h,&b))return 0;*out=b?1:0;return 1;}
-int n_as_string(hua_env e,hua_value h,const char** out,std::size_t* n){auto p=ctx(e).get(h);if(p&&out&&n)if(auto v=std::get_if<std::string>(&p->data)){*out=v->data();*n=v->size();return 1;}ctx(e).failure="native argument type mismatch";return 0;}
+int n_as_string(hua_env e,hua_value h,const char** out,std::size_t* n){auto p=ctx(e).get(h);if(p&&out&&n)if(auto v=hua::string_data(&p->data)){*out=v->data();*n=v->size();return 1;}ctx(e).failure="native argument type mismatch";return 0;}
 const hua_api_v1 api={HUA_NATIVE_ABI,sizeof(hua_api_v1),n_nil,n_bool,n_int,n_float,n_string,n_error,n_kind,n_as_bool,n_as_int,n_as_float,n_as_string};
 }
 struct ExternalRegistry::Instance {

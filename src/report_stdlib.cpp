@@ -11,7 +11,7 @@ constexpr std::size_t max_text=16*1024*1024,max_shown=200;
 // write, so lines from concurrent Tasks never interleave.
 std::mutex& stderr_lock(){static std::mutex lock;return lock;}
 bool write_stderr(std::string_view text){std::lock_guard guard(stderr_lock());std::cerr.write(text.data(),static_cast<std::streamsize>(text.size()));std::cerr.flush();return bool(std::cerr);}
-const std::string& text(const Value& v,const SourceSpan& s){auto p=std::get_if<std::string>(&v.data);if(!p)runtime_error(s,"expected string","E4003");return *p;}
+const std::string& text(const Value& v,const SourceSpan& s){auto p=hua::string_data(&v.data);if(!p)runtime_error(s,"expected string","E4003");return *p;}
 // UTF-8-safe truncation for assertion messages.
 std::string shown(const Value& v){
     auto out=show(v);if(out.size()<=max_shown)return out;

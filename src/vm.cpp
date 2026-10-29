@@ -57,7 +57,7 @@ template<std::size_t Size> LeaseBlocks<Size>& lease_blocks(){thread_local LeaseB
 // same result as binary_value; every other case (and overflow, which must raise
 // E4002 there) returns nullopt and takes the general path.
 std::optional<Value> fast_binary(std::string_view op,const Value& left,const Value& right){
-    const auto index=left.data.index();if(index!=right.data.index()||op.empty()||op.size()>2)return std::nullopt;
+    const auto index=value_kind(left);if(index!=value_kind(right)||op.empty()||op.size()>2)return std::nullopt;
     const char c0=op[0],c1=op.size()==2?op[1]:'\0';
     const bool eq=c0=='='&&c1=='=',ne=c0=='!'&&c1=='=',lt=c0=='<'&&!c1,le=c0=='<'&&c1=='=',gt=c0=='>'&&!c1,ge=c0=='>'&&c1=='=';
     if(index==2){auto x=std::get<std::int64_t>(left.data),y=std::get<std::int64_t>(right.data);
@@ -71,7 +71,7 @@ std::optional<Value> fast_binary(std::string_view op,const Value& left,const Val
             std::int64_t q=x/y,r=x%y;if(r&&((r<0)!=(y<0))){--q;r+=y;}return Value(c0=='%'?r:q);}
         return std::nullopt;}
     if(index==1){auto x=std::get<bool>(left.data),y=std::get<bool>(right.data);if(eq)return Value(x==y);if(ne)return Value(x!=y);return std::nullopt;}
-    if(index==4){const auto& x=std::get<std::string>(left.data);const auto& y=std::get<std::string>(right.data);
+    if(index==4){const auto& x=hua::string_value(left.data);const auto& y=hua::string_value(right.data);
         if(eq)return Value(x==y);if(ne)return Value(x!=y);if(lt)return Value(x<y);if(le)return Value(x<=y);if(gt)return Value(x>y);if(ge)return Value(x>=y);}
     return std::nullopt;
 }
@@ -226,6 +226,14 @@ VirtualMachine::Binding& VirtualMachine::lookup(Frame& frame,const Instruction& 
         if(!env->bindings.empty()){HUA_PROFILE_COUNT(vm_lookup_hashes);auto found=env->bindings.find(op.text);if(found!=env->bindings.end())return found->second;}
     }
     runtime_error(op.span,"name `"+op.text+"` is not initialized","E4001");
+}
+const Value* VirtualMachine::read_field(FieldAccess& cache,const StructValue& object,const std::string& name){
+    const auto& fields=std::as_const(object.data->fields);
+    if(auto* layout=fields.layout()){
+        if(cache.layout.get()!=layout){cache.layout=fields.retain_layout();cache.index=layout->index(name);}
+        return fields.value_at(cache.index);
+    }
+    auto found=fields.find(name);return found==fields.end()?nullptr:&found->second;
 }
 Value* VirtualMachine::field(FieldAccess& cache,const StructValue& object,const std::string& name) {
     // Retain the shape too: Task results may carry a layout from another VM.
@@ -573,10 +581,16 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         }
         case Op::Member: {
             auto value=pop(s);
-            if(op.text=="len"&&(std::holds_alternative<SliceValue>(value.data)||std::holds_alternative<MapValue>(value.data)||std::holds_alternative<std::string>(value.data))){stack_.emplace_back(aggregate_member(value,op.text,s));break;}
+            if(op.text=="len"&&(std::holds_alternative<SliceValue>(value.data)||std::holds_alternative<MapValue>(value.data)||is_string(value.data))){stack_.emplace_back(aggregate_member(value,op.text,s));break;}
             if(auto p=std::get_if<PlainRecord>(&value.data)){if(auto item=plain_record_field(*p,op.text)){stack_.emplace_back(std::move(*item));break;}}
             auto object=materialize_record(value);if(!object)runtime_error(s,"member access requires a struct","E4003");
-            if(auto* item=field(access(f).field,*object,op.text)){retain_record_alias(*item);stack_.emplace_back(object->writable?*item:read_only(*item));break;}
+            if(auto* item=read_field(access(f).field,*object,op.text)){
+                // A record member is a live alias. Detach its containing field body
+                // before publishing it; immutable scalars/reference handles only read.
+                if(std::holds_alternative<StructValue>(item->data)||std::holds_alternative<PlainRecord>(item->data)){
+                    auto* alias=field(access(f).field,*object,op.text);retain_record_alias(*alias);item=alias;
+                }
+                stack_.emplace_back(object->writable?*item:read_only(*item));break;}
             auto method=model_.functions.find(object->data->name+"."+op.text);
             if(method==model_.functions.end())runtime_error(s,"unknown struct member","E4003");
             if(method->second->span.file_id!=s.file_id && method->second->text.find(" pub")==std::string::npos)

@@ -64,7 +64,7 @@ void edges_and_cycles(){
         object->fields.emplace("slice",Value(SliceValue{sequence,0,0,true,"int"}));object->fields.emplace("self",Value(StructValue{flat,true}));
     }
     std::vector<const void*> a,b;heap_edges(*flat,[&](const void* p){a.push_back(p);});heap_edges(*tree,[&](const void* p){b.push_back(p);});
-    check(a==b,"dynamic GC edge sequence changed");
+    check(a==b,"private field body changed logical GC edge sequence");
     std::weak_ptr<StructData> weak=flat;tree.reset();flat.reset();list.reset();sequence.reset();managed_heap().collect();
     check(weak.expired(),"fixed-slot cycle survived collection");
 }

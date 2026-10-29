@@ -125,7 +125,7 @@ Value item(const SliceValue& input, std::size_t index, Work& work) {
     auto result = sequence_read(input, index);
     if (value_type(result) != input.element_type)
         runtime_error(work.span, "algorithm element type mismatch", "E4003");
-    if (auto text = std::get_if<std::string>(&result.data); text && text->size() > max_text)
+    if (auto text = hua::string_data(&result.data); text && text->size() > max_text)
         runtime_error(work.span, "algorithm string exceeds 16 MiB", "E4099");
     if (auto real = std::get_if<double>(&result.data); real && !std::isfinite(*real))
         runtime_error(work.span, "algorithm requires finite float values", "E4003");
@@ -141,8 +141,8 @@ int compare(const Value& a, const Value& b, Work& work) {
         auto right = std::get<double>(b.data);
         return *left < right ? -1 : *left > right ? 1 : 0;
     }
-    const auto& left = std::get<std::string>(a.data);
-    const auto& right = std::get<std::string>(b.data);
+    const auto& left = hua::string_value(a.data);
+    const auto& right = hua::string_value(b.data);
     for (std::size_t i = 0; i < std::min(left.size(), right.size()); ++i) {
         work.tick();
         auto x = static_cast<unsigned char>(left[i]), y = static_cast<unsigned char>(right[i]);
@@ -230,18 +230,18 @@ Value unique(const SliceValue& input, Work& work) {
                                [&](std::size_t a, std::size_t b) { return std::get<double>(x[a].data) == std::get<double>(x[b].data); }, work);
     } else if (type == "string") {
         for (std::size_t i = 0; i < input.length; ++i) {
-            auto text = std::get_if<std::string>(&x[i].data);
+            auto text = hua::string_data(&x[i].data);
             if (!text) mismatch();
             work.count += text->size() / 64;
         }
-        kept = first_positions(input.length, [&](std::size_t i) { return static_cast<std::uint64_t>(std::hash<std::string_view>{}(std::get<std::string>(x[i].data))); },
-                               [&](std::size_t a, std::size_t b) { return std::get<std::string>(x[a].data) == std::get<std::string>(x[b].data); }, work);
+        kept = first_positions(input.length, [&](std::size_t i) { return static_cast<std::uint64_t>(std::hash<std::string_view>{}(hua::string_value(x[i].data))); },
+                               [&](std::size_t a, std::size_t b) { return hua::string_value(x[a].data) == hua::string_value(x[b].data); }, work);
     } else runtime_error(work.span, "alg.unique requires int/float/string elements", "E4003");
     std::vector<Value> out;
     out.reserve(kept.size());
     std::size_t text_bytes = 0;
     for (auto i : kept) {
-        if (auto text = std::get_if<std::string>(&x[i].data)) {
+        if (auto text = hua::string_data(&x[i].data)) {
             if (text->size() > max_text - text_bytes) runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
             text_bytes += text->size();
         }
@@ -263,7 +263,7 @@ Value chunk(const SliceValue& input, const Value& width, Work& work) {
         for (auto i = start; i < std::min(start + step, n); ++i) {
             work.tick();
             auto value = sequence_read(input, i);
-            if (auto text = std::get_if<std::string>(&value.data)) {
+            if (auto text = hua::string_data(&value.data)) {
                 if (text->size() > max_text - text_bytes) runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
                 text_bytes += text->size();
             }
@@ -289,7 +289,7 @@ Value windows(const SliceValue& input, const Value& width, Work& work) {
         for (std::size_t i = 0; i < n; ++i) {
             work.tick();
             auto value = sequence_read(input, i);
-            if (auto text = std::get_if<std::string>(&value.data)) {
+            if (auto text = hua::string_data(&value.data)) {
                 if (text->size() > max_text - text_bytes) runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
                 text_bytes += text->size();
             }
@@ -334,7 +334,7 @@ Value copied(const StandardFunction& f, const SliceValue& input, Work& work) {
     std::size_t text_bytes = 0;
     for (std::size_t i = 0; i < input.length; ++i) {
         auto value = item(input, f.name == "reverse" ? input.length - i - 1 : i, work);
-        if (auto text = std::get_if<std::string>(&value.data)) {
+        if (auto text = hua::string_data(&value.data)) {
             if (text->size() > max_text - text_bytes)
                 runtime_error(work.span, "algorithm copied text exceeds 16 MiB", "E4099");
             text_bytes += text->size();
@@ -386,7 +386,7 @@ Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Val
     if (args.size() == 2) {
         if (value_type(args[1]) != input->element_type)
             runtime_error(span, "algorithm target type mismatch", "E4003");
-        if (auto text = std::get_if<std::string>(&args[1].data); text && text->size() > max_text)
+        if (auto text = hua::string_data(&args[1].data); text && text->size() > max_text)
             runtime_error(span, "algorithm target exceeds 16 MiB", "E4099");
         if (auto real = std::get_if<double>(&args[1].data); real && !std::isfinite(*real))
             runtime_error(span, "algorithm requires finite float target", "E4003");

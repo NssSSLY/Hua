@@ -90,7 +90,7 @@ const std::string* BuiltinName::intern(std::string text){
 }
 BuiltinName::BuiltinName():text_(intern({})){}
 std::string value_type(const Value& v) {
-    switch(v.data.index()) {
+    switch(value_kind(v)) {
     case 0: return "nil"; case 1: return "bool"; case 2: return "int";
     case 3: return "float"; case 4: return "string";
     case 5: {const auto& s=std::get<SliceValue>(v.data);return (s.fixed?"["+std::to_string(s.length)+"]":"[]")+s.element_type;}
@@ -203,7 +203,7 @@ Value unary_value(std::string_view op,const Value& v,const SourceSpan& s) {
     if(std::holds_alternative<NumericValue>(v.data))return unary_numeric(op,v,s);
     if(op=="!") return Value(!as_bool(v,s));
     if(op=="~") return Value(~as_int(v,s));
-    if(op=="+") { if(v.data.index()==2 || v.data.index()==3) return v; }
+    if(op=="+") { if(value_kind(v)==2 || value_kind(v)==3) return v; }
     if(op=="-") {
         if(auto p=std::get_if<I>(&v.data)) return Value(sub(0,*p,s));
         if(auto p=std::get_if<double>(&v.data)) return Value(-*p);
@@ -226,19 +226,19 @@ bool values_equal(const Value& a,const Value& b,const SourceSpan& s,unsigned dep
         const auto* vx=x->data->variant;const auto* vy=y->data->variant;
         if((vx==nullptr)!=(vy==nullptr)||(vx&&vx->name!=vy->name))return false; // variant identity by name
         if(x->data->fields.size()!=y->data->fields.size())return false;
-        for(const auto& [name,item]:x->data->fields){auto other=y->data->fields.find(name);
-            if(other==y->data->fields.end()||!values_equal(item,other->second,s,depth+1))return false;}
+        for(const auto& [name,item]:std::as_const(x->data->fields)){auto other=std::as_const(y->data->fields).find(name);
+            if(other==std::as_const(y->data->fields).end()||!values_equal(item,other->second,s,depth+1))return false;}
         return true;
     }
-    if(a.data.index()!=b.data.index()){
-        if(a.data.index()==0||b.data.index()==0)return false;
+    if(value_kind(a)!=value_kind(b)){
+        if(value_kind(a)==0||value_kind(b)==0)return false;
         runtime_error(s,"equality requires matching types","E4003");
     }
-    if(a.data.index()==0)return true;
+    if(value_kind(a)==0)return true;
     if(auto p=std::get_if<bool>(&a.data))return *p==std::get<bool>(b.data);
     if(auto p=std::get_if<I>(&a.data))return *p==std::get<I>(b.data);
     if(auto p=std::get_if<double>(&a.data))return *p==std::get<double>(b.data);
-    if(auto p=std::get_if<std::string>(&a.data))return *p==std::get<std::string>(b.data);
+    if(auto p=hua::string_data(&a.data))return *p==hua::string_value(b.data);
     if(auto p=std::get_if<NumericValue>(&a.data)){const auto& q=std::get<NumericValue>(b.data);return p->type==q.type&&p->number==q.number;}
     if(auto p=std::get_if<SliceValue>(&a.data)){const auto& q=std::get<SliceValue>(b.data);if(p->length!=q.length)return false;
         for(std::size_t i=0;i<p->length;++i)if(!values_equal(sequence_read(*p,i),sequence_read(q,i),s,depth+1))return false;return true;}
@@ -265,18 +265,18 @@ Value binary_value(std::string_view op,const Value& a,const Value& b,const Sourc
     if(std::holds_alternative<NumericValue>(a.data)||std::holds_alternative<NumericValue>(b.data))return binary_numeric(op,a,b,s);
     if(op=="==" || op=="!=") {
         bool same=false;
-        if(a.data.index()==b.data.index()) {
-            if(a.data.index()==0) same=true;
+        if(value_kind(a)==value_kind(b)) {
+            if(value_kind(a)==0) same=true;
             else if(auto p=std::get_if<bool>(&a.data)) same=*p==std::get<bool>(b.data);
             else if(auto p=std::get_if<I>(&a.data)) same=*p==std::get<I>(b.data);
             else if(auto p=std::get_if<double>(&a.data)) same=*p==std::get<double>(b.data);
-            else if(auto p=std::get_if<std::string>(&a.data)) same=*p==std::get<std::string>(b.data);
+            else if(auto p=hua::string_data(&a.data)) same=*p==hua::string_value(b.data);
             else same=values_equal(a,b,s,0);
         } else if(is_record_value(a)&&is_record_value(b)) same=values_equal(a,b,s,0); // StructValue vs packed PlainRecord
-        else if(a.data.index()!=0 && b.data.index()!=0) runtime_error(s,"equality requires matching types","E4003");
+        else if(value_kind(a)!=0 && value_kind(b)!=0) runtime_error(s,"equality requires matching types","E4003");
         return Value(op=="==" ? same : !same);
     }
-    if(op=="**" && a.data.index()==3 && b.data.index()==2) {
+    if(op=="**" && value_kind(a)==3 && value_kind(b)==2) {
         double base=std::get<double>(a.data), result=1; I power=std::get<I>(b.data);
         if(power<0 && base==0)runtime_error(s,"zero cannot have a negative exponent","E4004");
         if(power<0)base=1/base;
@@ -288,10 +288,10 @@ Value binary_value(std::string_view op,const Value& a,const Value& b,const Sourc
         }
         return finite(result,s);
     }
-    if(a.data.index()!=b.data.index()) runtime_error(s,"mixed types require an explicit conversion","E4003");
+    if(value_kind(a)!=value_kind(b)) runtime_error(s,"mixed types require an explicit conversion","E4003");
     if(op=="&&" || op=="||") return Value(op=="&&" ? as_bool(a,s)&&as_bool(b,s) : as_bool(a,s)||as_bool(b,s));
-    if(auto p=std::get_if<std::string>(&a.data)) {
-        const auto& q=std::get<std::string>(b.data);
+    if(auto p=hua::string_data(&a.data)) {
+        const auto& q=hua::string_value(b.data);
         if(op=="+") return Value(*p+q);
         if(op=="<") return Value(*p<q); if(op=="<=") return Value(*p<=q);
         if(op==">") return Value(*p>q); if(op==">=") return Value(*p>=q);
@@ -369,7 +369,7 @@ bool scan_file(const Value& v,unsigned depth,FileScan& scan){
     if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
     if(std::holds_alternative<FileValue>(v.data))return true;
     auto first=[&](const void* object,std::size_t start=0,std::size_t length=0){
-        return scan.visited.insert({object,v.data.index(),start,length}).second;
+        return scan.visited.insert({object,value_kind(v),start,length}).second;
     };
     auto nested=[&](const Value& x){return scan_file(x,depth+1,scan);};
     if(auto p=std::get_if<Callable>(&v.data)){
@@ -404,6 +404,13 @@ bool contains_file(const Value& v,unsigned depth){
     } scope(scan);
     return scan_file(v,depth,scan);
 }
+namespace {
+// These payloads have no mutable value surface. Sharing the Result box cannot
+// change unwrap snapshots; contextual conversions still go through validation.
+bool immutable_payload(const Value& v){
+    auto kind=value_kind(v);return kind<=4||kind==12||kind==15||kind==17;
+}
+}
 Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
     HUA_PROFILE_COUNT(copy_const);if(depth==0)HUA_PROFILE_KIND(copy_const_kinds,v);
 #ifdef HUA_INTERNAL_PROFILE
@@ -431,10 +438,10 @@ Value copy_value(const Value& v,bool deep,unsigned depth,bool resource_alias) {
 #endif
         auto data=managed<StructData>(); data->name=p->data->name;
         data->enumeration=p->data->enumeration;data->variant=p->data->variant;
-        data->fields=p->data->fields.transform([&](const Value& x){return copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1,resource_alias);});
+        data->fields=(!deep&&p->writable)?p->data->fields.snapshot(depth):p->data->fields.transform([&](const Value& x){return copy_value(!p->writable && !deep ? read_only(x):x,deep,depth+1,resource_alias);});
         return Value(StructValue{data,true});
     }
-    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1,resource_alias));if(deep)r.writable=true;return Value(r);}
+    if(auto p=std::get_if<ResultValue>(&v.data)) {auto r=*p;if(!deep&&r.payload&&immutable_payload(*r.payload))return Value(std::move(r));if(r.payload)r.payload=managed<Value>(copy_value(!r.writable&&!deep?read_only(*r.payload):*r.payload,deep,depth+1,resource_alias));if(deep)r.writable=true;return Value(r);}
     if(auto p=std::get_if<MultiValue>(&v.data)) {auto m=managed<MultiData>();m->contextual=p->data->contextual;m->values.reserve(p->data->values.size());for(const auto& x:p->data->values)m->values.push_back(copy_value(x,deep,depth+1,resource_alias));return Value(MultiValue{m});}
     if(deep)if(auto p=std::get_if<BufferValue>(&v.data))return Value(BufferValue{managed<std::string>(*p->data),true});
     if(deep)if(auto p=std::get_if<RngValue>(&v.data))return Value(RngValue{managed<RngState>(*p->data),true});
@@ -462,10 +469,7 @@ Value copy_value(Value&& v,bool deep,unsigned depth,bool resource_alias) {
 
     if(auto p=std::get_if<StructValue>(&v.data)) {
         require_complete_enum(*p->data);
-        p->data->fields.each_value([&](Value& x){
-            if(!p->writable)x=read_only(std::move(x));
-            x=copy_value(std::move(x),false,depth+1,resource_alias);
-        });
+        p->data->fields.normalize_owned(!p->writable,depth,resource_alias);
         p->writable=true;return std::move(v);
     }
     if(auto p=std::get_if<ResultValue>(&v.data)) {
@@ -489,7 +493,7 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
     HUA_PROFILE_COUNT(enforce_type_calls);
     // Exact scalar/record matches leave the value unchanged on the general path
     // below; decide them without parsing type strings.
-    switch(v.data.index()){
+    switch(value_kind(v)){
     case 1:if(expected=="bool")return v;break;
     case 2:if(expected=="int")return v;break;
     case 3:if(expected=="float"&&std::isfinite(std::get<double>(v.data)))return v;break;
@@ -503,15 +507,24 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
     if(expected.empty()) return v;
 
     if(expected.ends_with('?')) {
-        if(v.data.index()==0) return v;
+        if(value_kind(v)==0) return v;
         return enforce_type(std::move(v),expected.substr(0,expected.size()-1),span,contextual);
     }
-    if(expected=="float" && contextual && v.data.index()==2) {
+    if(expected=="float" && contextual && value_kind(v)==2) {
         I x=std::get<I>(v.data);
         if(x>9007199254740992LL || x< -9007199254740992LL) runtime_error(span,"integer literal cannot be represented exactly as float","E4002");
         return Value(static_cast<double>(x));
     }
     if(numeric_spec(expected)&&numeric_spec(value_type(v)))return convert_numeric(v,expected,span,contextual);
+    if(auto r=std::get_if<ResultValue>(&v.data);r&&!r->contextual&&r->payload&&immutable_payload(*r->payload)){
+        std::string_view annotation(expected);
+        auto a=std::string_view(r->success_type),b=std::string_view(r->error_type);
+        if(annotation.size()==9+a.size()+b.size()&&annotation.starts_with("Result<")&&annotation.ends_with('>')&&
+           annotation.substr(7,a.size())==a&&annotation[7+a.size()]==','&&annotation.substr(8+a.size(),b.size())==b&&
+           value_type(*r->payload)==(r->ok?r->success_type:r->error_type)){
+            enforce_type(*r->payload,r->ok?r->success_type:r->error_type,span,false);return v;
+        }
+    }
     auto result_types=type_arguments(expected,"Result");
     if(!result_types.empty()) {
         auto p=std::get_if<ResultValue>(&v.data);if(!p||result_types.size()!=2)runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
@@ -535,6 +548,11 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
 #ifdef HUA_INTERNAL_PROFILE
         const auto input_payload_type=value_type(*r.payload);
 #endif
+        if(!r.contextual&&immutable_payload(*r.payload)&&value_type(*r.payload)==result_types[r.ok?0:1]){
+            // Keep finite-number/type validation, without rebuilding an unchanged box.
+            enforce_type(*r.payload,result_types[r.ok?0:1],span,false);
+            r.success_type=result_types[0];r.error_type=result_types[1];return Value(std::move(r));
+        }
         // The wrapper is consumed, but a shared payload still belongs to its aliases.
         // Normalize an owned payload by move; copy_value below checks every descendant.
         auto input=r.payload.use_count()==1?std::move(*r.payload):*r.payload;
@@ -545,8 +563,8 @@ Value enforce_type(Value v,const std::string& expected,const SourceSpan& span,bo
         HUA_PROFILE_COUNT(result_materializations);
         r.payload=managed<Value>(copy_value(r.writable?std::move(payload):read_only(std::move(payload))));r.success_type=result_types[0];r.error_type=result_types[1];r.contextual=false;return Value(r);
     }
-    if(!(contextual&&expected.starts_with('[')&&v.data.index()==5)&&!compatible(expected,value_type(v))) runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
-    if(expected.starts_with('[') && v.data.index()==5) {
+    if(!(contextual&&expected.starts_with('[')&&value_kind(v)==5)&&!compatible(expected,value_type(v))) runtime_error(span,"expected "+expected+", got "+value_type(v),"E4003");
+    if(expected.starts_with('[') && value_kind(v)==5) {
         auto& slice=std::get<SliceValue>(v.data); auto close=expected.find(']');
         if(close>1) {
             Node count(NodeKind::Integer,span,expected.substr(1,close-1));
@@ -573,16 +591,16 @@ std::string show(const Value& v) {
     if(std::holds_alternative<RngValue>(v.data))return "<Rng>";
     if(auto p=std::get_if<ListValue>(&v.data))return "<List:"+std::to_string(p->data->values.size())+">";
     if(auto p=std::get_if<DequeValue>(&v.data))return "<Deque:"+std::to_string(p->data->values.size())+">";
-    if(v.data.index()==0) return "nil";
+    if(value_kind(v)==0) return "nil";
     if(auto p=std::get_if<bool>(&v.data)) return *p ? "true":"false";
     if(auto p=std::get_if<I>(&v.data)) return std::to_string(*p);
     if(auto p=std::get_if<double>(&v.data)) { std::ostringstream out; out<<std::setprecision(15)<<*p; return out.str(); }
-    if(auto p=std::get_if<std::string>(&v.data)) return *p;
+    if(auto p=hua::string_data(&v.data)) return *p;
     if(auto p=std::get_if<SliceValue>(&v.data)) {
         std::string out="["; for(std::size_t i=0;i<p->length;++i){if(i)out+=", ";out+=show(sequence_copy_source(*p,i));}return out+"]";
     }
     if(auto p=std::get_if<StructValue>(&v.data)) {
-        if(auto tag=p->data->fields.find("$case");tag!=p->data->fields.end()){auto name=std::get<std::string>(tag->second.data);std::string out=display_type(p->data->name)+"."+name+"(";bool first=true;for(const auto& [field,value]:p->data->fields)if(field.starts_with("$"+name+"#")&&field.substr(field.rfind('#')+1)!="void"){if(!first)out+=", ";first=false;out+=show(value);}return out+")";}
+        if(auto tag=std::as_const(p->data->fields).find("$case");tag!=std::as_const(p->data->fields).end()){auto name=hua::string_value(tag->second.data);std::string out=display_type(p->data->name)+"."+name+"(";bool first=true;for(const auto& [field,value]:std::as_const(p->data->fields))if(field.starts_with("$"+name+"#")&&field.substr(field.rfind('#')+1)!="void"){if(!first)out+=", ";first=false;out+=show(value);}return out+")";}
         std::string out=display_type(p->data->name)+"{"; bool first=true;
         for(const auto& [k,x]:p->data->fields){if(!first)out+=", ";first=false;out+=k+": "+show(x);}return out+"}";
     }
@@ -603,7 +621,7 @@ std::vector<std::string> type_arguments(std::string_view t,std::string_view name
 Value make_multi(std::vector<Value> values,std::vector<bool> contextual) {auto m=managed<MultiData>();m->values=std::move(values);m->contextual=std::move(contextual);return Value(MultiValue{m});}
 std::vector<Value> unpack_multi(const Value& v,std::size_t count,const SourceSpan& s) {auto p=std::get_if<MultiValue>(&v.data);if(!p||p->data->values.size()!=count)runtime_error(s,"multiple value count mismatch","E4003");return p->data->values;}
 Value make_map(const std::string& type,const SourceSpan& s) {auto ts=type_arguments(canonical_type(type),"map");if(ts.size()!=2||(ts[0]!="bool"&&ts[0]!="int"&&ts[0]!="string"))runtime_error(s,"map keys require bool/int/string","E4003");auto data=managed<MapData>();data->key_type=ts[0];data->item_type=ts[1];return Value(MapValue{data,true});}
-MapKey map_key(const MapValue& map,const Value& key,const SourceSpan& s) {auto value=enforce_type(key,map.data->key_type,s);if(auto p=std::get_if<bool>(&value.data))return *p;if(auto p=std::get_if<I>(&value.data))return *p;if(auto p=std::get_if<std::string>(&value.data))return *p;runtime_error(s,"map keys require bool/int/string","E4003");}
+MapKey map_key(const MapValue& map,const Value& key,const SourceSpan& s) {auto value=enforce_type(key,map.data->key_type,s);if(auto p=std::get_if<bool>(&value.data))return *p;if(auto p=std::get_if<I>(&value.data))return *p;if(auto p=hua::string_data(&value.data))return *p;runtime_error(s,"map keys require bool/int/string","E4003");}
 std::map<MapKey,Value>::iterator map_find(const MapValue& m,const Value& key,const SourceSpan& s){return m.data->entries.find(map_key(m,key,s));}
 void map_put(MapValue& m,const Value& key,Value value,const SourceSpan& s,bool contextual) {if(!m.writable)runtime_error(s,"cannot mutate a read-only map","E4007");auto k=map_key(m,key,s);auto v=enforce_type(std::move(value),m.data->item_type,s,contextual);if(m.data->entries.size()>=1000000&&!m.data->entries.contains(k))runtime_error(s,"map entry limit exceeded","E4099");m.data->entries.insert_or_assign(k,copy_value(v));}
 Value index_value(const Value& base,const Value& key,const SourceSpan& s) {
@@ -656,6 +674,6 @@ Value record_failure_source(Value value,const SourceSpan& span,std::string messa
 }
 Value propagated_error(const Value& value,const SourceSpan& span) {auto r=std::get<ResultValue>(copy_value(value).data);r.success_type.clear();return record_failure_source(Value(r),span,"Result propagated here");}
 Value result_payload(const Value& v,bool success,const SourceSpan& s) {auto p=std::get_if<ResultValue>(&v.data);if(!p)runtime_error(s,"expected Result","E4003");if(p->ok!=success){Diagnostic error("E4009",s,success?"cannot unwrap err Result":"cannot unwrap_err ok Result");if(p->failure_source)error.add_trace(*p->failure_source);throw error;}if(success&&!p->payload&&p->success_type=="void")return Value(VoidValue{});if(!p->payload)runtime_error(s,"Result payload is missing","E4003");return copy_value(p->writable?*p->payload:read_only(*p->payload));}
-Value aggregate_member(const Value& v,const std::string& name,const SourceSpan& s) {if(name=="len"){if(auto p=std::get_if<SliceValue>(&v.data))return Value(static_cast<I>(p->length));if(auto p=std::get_if<MapValue>(&v.data))return Value(static_cast<I>(p->data->entries.size()));if(auto p=std::get_if<std::string>(&v.data))return Value(static_cast<I>(p->size()));}runtime_error(s,"unknown aggregate member","E4003");}
+Value aggregate_member(const Value& v,const std::string& name,const SourceSpan& s) {if(name=="len"){if(auto p=std::get_if<SliceValue>(&v.data))return Value(static_cast<I>(p->length));if(auto p=std::get_if<MapValue>(&v.data))return Value(static_cast<I>(p->data->entries.size()));if(auto p=hua::string_data(&v.data))return Value(static_cast<I>(p->size()));}runtime_error(s,"unknown aggregate member","E4003");}
 
 }

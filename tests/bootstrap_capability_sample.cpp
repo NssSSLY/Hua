@@ -4,7 +4,7 @@ struct Observer final:hua::VMCallObserver {
  hua::bootstrap_phase::Session& s;explicit Observer(hua::bootstrap_phase::Session& p):s(p){}
  static std::uint64_t fields(const hua::Value& v){
   const auto& record=std::get<hua::StructValue>(v.data).data->fields;const auto& raw=std::get<hua::MapValue>(record.at("fields").data).data->entries;
-  auto cursor=record.find("prefix");if(cursor==record.end())return raw.size();const auto& prefix=std::get<std::string>(cursor->second.data);if(prefix.empty())return raw.size();
+  auto cursor=record.find("prefix");if(cursor==record.end())return raw.size();const auto& prefix=hua::string_value(cursor->second.data);if(prefix.empty())return raw.size();
   const auto& index=std::get<hua::MapValue>(record.at("prefixes").data).data->entries;auto i=index.find(prefix);if(i==index.end())return 0;
   std::uint64_t count=0;for(const auto& [path,unused]:std::get<hua::MapValue>(i->second.data).data->entries)if(raw.contains(path))++count;return count;
  }

@@ -44,7 +44,7 @@ struct Observer final:hua::VMCallObserver {
             }
         }
 
-        if(it->second=="statement"&&caller==analyze)++bodies[std::get<std::string>(member(args.at(1),"function").data)];
+        if(it->second=="statement"&&caller==analyze)++bodies[hua::string_value(member(args.at(1),"function").data)];
     }
     void leave(const hua::Node* fn,const hua::Value* result)override{
         auto it=names.find(fn);if(it==names.end())return;

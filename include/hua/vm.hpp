@@ -144,6 +144,7 @@ private:
     CodeLayout& code_layout(const Code&,const Node* function=nullptr);
     AccessCache& access(Frame&);
     Binding& lookup(Frame&,const Instruction&);
+    const Value* read_field(FieldAccess&,const StructValue&,const std::string&);
     Value* field(FieldAccess&,const StructValue&,const std::string&);
     const std::string& field_type(FieldAccess&,const std::string&,const std::string&,const SourceSpan&);
     const std::string& field_type(const std::string&,const std::string&,const SourceSpan&);

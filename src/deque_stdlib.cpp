@@ -31,7 +31,7 @@ Kind kind_of(const std::string& type,const SourceSpan& s){
 bool less(const Value& a,const Value& b,Kind k){
     if(k==Kind::integer)return std::get<I>(a.data)<std::get<I>(b.data);
     if(k==Kind::real)return std::get<double>(a.data)<std::get<double>(b.data);
-    const auto& x=std::get<std::string>(a.data);const auto& y=std::get<std::string>(b.data);
+    const auto& x=hua::string_value(a.data);const auto& y=hua::string_value(b.data);
     auto n=std::min(x.size(),y.size());auto c=n?std::memcmp(x.data(),y.data(),n):0;
     return c<0||(c==0&&x.size()<y.size());
 }

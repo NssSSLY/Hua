@@ -26,7 +26,7 @@ int compare_keys(const Value& a,const Value& b,Work& work){
     work.tick();
     if(auto x=std::get_if<I>(&a.data)){auto y=std::get<I>(b.data);return *x<y?-1:*x>y?1:0;}
     if(auto x=std::get_if<double>(&a.data)){auto y=std::get<double>(b.data);return *x<y?-1:*x>y?1:0;}
-    const auto& x=std::get<std::string>(a.data);const auto& y=std::get<std::string>(b.data);
+    const auto& x=hua::string_value(a.data);const auto& y=hua::string_value(b.data);
     auto n=std::min(x.size(),y.size());work.tick(n/64);
     if(auto c=n?std::memcmp(x.data(),y.data(),n):0)return c<0?-1:1;
     return x.size()<y.size()?-1:x.size()>y.size()?1:0;

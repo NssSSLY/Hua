@@ -238,7 +238,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         return io->data->partial?Value(*io->data->partial):Value{};
     }
     if(f.name=="open"){
-        auto path=std::get<std::string>(args[0].data);auto m=mode(std::get<std::string>(args[1].data));
+        auto path=hua::string_value(args[0].data);auto m=mode(hua::string_value(args[1].data));
         if(!m)return failed(failure("bad_mode","mode must be r, w, a, r+, w+ or a+"),f.name,"std.file.File");
         if(path.empty()||path.size()>32767||path.find('\0')!=std::string::npos||!text_utf8_error(path).empty())
             return failed(failure("invalid_argument","path requires 1..32767 UTF-8 bytes without NUL"),f.name,"std.file.File");
@@ -337,7 +337,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
     }
     if(f.name=="tell"){auto pos=native.backend->position();if(pos.error)return bad(pos.error);return result(Value(pos.value),true,"int");}
     if(f.name=="seek"){
-        auto offset=as_int(args[1],span);auto whence=std::get<std::string>(args[2].data);FileHostPosition base{};
+        auto offset=as_int(args[1],span);auto whence=hua::string_value(args[2].data);FileHostPosition base{};
         if(whence=="current")base=native.backend->position();else if(whence=="end")base=native.backend->size();
         else if(whence!="start")return bad(failure("invalid_argument","whence must be start, current or end"));
         if(base.error)return bad(base.error);

@@ -9,14 +9,19 @@
 #endif
 namespace hua {
 #ifdef HUA_GC_COST_PROFILE
-static_assert(std::variant_size_v<Value::Data> == 22,"Update GC cost Value kind schema");
+static_assert(std::variant_size_v<Value::Data> == 25,"Update GC cost Value kind schema");
 #endif
-namespace {thread_local ManagedHeap fallback;thread_local ManagedHeap* active=nullptr;}
+namespace {
+thread_local ManagedHeap fallback;thread_local ManagedHeap* active=nullptr;
+template<class Records> std::size_t public_candidates(const Records& records){
+    return std::count_if(records.begin(),records.end(),[](const auto& record){return !record.internal;});
+}
+}
 ManagedHeap& managed_heap(){return active?*active:fallback;}
 HeapScope::HeapScope(ManagedHeap& heap):previous(active){active=&heap;}
 HeapScope::~HeapScope(){active=previous;}
 std::size_t ManagedHeap::live() const {
-    auto count=[](const auto& records){return std::count_if(records.begin(),records.end(),[](const auto& x){return !x.pointer.expired();});};
+    auto count=[](const auto& records){return std::count_if(records.begin(),records.end(),[](const auto& x){return !x.internal&&!x.pointer.expired();});};
     return count(records_)+count(old_records_)+count(pending_records_);
 }
 void ManagedHeap::merge_pending(){
@@ -35,14 +40,14 @@ std::size_t ManagedHeap::collect(){
     CollectionGuard guard(collecting_);
     auto count=collect_records(records_);
     minor_since_major_=0;
-    major_record_goal_=records_.size()+std::max(records_.size(),collection_interval_);
+    auto candidates=public_candidates(records_);major_record_goal_=candidates+std::max(candidates,collection_interval_);
     ++collection_work_.majors;
     return count;
 }
 std::size_t ManagedHeap::poll(){
     if(collecting_)return 0;
     merge_pending();
-    if(minor_since_major_>=7 || old_records_.size()+records_.size()>std::max(major_record_goal_,collection_interval_))return collect();
+    if(minor_since_major_>=7 || public_candidates(old_records_)+public_candidates(records_)>std::max(major_record_goal_,collection_interval_))return collect();
     // Promotion must not fail after clear() has run. Record moves are noexcept.
     old_records_.reserve(old_records_.size()+records_.size());
     CollectionGuard guard(collecting_);
@@ -156,7 +161,7 @@ std::size_t ManagedHeap::collect_records(std::vector<Record>& records_){
 #ifdef HUA_GC_COST_PROFILE
     cost.phase(5);
 #endif
-    std::size_t count=0;for(std::size_t i=0;i<objects.size();++i)if(!marked[i]&&records_[i].clear){records_[i].clear(objects[i].get());++count;}
+    std::size_t count=0;for(std::size_t i=0;i<objects.size();++i)if(!marked[i]&&records_[i].clear){records_[i].clear(objects[i].get());if(!records_[i].internal)++count;}
 #ifdef HUA_GC_COST_PROFILE
     if(cost.enabled()){cost.data.clearable_unreachable=count;cost.data.unclearable_unreachable=objects.size()-cost.data.marked-count;}cost.phase(6);
 #endif
@@ -164,7 +169,7 @@ std::size_t ManagedHeap::collect_records(std::vector<Record>& records_){
 #ifdef HUA_GC_COST_PROFILE
     if(cost.enabled()){
         auto& d=cost.data;d.records_after=records_.size();d.expired_after=d.live_before-records_.size();
-        d.object_capacity_bytes=objects.capacity()*sizeof(decltype(objects)::value_type);
+        d.object_capacity_bytes=objects.capacity()*sizeof(std::remove_reference_t<decltype(objects)>::value_type);
         d.offsets_capacity_bytes=edges.offsets.capacity()*sizeof(std::size_t);d.flat_edge_capacity_bytes=edges.targets.capacity()*sizeof(std::size_t);
         for(std::size_t i=0;i<incoming.size();++i)d.adjacency_nonempty+=edges.offsets[i]!=edges.offsets[i+1];
         d.incoming_bytes=incoming.capacity()*sizeof(std::size_t);d.marked_capacity_bytes=marked.capacity()/8;d.work_capacity_bytes=work.capacity()*sizeof(std::size_t);
@@ -176,11 +181,12 @@ std::size_t ManagedHeap::collect_records(std::vector<Record>& records_){
 }
 #ifdef HUA_GC_COST_PROFILE
 // The cost profile counts every Value alternative by index.
-static_assert(std::variant_size_v<Value::Data> <= std::tuple_size_v<decltype(gc_cost::Row{}.value_kinds)>);
+// Shared and inline strings both use semantic kind 4 in the diagnostic schema.
+static_assert(24 <= std::tuple_size_v<decltype(gc_cost::Row{}.value_kinds)>);
 #endif
 void heap_edges(const Value& v,const HeapVisitor& visit){
 #ifdef HUA_GC_COST_PROFILE
-    if(gc_cost::current){++gc_cost::current->value_kinds[v.data.index()];++gc_cost::current->value_sources[gc_cost::current->source][v.data.index()];}
+    if(gc_cost::current){++gc_cost::current->value_kinds[value_kind(v)];++gc_cost::current->value_sources[gc_cost::current->source][value_kind(v)];}
 #endif
     std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
         if constexpr(requires{x.data.get();})visit(x.data.get());
@@ -206,7 +212,7 @@ void heap_edges(const StructData& x,const HeapVisitor& v){
 #ifdef HUA_GC_COST_PROFILE
     gc_cost::Source source(0);
 #endif
-x.fields.each_value([&](const Value& item){heap_edges(item,v);});}
+heap_edges(x.fields,v);}
 void heap_edges(const MapData& x,const HeapVisitor& v){
 #ifdef HUA_GC_COST_PROFILE
     if(gc_cost::current){++gc_cost::current->map_scans;gc_cost::current->map_entries+=x.entries.size();}

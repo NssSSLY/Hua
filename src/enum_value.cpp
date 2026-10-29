@@ -73,7 +73,7 @@ void initialize_field(StructData& object, const std::string& name, Value value,
     if (object.fields.contains(name))
         runtime_error(span, "duplicate enum field initializer", "E4003");
     if (name == "$case") {
-        auto tag = std::get_if<std::string>(&value.data);
+        auto tag = hua::string_data(&value.data);
         if (!tag) runtime_error(span, "enum tag must be a string", "E4003");
         auto found = layout.variants.find(*tag);
         if (found == layout.variants.end())
@@ -110,7 +110,7 @@ void initialize_field(StructData& object, const std::string& name, Value value,
 void require_complete_enum(const StructData& object, const SourceSpan& span) {
     if (!object.enumeration) return;
     auto tag = object.fields.find("$case");
-    auto text = tag == object.fields.end() ? nullptr : std::get_if<std::string>(&tag->second.data);
+    auto text = tag == object.fields.end() ? nullptr : hua::string_data(&tag->second.data);
     if (!object.variant || !text || *text != object.variant->name ||
         object.fields.size() != object.variant->fields.size() + 1)
         runtime_error(span, "enum payload is incomplete", "E4003");

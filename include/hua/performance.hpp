@@ -114,7 +114,7 @@ inline void write(std::ostream& output,const Counters& counters) {
 #define HUA_PROFILE_ADD(name,amount) do { if(auto* hua_profile=::hua::performance::active.load(std::memory_order_relaxed)) hua_profile->name.fetch_add((amount),std::memory_order_relaxed); } while(false)
 #define HUA_PROFILE_COUNT(name) HUA_PROFILE_ADD(name,1)
 #define HUA_PROFILE_OP(op) ::hua::performance::record_op(static_cast<std::size_t>(op))
-#define HUA_PROFILE_KIND(table,value) ::hua::performance::record_kind(&::hua::performance::Counters::table,(value).data.index())
+#define HUA_PROFILE_KIND(table,value) ::hua::performance::record_kind(&::hua::performance::Counters::table,::hua::value_kind(value))
 #define HUA_PROFILE_BUILTIN(name) ::hua::performance::record_builtin(name)
 #else
 #define HUA_PROFILE_OP(op) ((void)0)

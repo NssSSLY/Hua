@@ -62,7 +62,7 @@ Value invoke_encoding_standard(const StandardFunction& f,const std::vector<Value
         text_limit(url?(in.size()*4+2)/3:(in.size()+2)/3*4,s);
         return Value(base64_encode(in,url?url_alphabet:standard_alphabet,!url));
     }
-    const auto& text=std::get<std::string>(args[0].data);
+    const auto& text=hua::string_value(args[0].data);
     if(name=="hex_decode"){
         if(text.size()%2)return syntax("odd length");
         std::string out(text.size()/2,'\0');

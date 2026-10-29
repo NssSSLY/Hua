@@ -9,7 +9,7 @@ EntryResult entry_result(const Value& value,const SourceSpan& span) {
     if(!result->payload)throw std::logic_error("entry Result error has no payload");
     EntryResult out{1,"main returned Err: ",span};
     if(result->failure_source)out.failure_source=*result->failure_source;
-    if(auto text=std::get_if<std::string>(&result->payload->data))out.message+=*text;
+    if(auto text=hua::string_data(&result->payload->data))out.message+=*text;
     else if(auto error=std::get_if<ErrorValue>(&result->payload->data)) {
         if(!error->data)throw std::logic_error("entry Error has no data");
         const auto& data=*error->data;

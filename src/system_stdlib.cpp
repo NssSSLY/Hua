@@ -133,7 +133,7 @@ std::int64_t monotonic_now_ns(const SourceSpan& span) {
 Value invoke_system_standard(const StandardFunction& f, const std::vector<Value>& args,
                              const SourceSpan& span, RuntimeContext* context) {
     task_checkpoint(context, span);
-    if (f.module == "os") return environment(std::get<std::string>(args[0].data));
+    if (f.module == "os") return environment(hua::string_value(args[0].data));
     if (f.name == "monotonic_ns") return Value(monotonic_now_ns(span));
     if (f.name == "unix_ms")
         return Value(static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(

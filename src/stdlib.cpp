@@ -390,11 +390,11 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.since>=12&&f.module=="encoding")return invoke_encoding_standard(f,args,s);
     if(f.since>=13&&f.module=="crypto")return invoke_crypto_standard(f,args,s,context);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
-    if(f.module=="strings")for(const auto& v:args)if(auto t=std::get_if<std::string>(&v.data))bounded(*t,s);
+    if(f.module=="strings")for(const auto& v:args)if(auto t=hua::string_data(&v.data))bounded(*t,s);
     if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);
     auto result=type_arguments(f.result,"Result");std::string success=result.empty()?"":result[0];
     auto ok=[&](Value v){return standard_result(std::move(v),true,success);};auto err=[&](std::string text){return standard_result(Value(std::move(text)),false,success);};
-    auto text=[&](std::size_t i)->const std::string& {return std::get<std::string>(args[i].data);};
+    auto text=[&](std::size_t i)->const std::string& {return hua::string_value(args[i].data);};
     if(f.module=="os") {
         if(f.name=="args")return strings(context?context->arguments:std::vector<std::string>{});
         try{return ok(Value(utf8(context&&!context->working_directory.empty()?context->working_directory:std::filesystem::current_path())));}catch(const std::filesystem::filesystem_error&){return err("cannot get working directory");}
@@ -426,7 +426,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
         }catch(const std::filesystem::filesystem_error&){return err("filesystem path operation failed");}catch(const std::runtime_error& e){return err(e.what());}
     }
     if(f.module=="json") {if(f.name=="decode")return json_decode(text(0));if(f.name=="encode")return json_encode(args[0]);return json_access(f.name,args);}
-    if(f.name=="join"){const auto& slice=std::get<SliceValue>(args[0].data);std::string out;for(std::size_t i=0;i<slice.length;++i){if(i){if(text(1).size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=text(1);}const auto& item=std::get<std::string>((*slice.storage)[slice.start+i].data);if(item.size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=item;}return Value(std::move(out));}
+    if(f.name=="join"){const auto& slice=std::get<SliceValue>(args[0].data);std::string out;for(std::size_t i=0;i<slice.length;++i){if(i){if(text(1).size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=text(1);}const auto& item=hua::string_value((*slice.storage)[slice.start+i].data);if(item.size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=item;}return Value(std::move(out));}
     const auto& a=text(0);bounded(a,s);const auto& n=f.name;
     if(n=="len_bytes")return Value(static_cast<I>(a.size()));
     if(n=="contains"||n=="starts_with"||n=="ends_with"||n=="index"){const auto& b=text(1);if(n=="contains")return Value(a.find(b)!=std::string::npos);if(n=="starts_with")return Value(a.starts_with(b));if(n=="ends_with")return Value(a.ends_with(b));auto found=a.find(b);return Value(found==std::string::npos?I{-1}:static_cast<I>(found));}

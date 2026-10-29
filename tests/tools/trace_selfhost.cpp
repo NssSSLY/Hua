@@ -51,7 +51,7 @@ struct Trace final:hua::VMCallObserver{
   auto step=metrics.steps.load();auto& w=work.at(fn);++w.entered;
   Frame f{fn,step};const auto& n=names.at(fn);
   if(n.file=="capabilities.hua"){
-   if(n.name=="statement"&&caller==capability){auto target=std::get<std::string>(member(args.at(1),"function").data);
+   if(n.name=="statement"&&caller==capability){auto target=hua::string_value(member(args.at(1),"function").data);
     f.visit=visits.size();visits.push_back({target,std::get<bool>(member(args.at(0),"probing").data),step,0,
      std::uint64_t(std::get<std::int64_t>(member(args.at(0),"work").data)),size(member(args.at(1),"values")),++body_ordinals[target]});}
    if(n.name=="instantiate_view"||n.name=="instantiate_view_at"){auto i=n.name=="instantiate_view"?3u:1u;auto v=size(member(args.at(i),"origins"));volumes["instantiate-input-origin-entries"]+=v;last_origin_size=v;max_origin_size=std::max(max_origin_size,v);}

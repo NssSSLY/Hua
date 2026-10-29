@@ -54,7 +54,7 @@ struct Session {
  }
  static const Value& member(const Value& v,const char* key){auto* p=std::get_if<StructValue>(&v.data);if(!p)throw std::runtime_error("expected record in capability diagnostic");return p->data->fields.at(key);}
  static std::uint64_t size(const Value& v){auto* m=std::get_if<MapValue>(&v.data);if(!m)throw std::runtime_error("expected map in capability diagnostic");return m->data->entries.size();}
- static std::string string(const Value& v){return std::get<std::string>(v.data);}
+ static std::string string(const Value& v){return hua::string_value(v.data);}
  void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){
   if(auto h=helpers.find(fn);h!=helpers.end()){
    Frame f{fn,h->second,"","",metrics.steps.load(),0};

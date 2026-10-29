@@ -93,7 +93,7 @@ std::string render(const Lex& p) {
     valid(out);return out;
 }
 Value lexical(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context) {
-    auto text=[&](std::size_t i)->const std::string&{return std::get<std::string>(args[i].data);};
+    auto text=[&](std::size_t i)->const std::string&{return hua::string_value(args[i].data);};
     Lex p;
     if(f.name=="join"){
         auto slice=std::get<SliceValue>(args[0].data);
@@ -101,7 +101,7 @@ Value lexical(const StandardFunction& f,const std::vector<Value>& args,const Sou
         std::size_t total=0;
         for(std::size_t i=0;i<slice.length;++i){
             task_checkpoint(context,span);
-            auto item=std::get<std::string>(sequence_read(slice,i).data);valid(item);
+            auto item=hua::string_value(sequence_read(slice,i).data);valid(item);
             if(item.size()>max_path-total)fail("PATH_LIMIT","join input exceeds 32767 UTF-8 bytes");
             total+=item.size();auto next=parse(item);
             if(!next.root.empty())p=std::move(next);
@@ -364,7 +364,7 @@ bool inside(const fs::path& child,const fs::path& parent){
 }
 Value tree_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context,const std::string& success){
     const auto& name=f.name;Tree tree{context,span};
-    auto from=host_path(native(std::get<std::string>(args[0].data),context));
+    auto from=host_path(native(hua::string_value(args[0].data),context));
     if(name=="walk"){
         require_directory(from,"walk root");std::vector<Value> out;walk_tree(from,"",1,tree,out);
         auto storage=managed<std::vector<Value>>(std::move(out));auto n=storage->size();
@@ -382,7 +382,7 @@ Value tree_standard(const StandardFunction& f,const std::vector<Value>& args,con
         if(!fs::exists(inspect_node(from)))return standard_result(Value(I{0}),true,success);
         return standard_result(Value(remove_tree(from,1,tree)),true,success);
     }
-    auto to=host_path(native(std::get<std::string>(args[1].data),context));
+    auto to=host_path(native(hua::string_value(args[1].data),context));
     if(same(utf8(from),utf8(to)))fail("FS_SAME_PATH","source and destination are identical");
     if(name=="copy_file"){copy_regular(from,to);return standard_result(Value(true),true,success);}
     require_directory(from,"copy_dir source");
@@ -397,10 +397,10 @@ Value invoke_filesystem_standard(const StandardFunction& f,const std::vector<Val
     try{
         if(f.module=="path")return lexical(f,args,span,context);
         if(f.since>=17)return tree_standard(f,args,span,context,success);
-        if(f.name=="temp_file")return standard_result(Value(temporary(std::get<std::string>(args[0].data),std::get<std::string>(args[1].data),context,span)),true,success);
-        auto from=native(std::get<std::string>(args[0].data),context);
+        if(f.name=="temp_file")return standard_result(Value(temporary(hua::string_value(args[0].data),hua::string_value(args[1].data),context,span)),true,success);
+        auto from=native(hua::string_value(args[0].data),context);
         if(f.name=="stat")return standard_result(metadata(from),true,success);
-        auto to=native(std::get<std::string>(args[1].data),context);
+        auto to=native(hua::string_value(args[1].data),context);
         task_checkpoint(context,span);move(from,to,f.name=="replace");
         return standard_result(Value(true),true,success);
     }catch(const Failure& e){return standard_result(Value(e.message),false,success);}

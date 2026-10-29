@@ -56,7 +56,7 @@ struct Writer {
 P convert(const Value& v,std::size_t depth,std::size_t& nodes){if(depth>max_depth||++nodes>max_nodes)throw Failure("JSON nesting/node limit exceeded");
     if(auto numeric=std::get_if<NumericValue>(&v.data)){try{auto number=convert_numeric(v,numeric_spec(numeric->type)->category=='f'?"float":"int",{},true);if(auto x=std::get_if<I>(&number.data))return node(*x);return node(std::get<double>(number.data));}catch(const Diagnostic&){throw Failure("JSON numeric value is outside int64/finite float64 range");}}
     if(auto p=std::get_if<JsonValue>(&v.data))return p->data;
-    if(v.data.index()==0)return node(std::monostate{});if(auto p=std::get_if<bool>(&v.data))return node(*p);if(auto p=std::get_if<I>(&v.data))return node(*p);if(auto p=std::get_if<double>(&v.data))return node(*p);if(auto p=std::get_if<std::string>(&v.data))return node(*p);
+    if(v.data.index()==0)return node(std::monostate{});if(auto p=std::get_if<bool>(&v.data))return node(*p);if(auto p=std::get_if<I>(&v.data))return node(*p);if(auto p=std::get_if<double>(&v.data))return node(*p);if(auto p=hua::string_data(&v.data))return node(*p);
     if(auto p=std::get_if<SliceValue>(&v.data)){A out;for(std::size_t i=0;i<p->length;++i)out.push_back(convert(sequence_copy_source(*p,i),depth+1,nodes));return node(std::move(out));}
     if(auto p=std::get_if<MapValue>(&v.data)){if(p->data->key_type!="string")throw Failure("JSON objects require string Map keys");O out;for(const auto& [k,x]:p->data->entries)out.emplace(std::get<std::string>(k),convert(x,depth+1,nodes));return node(std::move(out));}
     if(auto p=std::get_if<PlainRecord>(&v.data)){O out;for(const auto& f:p->layout->fields)out.emplace(f.name,convert(*plain_record_field(*p,f.name),depth+1,nodes));return node(std::move(out));}
@@ -73,7 +73,7 @@ Value json_access(const std::string& op,const std::vector<Value>& args){const au
     auto ok=[&](Value v){return standard_result(std::move(v),true,type);};auto err=[&](std::string e){return standard_result(Value(std::move(e)),false,type);};
     if(op=="kind"){static const char* kinds[]={"null","bool","number","number","string","array","object"};return Value(std::string(kinds[data.index()]));}
     if(op=="is_null")return Value(std::holds_alternative<std::monostate>(data));
-    if(op=="get"){auto object=std::get_if<O>(&data);if(!object)return err("JSON value is not an object");auto found=object->find(std::get<std::string>(args[1].data));if(found==object->end())return err("JSON object key is missing");return ok(Value(JsonValue{found->second}));}
+    if(op=="get"){auto object=std::get_if<O>(&data);if(!object)return err("JSON value is not an object");auto found=object->find(hua::string_value(args[1].data));if(found==object->end())return err("JSON object key is missing");return ok(Value(JsonValue{found->second}));}
     if(op=="at"){auto array=std::get_if<A>(&data);if(!array)return err("JSON value is not an array");auto at=std::get<I>(args[1].data);if(at<0||static_cast<std::size_t>(at)>=array->size())return err("JSON array index out of bounds");return ok(Value(JsonValue{(*array)[static_cast<std::size_t>(at)]}));}
     if(op=="len"){if(auto p=std::get_if<A>(&data))return ok(Value(static_cast<I>(p->size())));if(auto p=std::get_if<O>(&data))return ok(Value(static_cast<I>(p->size())));return err("JSON len requires an array or object");}
     if(op=="keys"){auto p=std::get_if<O>(&data);if(!p)return err("JSON keys requires an object");std::vector<std::string> out;for(const auto& [k,_]:*p)out.push_back(k);return ok(list(out));}
