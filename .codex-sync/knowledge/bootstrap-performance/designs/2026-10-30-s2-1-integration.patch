@@ -1,0 +1,250 @@
+diff --git a/include/hua/operand_stack.hpp b/include/hua/operand_stack.hpp
+new file mode 100644
+--- /dev/null
++++ b/include/hua/operand_stack.hpp
+@@ -0,0 +1,86 @@
++#pragma once
++#include "hua/value.hpp"
++#include <memory>
++#include <stdexcept>
++#include <vector>
++namespace hua {
++// VM-private storage. Slots never move while occupied. Vacant slots retain only
++// capacity, never a language value, owner lease, map key, or resource.
++template<class T> class OperandSlots {
++    static constexpr std::size_t block_size=32;
++public:
++    struct Slot { std::optional<T> value;Slot* next{}; };
++private:
++    std::vector<std::unique_ptr<Slot[]>> blocks_;
++    Slot* free_{};
++    std::size_t live_{},peak_{};
++public:
++    template<class U> Slot* acquire(U&& value){
++        if(!free_){
++            auto block=std::make_unique<Slot[]>(block_size);
++            blocks_.push_back(std::move(block));
++            auto* first=blocks_.back().get();
++            for(std::size_t i=0;i<block_size;++i){first[i].next=free_;free_=&first[i];}
++        }
++        auto* slot=free_;
++        slot->value.emplace(std::forward<U>(value)); // failure leaves the free list unchanged
++        free_=slot->next;slot->next=nullptr;++live_;peak_=std::max(peak_,live_);return slot;
++    }
++    void release(Slot* slot) noexcept {slot->value.reset();slot->next=free_;free_=slot;--live_;}
++    std::size_t live()const{return live_;}
++    std::size_t peak()const{return peak_;}
++    std::size_t capacity()const{return blocks_.size()*block_size;}
++};
++// Values retain the existing inline ownership. Only assignment targets move
++// into stable slots, including targets waiting across nested calls or await.
++// Generic Value pooling was measured and withdrawn: extra moves outweighed it.
++// Local is a non-owning reference whose enclosing VM frame retains its binding.
++template<class Local> class OperandStack {
++    using Locations=OperandSlots<ValueLocation>;
++public:
++    struct LocationRef {typename Locations::Slot* slot;};
++    struct Entry {
++        using Data=std::variant<Value,LocationRef,Local>;
++        Data data;
++        template<class T,class U> Entry(std::in_place_type_t<T> tag,U&& v):data(tag,std::forward<U>(v)){}
++    };
++private:
++    Locations locations_;
++    std::vector<Entry> entries_;
++    void release(Entry& e)noexcept{
++        if(auto p=std::get_if<LocationRef>(&e.data))locations_.release(p->slot);
++    }
++public:
++    OperandStack()=default;
++    OperandStack(const OperandStack&)=delete;
++    OperandStack& operator=(const OperandStack&)=delete;
++    ~OperandStack(){clear();}
++    std::size_t size()const{return entries_.size();}
++    bool empty()const{return entries_.empty();}
++    Entry& back(){return entries_.back();}
++    Entry& operator[](std::size_t n){return entries_[n];}
++    void emplace_back(const Value& v){entries_.emplace_back(std::in_place_type<Value>,v);}
++    void emplace_back(Value&& v){entries_.emplace_back(std::in_place_type<Value>,std::move(v));}
++    void emplace_back(ValueLocation&& v){
++        auto* slot=locations_.acquire(std::move(v));
++        try{entries_.emplace_back(std::in_place_type<LocationRef>,LocationRef{slot});}
++        catch(...){locations_.release(slot);throw;}
++    }
++    void emplace_back(Local local){entries_.emplace_back(std::in_place_type<Local>,local);}
++    template<class T> requires (std::is_same_v<T,bool>||std::is_same_v<T,std::int64_t>||std::is_same_v<T,double>)
++    void emplace_back(std::in_place_type_t<Value>,T value){entries_.emplace_back(std::in_place_type<Value>,value);}
++    bool is_value(const Entry& e)const{return std::holds_alternative<Value>(e.data);}
++    Value* value_if(Entry& e){return std::get_if<Value>(&e.data);}
++    Value& value(Entry& e){return std::get<Value>(e.data);}
++    ValueLocation* location_if(Entry& e){auto p=std::get_if<LocationRef>(&e.data);return p?&*p->slot->value:nullptr;}
++    Local* local_if(Entry& e){return std::get_if<Local>(&e.data);}
++    Value take_value(){auto result=std::move(value(back()));pop_back();return result;}
++    void replace_back(Value&& v){release(back());back().data=std::move(v);}
++    void pop_back()noexcept{release(back());entries_.pop_back();}
++    void resize(std::size_t n){if(n>size())throw std::logic_error("operand stack cannot grow through resize");while(size()>n)pop_back();}
++    void clear()noexcept{while(!empty())pop_back();}
++    std::size_t value_live()const{std::size_t n=0;for(const auto& e:entries_)n+=std::holds_alternative<Value>(e.data)&&std::get<Value>(e.data).data.index()>3;return n;}
++    std::size_t location_live()const{return locations_.live();}
++    std::size_t location_capacity()const{return locations_.capacity();}
++};
++}
+diff --git a/include/hua/vm.hpp b/include/hua/vm.hpp
+index 1628644..88136ee 100644
+--- a/include/hua/vm.hpp
++++ b/include/hua/vm.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ #include "hua/bytecode.hpp"
++#include "hua/operand_stack.hpp"
+ #include "hua/stdlib.hpp"
+ #include "hua/callback.hpp"
+ #include <iosfwd>
+@@ -77,7 +78,8 @@ private:
+     // consumes the entry (inner scopes entered by the right-hand side are left first; a late
+     // binding only adds a child environment; Unwind/errors discard the entry unread).
+     struct LocalRef { Binding* binding{}; };
+-    using Entry = std::variant<Value, Location, LocalRef>;
++    using Stack = OperandStack<LocalRef>;
++    using Entry = Stack::Entry;
+     struct Iterator {
+         bool range{}, inclusive{}, done{};
+         std::int64_t current{}, end{}, step{}, index{};
+@@ -155,7 +157,7 @@ private:
+     RuntimeContext* context_{};
+     const Bytecode* bytecode_{};
+     std::shared_ptr<Environment> global_;
+-    std::vector<Entry> stack_;
++    Stack stack_;
+     std::vector<Frame> frames_;
+     std::size_t steps_{};
+     std::string entry_name_{"main"};
+diff --git a/src/vm.cpp b/src/vm.cpp
+index 1add84a..e82395c 100644
+--- a/src/vm.cpp
++++ b/src/vm.cpp
+@@ -258,8 +258,8 @@ const std::string& VirtualMachine::field_type(FieldAccess& cache,const std::stri
+     cache.type=&field_type(owner,name,span);cache.type_owner=owner;return *cache.type;
+ }
+ Value VirtualMachine::pop(const SourceSpan& span) {
+-    if(stack_.empty() || (!frames_.empty() && stack_.size()<=frames_.back().base) || !std::holds_alternative<Value>(stack_.back()))invalid(span);
+-    auto value=std::move(std::get<Value>(stack_.back()));stack_.pop_back();
++    if(stack_.empty() || (!frames_.empty() && stack_.size()<=frames_.back().base) || !stack_.is_value(stack_.back()))invalid(span);
++    auto value=stack_.take_value();
+     if(auto object=std::get_if<StructValue>(&value.data))require_complete_enum(*object->data,span);
+     return value;
+ }
+@@ -401,7 +401,7 @@ void VirtualMachine::complete_return(Value value,const Instruction& op,bool earl
+     frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
+     if(!function)value=copy_value(value);
+     if(!frames_.empty())stack_.emplace_back(std::move(value));else completed_=std::move(value);
+-    if(observer_){flush_metrics();observer_->leave(function,frames_.empty()?(completed_?&*completed_:nullptr):std::get_if<Value>(&stack_.back()));}
++    if(observer_){flush_metrics();observer_->leave(function,frames_.empty()?(completed_?&*completed_:nullptr):stack_.value_if(stack_.back()));}
+ }
+ Routine<void> VirtualMachine::drain(const std::shared_ptr<Environment>& env){
+     struct Cleanup {bool& flag;bool previous;Cleanup(bool& f):flag(f),previous(f){flag=true;}~Cleanup(){flag=previous;}} cleanup(context_->cleanup);
+@@ -455,11 +455,11 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
+         case Op::Bind:{HUA_PROFILE_CONSTRAINT_SOURCE(binding);auto v=enforce_type(pop(s),op.type,s,!op.contextual.empty()&&op.contextual[0]);bind(op,std::move(v));break;}
+         case Op::Pop:
+             // Only struct values need pop()'s enum completeness check.
+-            if(stack_.size()>f.base)if(auto* v=std::get_if<Value>(&stack_.back());v&&!std::holds_alternative<StructValue>(v->data)){stack_.pop_back();break;}
++            if(stack_.size()>f.base)if(auto* v=stack_.value_if(stack_.back());v&&!std::holds_alternative<StructValue>(v->data)){stack_.pop_back();break;}
+             pop(s);break;
+         case Op::Unary:{
+             // `!` on a bool is the hottest unary form; anything else takes the general path.
+-            if(op.text=="!"&&stack_.size()>f.base)if(auto* v=std::get_if<Value>(&stack_.back()))if(auto* b=std::get_if<bool>(&v->data)){
++            if(op.text=="!"&&stack_.size()>f.base)if(auto* v=stack_.value_if(stack_.back()))if(auto* b=std::get_if<bool>(&v->data)){
+                 // Fused `!` + conditional jump. The jump is still one counted step; fuse only
+                 // when that step could not yield, pump files or exceed the step limit.
+                 if(f.layout&&f.layout->negated_jump[f.pc-1]&&poll_countdown_>1&&!pump_pending(context_)&&steps_<context_->execution_limits.steps){
+@@ -471,14 +471,14 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
+                 *b=!*b;break;}
+             stack_.emplace_back(unary_value(op.text,pop(s),s));break;}
+         case Op::Binary:{
+-            if(stack_.size()>=f.base+2)if(auto* r=std::get_if<Value>(&stack_.back()))if(auto* l=std::get_if<Value>(&stack_[stack_.size()-2])){
++            if(stack_.size()>=f.base+2)if(auto* r=stack_.value_if(stack_.back()))if(auto* l=stack_.value_if(stack_[stack_.size()-2])){
+                 if(int_binary_into(op.text,*l,*r)){stack_.pop_back();break;}
+-                if(auto fast=fast_binary(op.text,*l,*r)){stack_.pop_back();std::get<Value>(stack_.back())=std::move(*fast);break;}}
++                if(auto fast=fast_binary(op.text,*l,*r)){stack_.pop_back();stack_.replace_back(std::move(*fast));break;}}
+             auto right=pop(s),left=pop(s);stack_.emplace_back(binary_value(op.text,left,right,s,op.flag));break;}
+         case Op::Jump:if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;break;
+         case Op::JumpFalse:case Op::JumpTrue: {
+             bool condition;
+-            if(auto* v=stack_.size()>f.base?std::get_if<Value>(&stack_.back()):nullptr;v&&std::holds_alternative<bool>(v->data)){condition=std::get<bool>(v->data);stack_.pop_back();}
++            if(auto* v=stack_.size()>f.base?stack_.value_if(stack_.back()):nullptr;v&&std::holds_alternative<bool>(v->data)){condition=std::get<bool>(v->data);stack_.pop_back();}
+             else condition=as_bool(pop(s),s);
+             if(condition==(op.op==Op::JumpTrue)){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;}break;
+         }
+@@ -510,20 +510,20 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
+         }
+         case Op::Store: {
+             auto value=pop(s);if(stack_.size()<=f.base)invalid(s);
+-            if(auto* local=std::get_if<LocalRef>(&stack_.back())){
++            if(auto* local=stack_.local_if(stack_.back())){
+                 // Same steps as the Location path below, without building a ValueLocation.
+                 auto& b=*local->binding;
+                 // int op= int on an `int` binding: enforce_type/copy_value are identities there.
+                 if(op.text.size()>1&&b.type=="int"&&std::holds_alternative<std::int64_t>(b.value.data)){
+                     Value result=b.value;if(int_binary_into(std::string_view(op.text).substr(0,op.text.size()-1),result,value)&&std::holds_alternative<std::int64_t>(result.data)){
+-                        b.value=result;stack_.back()=std::move(result);break;}}
++                        b.value=result;stack_.replace_back(std::move(result));break;}}
+                 if(op.text.size()>1){const auto name=std::string_view(op.text).substr(0,op.text.size()-1);
+                     if(auto fast=fast_binary(name,b.value,value))value=std::move(*fast);else value=binary_value(name,b.value,value,s,op.flag);}
+                 value=enforce_type(std::move(value),b.type,s,op.flag||op.text.size()>1);b.value=copy_value(value);
+-                stack_.back()=std::move(value);break;
++                stack_.replace_back(std::move(value));break;
+             }
+-            if(!std::holds_alternative<Location>(stack_.back()))invalid(s);
+-            auto where=std::move(std::get<Location>(stack_.back()));stack_.pop_back();
++            if(!stack_.location_if(stack_.back()))invalid(s);
++            auto where=std::move(*stack_.location_if(stack_.back()));stack_.pop_back();
+             if(op.text!="=")value=binary_value(std::string_view(op.text).substr(0,op.text.size()-1),location_read(where,s),value,s,op.flag);
+             value=enforce_type(std::move(value),where.type,s,op.flag||op.text!="=");location_write(where,value,s);stack_.emplace_back(std::move(value));break;
+         }
+@@ -533,26 +533,26 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
+             for(std::size_t i=0;i<values.size();++i)if(op.names[i]!="_"){auto item=op;item.text=op.names[i];item.type=types[i];bind(item,values[i]);}break;}
+         case Op::StoreMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto data=std::get<MultiValue>(pack.data).data;std::vector<Location> ls(op.argument);
+             for(std::size_t i=op.argument;i>0;--i){if(stack_.size()<=f.base)invalid(s);
+-                if(auto* local=std::get_if<LocalRef>(&stack_.back()))ls[i-1]=Location{&local->binding->value,local->binding->type,true,f.environment,{},{}};
+-                else if(auto* where=std::get_if<Location>(&stack_.back()))ls[i-1]=std::move(*where);else invalid(s);stack_.pop_back();}
++                if(auto* local=stack_.local_if(stack_.back()))ls[i-1]=Location{&local->binding->value,local->binding->type,true,f.environment,{},{}};
++                else if(auto* where=stack_.location_if(stack_.back()))ls[i-1]=std::move(*where);else invalid(s);stack_.pop_back();}
+             for(std::size_t i=0;i<values.size();++i)values[i]=copy_value(enforce_type(std::move(values[i]),ls[i].type,s,i<data->contextual.size()&&data->contextual[i]));
+             prepare_map_writes(ls,s);for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i],s);break;}
+         case Op::MakeMap:stack_.emplace_back(make_map(op.type,s));break;
+-        case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);auto m=std::get_if<MapValue>(&std::get<Value>(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
++        case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!stack_.is_value(stack_.back()))invalid(s);auto m=std::get_if<MapValue>(&stack_.value(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
+         case Op::Propagate:{auto value=pop(s);auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else (co_await finish_return(propagated_error(value,s),op,true));break;}
+         case Op::CheckIndex:
+-            if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);
+-            if(!std::holds_alternative<SliceValue>(std::get<Value>(stack_.back()).data)&&!std::holds_alternative<MapValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice, array or map","E4003");break;
++            if(stack_.empty()||!stack_.is_value(stack_.back()))invalid(s);
++            if(!std::holds_alternative<SliceValue>(stack_.value(stack_.back()).data)&&!std::holds_alternative<MapValue>(stack_.value(stack_.back()).data))runtime_error(s,"index/slice requires a slice, array or map","E4003");break;
+         case Op::CheckSlice:
+-            if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
+-            if(!std::holds_alternative<SliceValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice or array","E4003");break;
++            if(stack_.empty() || !stack_.is_value(stack_.back()))invalid(s);
++            if(!std::holds_alternative<SliceValue>(stack_.value(stack_.back()).data))runtime_error(s,"index/slice requires a slice or array","E4003");break;
+         case Op::MakeArray: {
+             auto storage=managed<std::vector<Value>>();stack_.emplace_back(Value(SliceValue{storage,0,0,true,""}));break;
+         }
+         case Op::ArrayAppend: {
+             auto item=copy_value(pop(s));
+-            if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
+-            auto slice=std::get_if<SliceValue>(&std::get<Value>(stack_.back()).data);if(!slice)invalid(s);
++            if(stack_.empty() || !stack_.is_value(stack_.back()))invalid(s);
++            auto slice=std::get_if<SliceValue>(&stack_.value(stack_.back()).data);if(!slice)invalid(s);
+             if(slice->element_type.empty())slice->element_type=value_type(item);else item=enforce_type(item,slice->element_type,s,op.flag);
+             slice->storage->push_back(std::move(item));slice->contextual.push_back(op.flag);++slice->length;break;
+         }
+@@ -574,8 +574,8 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
+             stack_.emplace_back(Value(StructValue{object,true}));break;
+         }
+         case Op::InitField: {
+-            auto item=pop(s);if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
+-            auto object=std::get_if<StructValue>(&std::get<Value>(stack_.back()).data);if(!object)invalid(s);
++            auto item=pop(s);if(stack_.empty() || !stack_.is_value(stack_.back()))invalid(s);
++            auto object=std::get_if<StructValue>(&stack_.value(stack_.back()).data);if(!object)invalid(s);
+             auto value=enforce_type(std::move(item),field_type(access(f).field,object->data->name,op.text,s),s,op.flag);
+             initialize_field(*object->data,op.text,std::move(value),s);break;
+         }

@@ -33,6 +33,26 @@ with tempfile.TemporaryDirectory(prefix="hua-resume-",dir=build) as temp:
             run("run",archive,output,error,work,executable=legacy)
             for name,data in (files or {}).items():assert (work/name).read_bytes()==data,("old-HUAB",name)
         return archive
+    # S2-1: assignment targets survive recursion and suspension with GC.
+    compare("""import std.task as t
+import std.gc as gc
+struct Box{x int}
+fn recurse(n int) int {if n==0 {gc.collect()
+return 7}
+return recurse(n-1)+1}
+async fn delayed(x int) int {t.sleep(1)
+gc.collect()
+return x}
+async fn worker() int {var xs=[0,0]
+xs[0]=recurse(40)
+xs[1]=await delayed(19)
+var box=Box{x:0}
+box.x=await delayed(xs[0]+xs[1])
+var items=map[string]int{}
+items["answer"]=await delayed(box.x)
+return unwrap(items["answer"])}
+fn main(){print(await worker())}
+""","66\n")
     compare("""import std.task as t
 fn nested(a Task<int>) int {return await a+1}
 async fn leaf() int {t.sleep(1)
