@@ -1,5 +1,11 @@
 # Hua项目背景
 
+## 2026-10-30本轮接续
+
+2026-10-30：当前 main@776d5f8 的 C07 正式自身闭环已验收。14模块/291088字节，210.844秒、1281255218步、peak_calls 52，C2 4195418字节、CRC32 3424058752；独立reader、编译器源码移除、生成行为和示例源码移走执行均通过。本轮未改生产源码/预算，未重跑C08或全量CTest，未提交推送。
+
+详见[正式记录](knowledge/bootstrap-performance/runs/2026-10-30-c07-acceptance.md)。
+
 更新2026-10-22。项目：NssSSLY/Hua（https://github.com/NssSSLY/Hua.git，分支main），project_id=aab00f84-5a35-48b3-973b-4ccd29e3d31c。本机路径C:/file/project/hua，其他电脑路径可不同。
 
 Hua是小核心、静态类型的脚本语言：C++20宿主（Lexer/Parser/语义检查/AST解释器/字节码VM/GC/HUAB产物）＋用Hua写的编译器（selfhost/，14模块，入口selfhost/archive_main.hua）。路线：语言基础A → 基础标准库B → 编译器自举C → 应用扩展与高级优化。

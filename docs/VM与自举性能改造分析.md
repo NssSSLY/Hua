@@ -377,6 +377,12 @@ python perf/run_bench.py --hua tests/build/hua.exe --compare perf/results/win-ba
 
 03_calls的0.98x在噪声内（fib不给局部变量赋值，不走LocalRef）。参照两列为先后两次独立运行（各7次），以A/B为准。结果文件 `perf/results/win-parity-dispatch-ab.json`、`win-reference-parity-dispatch.json`。72项CTest中71项通过，`archives_extensions` 为HUA-D037已登记的本机问题。自举回归：C2与记录逐字节相同（sha256 f73869fa…），1,281,255,218步，204.9秒。结论：逐指令固定开销里能在现有结构内拿到的只有refcount这一项；其余来自协程帧、336字节Instruction与144字节Value的variant构造析构，需要P7（紧凑指令）与P6（紧凑Value）。
 
+#### C07正式闭环补验（2026-10-30，当前本机）
+
+执行现有脚本一次，补齐当前源码的完整自身、独立reader、无源码编译器行为和示例源码移走执行证据；生产代码与预算不变。14模块291088字节，210.844秒、1281255218步、peak_calls 52，峰值约973.0MiB；C2为4195418字节/62599指令，SHA256 f73869fa…，600秒余量64.86%。C07关闭；C08不重跑、C09及D036/D037独立待办。不以不同机器/时段历史数字宣称本轮加速。[记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-30-c07-acceptance.md)。
+
+### 0.3 下一步
+
 <a id="value-copy-priority1-results"></a>
 
 #### 值复制第一优先（2026-10-29）
@@ -454,6 +460,7 @@ S2-1可行性较高且VM内边界相对清楚；S2-2/3涉及寿命证明；S2-4�
 - 每切片结论写本性能文档；完整失败/撤回/身份/逐轮证据写.codex-sync/knowledge，原始产物放tests/artifacts；只有明确要求才提交推送。
 
 ### 0.3 历史下一步（以下旧顺序以本节最新交接方案为准）
+
 
 **2026-10-23用户调整优先级**：暂停自举线（C04/selfhost改造与C09/G3验收），先做通用VM性能，目标是微基准赶上CPython量级（`perf/reference_bench.py` 同机同时段，每个基准 Hua/CPython ≤2倍，进一步≤1倍）；达到后转入补标准库。自举只作为回归检查（产物逐字节相同、步数不变）。具体分步见下方“CPython对齐阶段”记录与第9.6节。
 

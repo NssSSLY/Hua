@@ -1,0 +1,192 @@
+{
+  "date": "2026-10-30",
+  "invocation": {
+    "date": "2026-10-30",
+    "head": "776d5f8100f615ab9986f7d3feb8e3a1cc51ecd5",
+    "initial_worktree": "clean; verified before execution",
+    "build_check": "cmake --build tests/build --target hua: ninja no work to do",
+    "command": [
+      "E:/project/python/python.exe",
+      "tests/selfhost_archive_budget_tests.py",
+      "tests/build/hua.exe",
+      ".",
+      "E:/project/hua/tests/artifacts/c07-acceptance-20261030",
+      "--bootstrap-huab"
+    ],
+    "files": {
+      "AGENTS.md": "bf22b586cb16d733d73b25cc60c752829651cd99e4fa40945d31fe1f826af1f8",
+      "selfhost/contract.json": "b69dd5cac108517771d334bd15368782d691a63284c51237256b69604b0828e9",
+      "tests/selfhost_archive_budget_tests.py": "12bc1ac9ca4f6e23c4b7b45cde502aceeb38e2b8bef40c4b38c1bea44c7186d4",
+      "include/hua/execution.hpp": "a2cd661d67a501bc178a8ce620368e03d97c95b03f3a7f0af084b294e9512702"
+    },
+    "scope": "C07 current own-source, independent reader and source-free behavior; no C08 rerun or production changes"
+  },
+  "formal": {
+    "returncode": 0,
+    "supervisor_timeout": false,
+    "seconds": 210.844,
+    "peak_working_bytes": 1020289024,
+    "cpu_seconds": 205.891,
+    "report_bytes": 196,
+    "modules": 14,
+    "input_bytes": 291088,
+    "source_hashes": {
+      "archive.hua": "b99c09b006a8613a183c5183b1dd1637092fbbabe6d8eb1885a72b5d6b171f23",
+      "archive_main.hua": "864e55563119868c7be43d8caf1f4657074dc246df516679a442ef9f812dd522",
+      "ast_pool.hua": "6cbe5f78816f533f14b6ecedd86256f844125ee97b87550fddf8234c44ed5c14",
+      "bytecode.hua": "3514e1853fd142e814c5aff9b10a4bf22c91efeddb8e306f4f30ca6e756da712",
+      "bytecode_verify.hua": "8cbb9a77e51d701deb8bf5ff86ea4b1b18c1d12aacb45fe3919e14639ac5e1db",
+      "capabilities.hua": "d86f60beb19a4c167cadb1e36fd153ba212d260ecb25e74b8ca96fbf39e75ba3",
+      "catalog.hua": "77f747fd4df0b57744f905ccf5bb18921cb7676fc29857f81e2cb5529c0e2fad",
+      "lexer.hua": "08bf282c6aea386a2ce72caad3f999ade361afe6a708dfe4a98997f2f469953d",
+      "lowering.hua": "c442ca0a52da125d7eca28d94e36392cf64ab35f1fcaddbc9b5cc7594e89d6f5",
+      "modules.hua": "452c7a3945e7351ce7cc1aee727bcf6418f33d6c2774becc2e4fbd0652cdbff6",
+      "parser.hua": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28",
+      "signatures.hua": "f79c4d86d0dd76ead202401d56813d6117db2929fc05aa1f0997b1dff20af40d",
+      "type_rules.hua": "5d92c454c4f99ad97eff2335207c57424f93d10d3da1fd74d257f03c28f182ab",
+      "types.hua": "1732165c82aa76e20bb69a4c9a9c7b50486fb282d4a150cb5ca584dcf6d77c33"
+    },
+    "emitter": "Hua instructions and complete HUAB encoding; existing native reader only",
+    "execution": "VM compiler profile; C0 bootstrap persisted Hua compiler; isolated full own-source pipeline; win32",
+    "bootstrap_component": {
+      "seconds": 29.657,
+      "bytes": 3645511,
+      "sha256": "a6389d259d97ac42d14a1a7700cb36f8367ff8fc882b5b99ad956b9417e1b6a2",
+      "producer": "C++ C0 bootstraps only the executing compiler; original own-source input never goes through C++ compilation"
+    },
+    "observations": [
+      {
+        "elapsed_seconds": 60,
+        "cpu_seconds": 57.094,
+        "peak_working_mib": 551.4
+      },
+      {
+        "elapsed_seconds": 120,
+        "cpu_seconds": 116.531,
+        "peak_working_mib": 629.7
+      },
+      {
+        "elapsed_seconds": 181,
+        "cpu_seconds": 176.016,
+        "peak_working_mib": 655.0
+      }
+    ],
+    "runtime_sha256": "700395534660acac7f4685f7d3c2c947077f8627329ea3f40183e9b95a52fefc",
+    "temporary_idle_sleep_prevention": true,
+    "diagnostic_phases": false,
+    "diagnostic_helpers": false,
+    "compiler_sources_identical": true,
+    "compiler_source_hashes": {
+      "archive.hua": "b99c09b006a8613a183c5183b1dd1637092fbbabe6d8eb1885a72b5d6b171f23",
+      "archive_main.hua": "864e55563119868c7be43d8caf1f4657074dc246df516679a442ef9f812dd522",
+      "ast_pool.hua": "6cbe5f78816f533f14b6ecedd86256f844125ee97b87550fddf8234c44ed5c14",
+      "bytecode.hua": "3514e1853fd142e814c5aff9b10a4bf22c91efeddb8e306f4f30ca6e756da712",
+      "bytecode_verify.hua": "8cbb9a77e51d701deb8bf5ff86ea4b1b18c1d12aacb45fe3919e14639ac5e1db",
+      "capabilities.hua": "d86f60beb19a4c167cadb1e36fd153ba212d260ecb25e74b8ca96fbf39e75ba3",
+      "catalog.hua": "77f747fd4df0b57744f905ccf5bb18921cb7676fc29857f81e2cb5529c0e2fad",
+      "lexer.hua": "08bf282c6aea386a2ce72caad3f999ade361afe6a708dfe4a98997f2f469953d",
+      "lowering.hua": "c442ca0a52da125d7eca28d94e36392cf64ab35f1fcaddbc9b5cc7594e89d6f5",
+      "modules.hua": "452c7a3945e7351ce7cc1aee727bcf6418f33d6c2774becc2e4fbd0652cdbff6",
+      "parser.hua": "22a58be98181538bff6f0d9029fbf63a542995804b568ee0c3073ad01f707c28",
+      "signatures.hua": "f79c4d86d0dd76ead202401d56813d6117db2929fc05aa1f0997b1dff20af40d",
+      "type_rules.hua": "5d92c454c4f99ad97eff2335207c57424f93d10d3da1fd74d257f03c28f182ab",
+      "types.hua": "1732165c82aa76e20bb69a4c9a9c7b50486fb282d4a150cb5ca584dcf6d77c33"
+    },
+    "phases_ns": {},
+    "receipt": {
+      "crc32": 3424058752,
+      "file_bytes": 4195418,
+      "format": 7,
+      "instructions": 62599,
+      "payload_bytes": 4195386,
+      "profile": "C07-HUAB1",
+      "schema": "hua.archive.result.v1",
+      "source": "archive_main.hua",
+      "status": "ok"
+    },
+    "status": "ok",
+    "metrics": {
+      "schema": "hua.execution.budget.v1",
+      "profile": "compiler",
+      "per_executor_step_limit": 100000000000,
+      "call_depth_limit": 128,
+      "collection_interval": 65536,
+      "steps": 1281255218,
+      "peak_calls": 52
+    },
+    "own_compiler_execution": {
+      "source_removed": true,
+      "huab_bytes": 4195418,
+      "huab_sha256": "f73869fa341b7e9e76fd754edee0d36b2accd175a058c6d6fa243360ce0f0def",
+      "sample_bytes_identical": true,
+      "sample_output": "2 2\n",
+      "calls": [
+        {
+          "action": "check",
+          "seconds": 0.069,
+          "returncode": 0
+        },
+        {
+          "action": "run",
+          "seconds": 23.918,
+          "returncode": 0
+        },
+        {
+          "action": "run",
+          "seconds": 0.13,
+          "returncode": 0
+        },
+        {
+          "action": "check",
+          "seconds": 0.017,
+          "returncode": 0
+        },
+        {
+          "action": "run",
+          "seconds": 0.017,
+          "returncode": 0
+        },
+        {
+          "action": "run",
+          "seconds": 0.016,
+          "returncode": 0
+        }
+      ],
+      "compiler": "Hua source -> Hua instructions -> Hua HUAB; executed by existing C++ reader/VM",
+      "generations": "C08 same-source compiler1->2->3 still pending"
+    }
+  },
+  "supplement": {
+    "status": "passed",
+    "compiler_source_absent": true,
+    "sample_original_paths_absent": true,
+    "official_source_hashes_unchanged": true,
+    "sample_receipts_equal": true,
+    "sample_bytes_equal": true,
+    "sample_output": "2 2\n",
+    "headers": {
+      "self.huab": {
+        "format": 7,
+        "bytes": 4195418,
+        "crc32": 3424058752,
+        "sha256": "f73869fa341b7e9e76fd754edee0d36b2accd175a058c6d6fa243360ce0f0def"
+      },
+      "seed-sample.huab": {
+        "format": 6,
+        "bytes": 4531,
+        "crc32": 3766923817,
+        "sha256": "8a9c62fed499379c2893e60d0f9f36b66c437a4d7d7b68cd32b80226ee4e2cfa"
+      },
+      "self-sample.huab": {
+        "format": 6,
+        "bytes": 4531,
+        "crc32": 3766923817,
+        "sha256": "8a9c62fed499379c2893e60d0f9f36b66c437a4d7d7b68cd32b80226ee4e2cfa"
+      }
+    },
+    "runtime_sha256": "700395534660acac7f4685f7d3c2c947077f8627329ea3f40183e9b95a52fefc",
+    "head": "776d5f8100f615ab9986f7d3feb8e3a1cc51ecd5",
+    "acceptance_script_sha256": "12bc1ac9ca4f6e23c4b7b45cde502aceeb38e2b8bef40c4b38c1bea44c7186d4",
+    "harness_correction": "First supplemental binary stdout assertion expected LF; Windows emits CRLF. Existing successful seed run checked exactly as CRLF; self run compared text lines. No full self compilation retried."
+  }
+}
