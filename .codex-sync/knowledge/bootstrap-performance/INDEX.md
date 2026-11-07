@@ -198,3 +198,4 @@ UR-1/2/3已接入并通过所选回归；最终3afa32e1/C0 32d46a34/14模块2847
 - 2026-11-07 P1文本/UTF-8（since23）：[运行记录](runs/2026-11-07-p1-text-utf8.md)、[提案](designs/2026-11-07-p1-text-utf8-proposal.md)。
 - 2026-11-07 HUA-D038 P1端序打包（since24）：[运行记录](runs/2026-11-07-p1-pack.md)。
 - 2026-11-07 HUA-D038 P1模板与千分位（since25）：[运行记录](runs/2026-11-07-p1-template.md)。
+- 2026-11-07 HUA-D038 P1 Unicode大小写（since26）：[运行记录](runs/2026-11-07-p1-unicode-case.md)。

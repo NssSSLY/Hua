@@ -1,0 +1,28 @@
+# Unicode大小写：手写码点循环＋小映射表（只覆盖文本用到的字母，原生lower/equal_fold对照见26）
+import std.strings as strings
+import std.list as list
+fn lower_one(s string, m map[int]int) string {
+    var empty []int = []
+    var out = list.from_slice(empty)
+    for c in strings.codepoints(s) {
+        if c >= 65 && c <= 90 {
+            unwrap(list.append(out, c + 32))
+        } else if has(m, c) {
+            unwrap(list.append(out, unwrap(m[c])))
+        } else {
+            unwrap(list.append(out, c))
+        }
+    }
+    return unwrap(strings.from_codepoints(list.snapshot(out)))
+}
+fn main() {
+    var m = map[int]int{201: 233, 214: 246, 913: 945, 914: 946, 915: 947, 1055: 1087, 1056: 1088, 1048: 1080, 1042: 1074, 1045: 1077, 1058: 1090}
+    let text = strings.repeat("HÉLLO WÖRLD ΑΒΓ ПРИВЕТ ", 200)
+    var total = 0
+    for round in 0..10 {
+        let a = lower_one(text, m)
+        total += len(a)
+        if a == lower_one(text, m) { total += 1 }
+    }
+    print(total)
+}

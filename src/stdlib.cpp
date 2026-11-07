@@ -371,6 +371,10 @@ const std::vector<StandardFunction>& standard_functions() {
         {"strings","template",{"string","map<string,string>"},"Result<string,string>",false,false,25},
         {"strings","format_int_grouped",{"int","string"},"string",false,false,25},
         {"strings","format_float_grouped",{"float","int","string"},"string",false,false,25},
+        {"strings","upper",{"string"},"string",false,false,26},
+        {"strings","lower",{"string"},"string",false,false,26},
+        {"strings","casefold",{"string"},"string",false,false,26},
+        {"strings","equal_fold",{"string","string"},"bool",false,false,26},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
@@ -440,6 +444,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(f.since>=13&&f.module=="crypto")return invoke_crypto_standard(f,args,s,context);
     if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
     if(f.module=="strings")for(const auto& v:args)if(auto t=hua::string_data(&v.data))bounded(*t,s);
+    if(f.module=="strings"&&f.since==26)return invoke_unicode_case(f,args,s);
     if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);
     auto result=type_arguments(f.result,"Result");std::string success=result.empty()?"":result[0];
     auto ok=[&](Value v){return standard_result(std::move(v),true,success);};auto err=[&](std::string text){return standard_result(Value(std::move(text)),false,success);};

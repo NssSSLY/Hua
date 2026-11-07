@@ -1,0 +1,12 @@
+# Unicode大小写：原生lower/equal_fold（对照25手写）
+import std.strings as strings
+fn main() {
+    let text = strings.repeat("HÉLLO WÖRLD ΑΒΓ ПРИВЕТ ", 200)
+    let lowered = strings.lower(text)
+    var total = 0
+    for round in 0..10 {
+        total += len(strings.lower(text))
+        if strings.equal_fold(text, lowered) { total += 1 }
+    }
+    print(total)
+}
