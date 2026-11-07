@@ -1,0 +1,17 @@
+# 有限小输入上的手写公式；只用于性能对照，不作为大输入数值实现。
+import std.math as math
+fn sinh(x float) float { return (unwrap(math.exp(x))-unwrap(math.exp(-x)))/2.0 }
+fn cosh(x float) float { return (unwrap(math.exp(x))+unwrap(math.exp(-x)))/2.0 }
+fn tanh(x float) float { let e=unwrap(math.exp(2.0*x))
+    return (e-1.0)/(e+1.0) }
+fn asinh(x float) float { return unwrap(math.log(x+sqrt(x*x+1.0))) }
+fn acosh(x float) float { return unwrap(math.log(x+sqrt(x-1.0)*sqrt(x+1.0))) }
+fn atanh(x float) float { return 0.5*unwrap(math.log((1.0+x)/(1.0-x))) }
+fn main() {
+    var total=0.0
+    for i in 0..10000 {
+        let x=float(i%100+1)*0.0073
+        total+=sinh(x)+cosh(x)+tanh(x)+asinh(x)+acosh(x+1.0)+atanh(x/2.0)
+    }
+    print(int(total))
+}

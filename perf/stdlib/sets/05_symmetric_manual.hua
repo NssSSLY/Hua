@@ -1,0 +1,15 @@
+# P1对称差的手写基线：成员只由键是否存在决定。
+fn main() {
+    var a = map[int]bool{}
+    var b = map[int]bool{}
+    for i in 0..5000 { a[i] = false
+     b[i + 2500] = true }
+    var total = 0
+    for round in 0..20 {
+        var result = map[int]bool{}
+        for k in a { if !has(b, k) { result[k] = true } }
+        for k in b { if !has(a, k) { result[k] = true } }
+        total += len(result)
+    }
+    print(total)
+}

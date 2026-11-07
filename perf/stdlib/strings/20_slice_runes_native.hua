@@ -1,0 +1,13 @@
+# 码点切片：原生strings.slice_runes（对照17手写）
+import std.strings as strings
+fn main() {
+    let text = strings.repeat("aé中😀", 100)
+    var total = 0
+    for round in 0..4 {
+        for k in 0..200 {
+            let start = (k * 7) % 340
+            total += len(unwrap(strings.slice_runes(text, start, start + 50)))
+        }
+    }
+    print(total)
+}

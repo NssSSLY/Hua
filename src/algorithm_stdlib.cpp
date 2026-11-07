@@ -48,6 +48,20 @@ std::uint64_t binary_gcd(std::uint64_t a, std::uint64_t b) {
     }
     return a << shift;
 }
+// P1 bit tools (since 21): reinterpret the complete two's-complement bit pattern.
+// Unsigned operations avoid checked signed shifts and implementation-defined casts.
+Value math_bits(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
+    const auto bits = std::bit_cast<std::uint64_t>(std::get<I>(args[0].data));
+    if (f.name == "popcount") return Value(static_cast<I>(std::popcount(bits)));
+    if (f.name == "leading_zeros") return Value(static_cast<I>(std::countl_zero(bits)));
+    if (f.name == "trailing_zeros") return Value(static_cast<I>(std::countr_zero(bits)));
+    const auto amount = std::get<I>(args[1].data);
+    if (amount < 0 || amount > 63)
+        runtime_error(span, "math rotation count must be in 0..63", "E4003");
+    const auto rotated = f.name == "rotate_left" ? std::rotl(bits, static_cast<int>(amount))
+                                                  : std::rotr(bits, static_cast<int>(amount));
+    return Value(std::bit_cast<I>(rotated));
+}
 Value math_p0(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
     const auto& name = f.name;
     if (name == "pi") return Value(std::numbers::pi);
@@ -366,7 +380,11 @@ Value copied(const StandardFunction& f, const SliceValue& input, Work& work) {
 Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Value>& args,
                                 const SourceSpan& span, RuntimeContext* context) {
     task_checkpoint(context, span);
-    if (f.module == "math") return f.since >= 12 ? math_p0(f, args, span) : math(f, args, span);
+    if (f.module == "math") {
+        if (f.since == 21) return math_bits(f, args, span);
+        if (f.since == 22) return invoke_math_arithmetic(f, args, span);
+        return f.since >= 12 ? math_p0(f, args, span) : math(f, args, span);
+    }
     if (f.since >= 19) {
         const auto& input = slice_argument(args[0], span);
         Work work{context, span};

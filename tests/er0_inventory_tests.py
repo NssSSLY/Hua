@@ -17,7 +17,10 @@ fs_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,17\},\s*$
 report_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,18\},\s*$',registry,re.M)}
 alg_p0_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,19\},\s*$',registry,re.M)}
 alg_p1_later={(m,n) for m,n,_ in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,20(,true)?\},\s*$',registry,re.M)}
-later=text_later|collection_later|callback_later|math_later|random_later|container_later|time_later|os_later|fs_later|report_later|alg_p0_later|alg_p1_later
+bits_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,21\},\s*$',registry,re.M)}
+arithmetic_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,22\},\s*$',registry,re.M)}
+text_utf8_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,23\},\s*$',registry,re.M)}
+later=text_later|collection_later|callback_later|math_later|random_later|container_later|time_later|os_later|fs_later|report_later|alg_p0_later|alg_p1_later|bits_later|arithmetic_later|text_utf8_later
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
 expected=[m+"."+n for m,n in functions if m not in {"error","file"} and (m,n) not in later]
@@ -59,5 +62,8 @@ alg_p0_rows=re.findall(r"^\| ER0-AD\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(alg_p0_rows)==len(set(alg_p0_rows))==len(alg_p0_later)==3 and set(alg_p0_rows)=={m+"."+n for m,n in alg_p0_later},(len(alg_p0_rows),len(alg_p0_later))
 alg_p1_rows=re.findall(r"^\| ER0-AE\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(alg_p1_rows)==len(set(alg_p1_rows))==len(alg_p1_later)==4 and set(alg_p1_rows)=={m+"."+n for m,n in alg_p1_later},(len(alg_p1_rows),len(alg_p1_later))
+for prefix,group,size in (("AF",bits_later,6),("AG",arithmetic_later,24),("AH",text_utf8_later,8)):
+    rows=re.findall(r"^\| ER0-"+prefix+r"\d\d \| ([^ ]+) \|",text,re.M)
+    assert len(rows)==len(set(rows))==len(group)==size and set(rows)=={m+"."+n for m,n in group},(prefix,len(rows),len(group))
 assert len(callback_rows)==len(set(callback_rows))==len(callback_later)==15 and set(callback_rows)=={m+"."+n for m,n in callback_later},(len(callback_rows),len(callback_later))
-print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1, 21 slice-2, 15 L0-1 callback, 18 math/encoding, 13 random/crypto, 19 deque/heap, 12 time, 5 os exit/platform, 5 fs walk/copy, 11 test/log/io, 3 alg P0 and 4 alg/list P1 APIs separately.")
+print("ER0: 125 standard, 38 builtin, 13 Python, 6 internal excluded; 16 new Error APIs, 12 File, 23 slice-1, 21 slice-2, 15 L0-1 callback, 18 math/encoding, 13 random/crypto, 19 deque/heap, 12 time, 5 os exit/platform, 5 fs walk/copy, 11 test/log/io, 3 alg P0, 4 alg/list P1, 6 set/bit, 24 integer/hyperbolic and 8 text/UTF-8 APIs separately.")

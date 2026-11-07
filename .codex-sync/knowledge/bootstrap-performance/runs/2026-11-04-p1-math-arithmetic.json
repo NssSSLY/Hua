@@ -1,0 +1,503 @@
+{
+  "date": "2026-11-04",
+  "status": "implemented and targeted acceptance passed",
+  "user_approved_apis": [
+    "checked_add",
+    "checked_sub",
+    "checked_mul",
+    "checked_neg",
+    "checked_abs",
+    "checked_pow",
+    "wrapping_add",
+    "wrapping_sub",
+    "wrapping_mul",
+    "wrapping_neg",
+    "wrapping_abs",
+    "wrapping_pow",
+    "saturating_add",
+    "saturating_sub",
+    "saturating_mul",
+    "saturating_neg",
+    "saturating_abs",
+    "saturating_pow",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asinh",
+    "acosh",
+    "atanh"
+  ],
+  "since": 22,
+  "functions": 332,
+  "modules": 26,
+  "math_functions": 53,
+  "baseline": {
+    "head": "12a0c23e6b6b6e611f0d93398076dcc247c58c5a",
+    "runtime_sha256": "002700909153e0a8079a808215ac1e854365136f6da6e02a7a3cbbede0950781",
+    "baseline": "includes previous six since21 APIs; previous dirty work preserved",
+    "source_sha256": {
+      "src/stdlib.cpp": "7d5f355038a3aadc675f9f6b9e1c4dcc842550b953bc175731eb3d723d44eace",
+      "src/algorithm_stdlib.cpp": "8b29748de9fca8d7a0d49457a88d12138d806463e9cf4020f6ba957f861604af",
+      "src/archive.cpp": "6a51b3142f0c1ca7bc5c562c5827ea8a168174a0bff7d603e050deb7f89a8eee",
+      "include/hua/stdlib.hpp": "b8d906e3ad461ab0518e8019d3c5ae991c6edd1d276ecce70b9069e51e99b8af",
+      "CMakeLists.txt": "eb889727aad1cfaf57a791b79fd8ff1a5f91c81239509e7ef2516bcae6121e3e"
+    }
+  },
+  "runtime_sha256": "b291ea66fb8949f7e5341708ab158502b275c7ae78a5c91e38e44d3a53163354",
+  "source_sha256": {
+    "src/math_arithmetic_stdlib.cpp": "e9c4f589199cdf93cdea8a56346a4f78e374f9664215e19bc451aa2c61db5a6f",
+    "src/stdlib.cpp": "8d8d044e491302b7b06f1b8dac5d1ad967b799a2a181e3ae06cb6ea6e6ab3333",
+    "src/algorithm_stdlib.cpp": "014f23471f508af98a52755b06cc266d9888ee55e9935a61e8e3f82861e6b2c3",
+    "src/archive.cpp": "4402ecbf519a7862c3c36e2c713d069d569c30c124ca33373f92077ace675548",
+    "include/hua/stdlib.hpp": "2bc3d15c9744f6c0358351ddbfc111c942379b018fffd85d682fce5bfed5a98a",
+    "CMakeLists.txt": "5e0916af97428ed92f5536f88b9159c6b708551ff24de033ae19cb6d3260c8d9"
+  },
+  "machine": {
+    "platform": "Windows-11-10.0.26100-SP0",
+    "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]"
+  },
+  "oracle": {
+    "apis": [
+      "checked_add",
+      "checked_sub",
+      "checked_mul",
+      "checked_neg",
+      "checked_abs",
+      "checked_pow",
+      "wrapping_add",
+      "wrapping_sub",
+      "wrapping_mul",
+      "wrapping_neg",
+      "wrapping_abs",
+      "wrapping_pow",
+      "saturating_add",
+      "saturating_sub",
+      "saturating_mul",
+      "saturating_neg",
+      "saturating_abs",
+      "saturating_pow",
+      "sinh",
+      "cosh",
+      "tanh",
+      "asinh",
+      "acosh",
+      "atanh"
+    ],
+    "process_checks": 128,
+    "oracle_rows": 7074,
+    "integer_values": 26,
+    "integer_pairs": 676,
+    "pow_cases": 156,
+    "hyperbolic_cases": 120,
+    "paths": [
+      "AST",
+      "source VM",
+      "source-free HUAB"
+    ],
+    "format": 22
+  },
+  "native_checks": 119,
+  "targeted_ctest": {
+    "passed": 21,
+    "seconds": 31.39,
+    "full_suite": false
+  },
+  "manual_native": {
+    "runtime_sha256": "b291ea66fb8949f7e5341708ab158502b275c7ae78a5c91e38e44d3a53163354",
+    "results": {
+      "arithmetic": {
+        "walls": {
+          "manual": [
+            0.1519633997231722,
+            0.15378169994801283,
+            0.15975150000303984,
+            0.1534523000009358,
+            0.15227250009775162
+          ],
+          "native": [
+            0.10252170031890273,
+            0.10984469996765256,
+            0.1285300999879837,
+            0.10198769997805357,
+            0.09669729974120855
+          ]
+        },
+        "medians": {
+          "manual": 0.1534523000009358,
+          "native": 0.10252170031890273
+        },
+        "steps": {
+          "manual": 6982519,
+          "native": 2857519
+        },
+        "speedup": 1.4967787261000254
+      },
+      "hyperbolic": {
+        "walls": {
+          "manual": [
+            0.06809440022334456,
+            0.07700280006974936,
+            0.07550849998369813,
+            0.06851409981027246,
+            0.06856449972838163
+          ],
+          "native": [
+            0.044453300070017576,
+            0.047551899682730436,
+            0.04385090013965964,
+            0.04496550001204014,
+            0.042346800211817026
+          ]
+        },
+        "medians": {
+          "manual": 0.06856449972838163,
+          "native": 0.044453300070017576
+        },
+        "steps": {
+          "manual": 1350018,
+          "native": 550018
+        },
+        "speedup": 1.5423939194702518
+      }
+    }
+  },
+  "arithmetic_reference": {
+    "suite": "stdlib",
+    "hua": "E:\\project\\hua\\tests\\build\\hua.exe",
+    "references": {
+      "Python": "Python 3.14.3",
+      "Lua": "Lua 5.4.7  Copyright (C) 1994-2024 Lua.org, PUC-Rio"
+    },
+    "results": {
+      "math/09_arithmetic_native": {
+        "medians": {
+          "Hua": 0.09511240012943745,
+          "Python": 0.04778169980272651,
+          "Lua": 0.011524700094014406
+        },
+        "walls": {
+          "Hua": [
+            0.09832229977473617,
+            0.09399190032854676,
+            0.09537909971550107,
+            0.09447200037539005,
+            0.09511240012943745
+          ],
+          "Python": [
+            0.055159199982881546,
+            0.04625529982149601,
+            0.045605399645864964,
+            0.049068599939346313,
+            0.04778169980272651
+          ],
+          "Lua": [
+            0.014087199699133635,
+            0.011431099846959114,
+            0.01327090011909604,
+            0.011371599975973368,
+            0.011524700094014406
+          ]
+        }
+      }
+    }
+  },
+  "hyperbolic_reference": {
+    "suite": "stdlib",
+    "hua": "E:\\project\\hua\\tests\\build\\hua.exe",
+    "references": {
+      "Python": "Python 3.14.3",
+      "Lua": "Lua 5.4.7  Copyright (C) 1994-2024 Lua.org, PUC-Rio"
+    },
+    "results": {
+      "math/11_hyperbolic_native": {
+        "medians": {
+          "Hua": 0.0422303001396358,
+          "Python": 0.026939199771732092,
+          "Lua": 0.010800899937748909
+        },
+        "walls": {
+          "Hua": [
+            0.047834299970418215,
+            0.0411403002217412,
+            0.04164530010893941,
+            0.0422303001396358,
+            0.04312020028010011
+          ],
+          "Python": [
+            0.03366179997101426,
+            0.02576670004054904,
+            0.026566800195723772,
+            0.027747899759560823,
+            0.026939199771732092
+          ],
+          "Lua": [
+            0.01253549987450242,
+            0.010613400023430586,
+            0.010107199661433697,
+            0.010800899937748909,
+            0.010968999937176704
+          ]
+        }
+      }
+    }
+  },
+  "core": {
+    "suite": "core",
+    "base": "E:\\project\\hua\\tests\\artifacts\\stdlib-p1-arithmetic-20261104\\baseline-runtime\\hua.exe",
+    "new": "E:\\project\\hua\\tests\\build\\hua.exe",
+    "results": {
+      "01_loop": {
+        "steps": 33000014,
+        "base": 0.1823678999207914,
+        "new": 0.20583999995142221,
+        "walls": {
+          "base": [
+            0.1823678999207914,
+            0.18151919962838292,
+            0.1962418002076447,
+            0.186992600094527,
+            0.17978780018165708
+          ],
+          "new": [
+            0.20583999995142221,
+            0.21200590021908283,
+            0.2170146000571549,
+            0.18317910004407167,
+            0.18596570007503033
+          ]
+        }
+      },
+      "02_arith": {
+        "steps": 26000016,
+        "base": 0.32424920005723834,
+        "new": 0.3306946000084281,
+        "walls": {
+          "base": [
+            0.33773860009387136,
+            0.357710899785161,
+            0.32424920005723834,
+            0.31921879993751645,
+            0.32173420023173094
+          ],
+          "new": [
+            0.3951472998596728,
+            0.3306946000084281,
+            0.3235642001964152,
+            0.33589670015498996,
+            0.3162973001599312
+          ]
+        }
+      },
+      "03_calls": {
+        "steps": 7309647,
+        "base": 0.12478689989075065,
+        "new": 0.1265404000878334,
+        "walls": {
+          "base": [
+            0.12478689989075065,
+            0.12924939999356866,
+            0.12635029992088675,
+            0.12311809975653887,
+            0.12428190000355244
+          ],
+          "new": [
+            0.1277169999666512,
+            0.12670479994267225,
+            0.1265404000878334,
+            0.12371979979798198,
+            0.12260090000927448
+          ]
+        }
+      },
+      "04_struct_pass": {
+        "steps": 11000054,
+        "base": 0.8440407998859882,
+        "new": 0.8609497998841107,
+        "walls": {
+          "base": [
+            0.8766216998919845,
+            0.8982714000158012,
+            0.8440407998859882,
+            0.8326710001565516,
+            0.8199940002523363
+          ],
+          "new": [
+            0.8924889001064003,
+            0.8609497998841107,
+            0.8325884998776019,
+            0.8209421001374722,
+            0.8644409002736211
+          ]
+        }
+      },
+      "05_map_ops": {
+        "steps": 13930211,
+        "base": 0.31218829983845353,
+        "new": 0.3153450000099838,
+        "walls": {
+          "base": [
+            0.3139881999231875,
+            0.31218829983845353,
+            0.3118557003326714,
+            0.3473650999367237,
+            0.31182509986683726
+          ],
+          "new": [
+            0.3149160002358258,
+            0.30736019974574447,
+            0.3153450000099838,
+            0.3157930998131633,
+            0.3177660000510514
+          ]
+        }
+      },
+      "06_map_merge": {
+        "steps": 4715929,
+        "base": 0.27835340006276965,
+        "new": 0.2785481996834278,
+        "walls": {
+          "base": [
+            0.28057509986683726,
+            0.2748120999895036,
+            0.27544530015438795,
+            0.2958871996961534,
+            0.27835340006276965
+          ],
+          "new": [
+            0.2785481996834278,
+            0.29035319993272424,
+            0.27087050024420023,
+            0.28126659989356995,
+            0.2709335000254214
+          ]
+        }
+      },
+      "07_strings": {
+        "steps": 7350016,
+        "base": 0.34353649988770485,
+        "new": 0.34126839973032475,
+        "walls": {
+          "base": [
+            0.3423430002294481,
+            0.343817500397563,
+            0.34353649988770485,
+            0.3422197001054883,
+            0.3458578996360302
+          ],
+          "new": [
+            0.3354201000183821,
+            0.34614509996026754,
+            0.34126839973032475,
+            0.34474740037694573,
+            0.3383170999586582
+          ]
+        }
+      },
+      "08_real_type_rules": {
+        "steps": 6507946,
+        "base": 0.48645269963890314,
+        "new": 0.46740829991176724,
+        "walls": {
+          "base": [
+            0.5126369995996356,
+            0.48645269963890314,
+            0.5005504000000656,
+            0.4736297996714711,
+            0.46388010028749704
+          ],
+          "new": [
+            0.48066999996080995,
+            0.5300837997347116,
+            0.4662506999447942,
+            0.4550767997279763,
+            0.46740829991176724
+          ]
+        }
+      },
+      "09_real_ast_pool": {
+        "steps": 35389144,
+        "base": 2.2902778000570834,
+        "new": 2.291977200191468,
+        "walls": {
+          "base": [
+            2.501145400106907,
+            2.26097990013659,
+            2.314495900180191,
+            2.2830022000707686,
+            2.2902778000570834
+          ],
+          "new": [
+            2.369001899845898,
+            2.2763952002860606,
+            2.2828163001686335,
+            2.330622000154108,
+            2.291977200191468
+          ]
+        }
+      }
+    }
+  },
+  "loop_review": {
+    "suite": "core",
+    "base": "E:\\project\\hua\\tests\\artifacts\\stdlib-p1-arithmetic-20261104\\baseline-runtime\\hua.exe",
+    "new": "E:\\project\\hua\\tests\\build\\hua.exe",
+    "results": {
+      "01_loop": {
+        "steps": 33000014,
+        "base": 0.18027429981157184,
+        "new": 0.17940230015665293,
+        "walls": {
+          "base": [
+            0.1850009998306632,
+            0.18412609957158566,
+            0.1810029000043869,
+            0.17880330001935363,
+            0.1733129001222551,
+            0.1788544999435544,
+            0.18027429981157184,
+            0.17364480020478368,
+            0.18028589989989996
+          ],
+          "new": [
+            0.19104619976133108,
+            0.17940230015665293,
+            0.18161490000784397,
+            0.17995900008827448,
+            0.17467480013146996,
+            0.1770796999335289,
+            0.17925700033083558,
+            0.17598430020734668,
+            0.1890494003891945
+          ]
+        }
+      }
+    }
+  },
+  "full_selfhost_run": false,
+  "input_sha256": {
+    "perf/stdlib/math/08_arithmetic_manual.expect": "91becc1f437e698c7f08c7386996b201f9b470d94a0a71a30d15743b2da32671",
+    "perf/stdlib/math/08_arithmetic_manual.hua": "6578239e650468c084a260daa406aabef2368c07c37e534e285b957f286cf6b2",
+    "perf/stdlib/math/08_arithmetic_manual.lua": "51ea0718b22b522d44a8724881d7e350f8bc3dae15f58a17098ce87b3e666e3e",
+    "perf/stdlib/math/08_arithmetic_manual.py": "86049bbed4eff748f72405b9b2cb54526db57606fe4458638b6a6b9a206d7a1e",
+    "perf/stdlib/math/09_arithmetic_native.expect": "91becc1f437e698c7f08c7386996b201f9b470d94a0a71a30d15743b2da32671",
+    "perf/stdlib/math/09_arithmetic_native.hua": "d4f68697450faec5ed5c9c36e095c96295d25951b178575c4c23521f150beb10",
+    "perf/stdlib/math/09_arithmetic_native.lua": "51ea0718b22b522d44a8724881d7e350f8bc3dae15f58a17098ce87b3e666e3e",
+    "perf/stdlib/math/09_arithmetic_native.py": "91d2e816ba1ff9574942586154e7aee59bbefa3dd7db89c8f9f231e00bcb0771",
+    "perf/stdlib/math/10_hyperbolic_manual.expect": "513620edc235febde69e45388b805746f22131e117d8d2a01471b3d1bd0d6f5a",
+    "perf/stdlib/math/10_hyperbolic_manual.hua": "69ce4e757ed2ee8672b6abd15ce4728e0dfa0262caa6a781f36c64c1c9d7dcee",
+    "perf/stdlib/math/10_hyperbolic_manual.lua": "535ffcb401aad261e7cfa2f4dbe014dcff0341e0ceee27755ddd46a4fb503161",
+    "perf/stdlib/math/10_hyperbolic_manual.py": "1d52ab4dffe64cce56303479db6ab479f2a75a7cff4f28db0df1cc096d8c7282",
+    "perf/stdlib/math/11_hyperbolic_native.expect": "513620edc235febde69e45388b805746f22131e117d8d2a01471b3d1bd0d6f5a",
+    "perf/stdlib/math/11_hyperbolic_native.hua": "e208b12913db2f452f26cd4866705461fd4507827715761b4a22c3a59641ab89",
+    "perf/stdlib/math/11_hyperbolic_native.lua": "535ffcb401aad261e7cfa2f4dbe014dcff0341e0ceee27755ddd46a4fb503161",
+    "perf/stdlib/math/11_hyperbolic_native.py": "24a1e98f5a2d7d31e0179e0e9b53fe12ce6128ff77427e61fcd25ad951d1c29a",
+    "perf/bench/01_loop.hua": "9c5baaa377348bca256cb963154a1c9466325ada8b124f00b5b2f7505b3fdb79",
+    "perf/bench/02_arith.hua": "d251edb3fe9680d645b82d7417f11ce519d26ba3e9cfdb0a16e8944a3b4154f1",
+    "perf/bench/03_calls.hua": "e5b3140f2a8532d8a29046fa8914a0a90265fa8a3012a4f0efb64d0741c2a681",
+    "perf/bench/04_struct_pass.hua": "48b9b54838addb68eee265289966b0a6eecb92a2881c3c4365090ff2dc93dfd2",
+    "perf/bench/05_map_ops.hua": "0e6091db2877e04269239269a92bbaabe61157b4cc9df3a8d393d2a6beec810f",
+    "perf/bench/06_map_merge.hua": "753d5e2a0dc1bb28e4b10519dbc2a00a59f99c0a6a274ee4653d340b35b9bf0a",
+    "perf/bench/07_strings.hua": "6b4dbed9cab7a6c3ef25d098ca07e3074e172665ac25486783836147db2dcdb6",
+    "perf/results/compiler.huab": "16faf96636315c6e170413006b5390bbe27b9bc5a0cec7fef89c11eea8afa555"
+  }
+}

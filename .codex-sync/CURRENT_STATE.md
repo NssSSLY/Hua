@@ -1,5 +1,10 @@
 # 当前状态
 
+## 当前主线（2026-11-05收尾）：HUA-D038 P1整数/双曲交付
+
+已按用户确认实现24个math接口：add/sub/mul/neg/abs/pow的checked/wrapping/saturating三族，加6个双曲函数。since22/HUAB22，26模块332函数（math53）；三路径128次进程检查/7074行oracle、119原生边界、21项定向CTest通过。边界加法/双曲组合相对手写约1.50/1.54倍。core纯循环首轮0.89x，独立9轮复核1.00x，未复现；其余约0.98–1.04x，原始数据保留。 [本轮记录](knowledge/bootstrap-performance/runs/2026-11-04-p1-math-arithmetic.md)。上一批6接口与性能记录完整保留，当前不据本批比较关闭其旧source字符串布局差异。文本/UTF-8 8接口已按用户定稿W1–W7完成（2026-11-07，since23/HUAB23，26模块340函数；[记录](knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md)）；since21/22/23三批都未提交；缓冲I/O另定资源合同。L0-4仍待selfhost since9–23同步。2026-11-07全量CTest 91/102、C2逐字节不变（见记录）。
+
+
 ## 最新阶段（2026-10-30）：S2-1试验未放行，默认接入撤回
 
 用户授权开始第二阶段。16字节Entry（复杂Value入池）造成Map/真实编译退化；176字节Entry（仅位置入池）65项定向回归通过，但最终7轮ast_pool编译均略慢、中位0.97x，type_rules为1.07x，整体未放行。接入版A07/C04通过（182.38秒）；默认VM源码恢复97ecbc2后重建、16项核心复验及真实编译产物核对通过。Value仍144字节、默认Entry432字节。候选、54项存储检查与接入补丁单独保留，不把试验通过当提速。

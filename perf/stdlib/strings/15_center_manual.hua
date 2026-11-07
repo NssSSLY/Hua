@@ -1,0 +1,14 @@
+# 居中补齐：手写rune_count＋两次repeat拼接（原生strings.center对照见18）
+import std.strings as strings
+fn main() {
+    let words = ["a", "héllo", "中文字", "😀😀", "plain ascii text", "aé中😀"]
+    var total = 0
+    for round in 0..20000 {
+        for w in words {
+            let missing = 21 - unwrap(strings.rune_count(w))
+            let left = missing // 2
+            total += len(strings.repeat("*", left) + w + strings.repeat("*", missing - left))
+        }
+    }
+    print(total)
+}

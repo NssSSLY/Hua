@@ -1,0 +1,37 @@
+# P1位工具的手写基线；固定64位，旋转后读取低16位以保持校验和不溢出。
+fn popcount(x int) int {
+    var v=x
+     var n=0
+    for i in 0..64 { n += v & 1
+     v = v >> 1 }
+    return n
+}
+fn leading_zeros(x int) int {
+    for i in 0..64 { if ((x >> (63-i)) & 1) != 0 { return i } }
+    return 64
+}
+fn trailing_zeros(x int) int {
+    for i in 0..64 { if ((x >> i) & 1) != 0 { return i } }
+    return 64
+}
+fn rotate_left(x int,n int) int {
+    var result=0
+    for i in 0..64 {
+        if ((x >> i) & 1)!=0 {
+            let target=(i+n)%64
+            if target==63 { result = result | (-9223372036854775808) }
+            else { result = result | (1 << target) }
+        }
+    }
+    return result
+}
+fn rotate_right(x int,n int) int { return rotate_left(x,(64-n)%64) }
+fn main() {
+    var total=0
+    for i in 0..20000 {
+        let x=i*7919
+        total += popcount(x)+leading_zeros(x)+trailing_zeros(x)
+        total += (rotate_left(x,13) & 65535)+(rotate_right(x,13) & 65535)
+    }
+    print(total)
+}

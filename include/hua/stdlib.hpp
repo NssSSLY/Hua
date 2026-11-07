@@ -24,6 +24,7 @@ struct StandardSignature { std::vector<std::string> parameters; std::string resu
 StandardSignature standard_signature(const StandardFunction& function,const std::vector<std::string>& argument_types);
 std::string format_error(const ErrorValue& value);
 Value invoke_error_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&);
+Value invoke_math_arithmetic(const StandardFunction&,const std::vector<Value>&,const SourceSpan&);
 Value invoke_algorithm_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 Value invoke_filesystem_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 Value invoke_system_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
@@ -50,4 +51,6 @@ Value invoke_standard(const StandardFunction& function, const std::vector<Value>
                       const SourceSpan& span, std::ostream& output, RuntimeContext* context);
 Value standard_result(Value payload, bool ok, const std::string& success_type);
 std::string text_utf8_error(std::string_view text);
+// Appends one Unicode scalar as UTF-8; false (nothing appended) for surrogates and values outside 0..10FFFF.
+bool append_utf8(std::string& out,std::int64_t scalar);
 }

@@ -1,0 +1,12 @@
+# 码点往返：原生codepoints/from_codepoints（对照16手写）
+import std.strings as strings
+fn main() {
+    let text = strings.repeat("aé中😀", 2000)
+    var total = 0
+    for round in 0..10 {
+        let cs = strings.codepoints(text)
+        let back = unwrap(strings.from_codepoints(cs))
+        total += len(cs) + cs[len(cs) - 1] + len(back)
+    }
+    print(total)
+}

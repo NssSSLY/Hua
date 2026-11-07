@@ -1,0 +1,14 @@
+# P1原生对称差：与05使用相同输入和输出。
+import std.sets as sets
+fn main() {
+    var a = map[int]bool{}
+    var b = map[int]bool{}
+    for i in 0..5000 { a[i] = false
+     b[i + 2500] = true }
+    var total = 0
+    for round in 0..20 {
+        let result=sets.symmetric_difference(a,b)
+        total += len(result)
+    }
+    print(total)
+}

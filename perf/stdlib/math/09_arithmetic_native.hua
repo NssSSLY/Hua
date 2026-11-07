@@ -1,0 +1,15 @@
+# since22原生边界加法；输入与08相同。
+import std.math as math
+fn main() {
+    var total=0
+    var errors=0
+    for i in 0..60000 {
+        let x=9223372036854775807-(i%8)
+        let c=math.checked_add(x,3)
+        if is_err(c) { errors+=1 }
+        total += unwrap_or(c,0) & 65535
+        total += math.wrapping_add(x,3) & 65535
+        total += math.saturating_add(x,3) & 65535
+    }
+    print(total,errors)
+}

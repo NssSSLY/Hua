@@ -1,0 +1,77 @@
+{
+  "date": "2026-11-04",
+  "identity": {
+    "head": "12a0c23e6b6b6e611f0d93398076dcc247c58c5a",
+    "runtime_sha256": "30e44d193af673d2f905203e43cd78c39ddad8d2b35b6001391b5156d48c7780",
+    "status": "candidate interfaces pending user decision; no production implementation"
+  },
+  "set_manual": {
+    "suite": "stdlib",
+    "hua": "E:\\project\\hua\\tests\\artifacts\\stdlib-p1-bits-20261104\\baseline-runtime\\hua.exe",
+    "references": {
+      "Python": "Python 3.14.3",
+      "Lua": "Lua 5.4.7  Copyright (C) 1994-2024 Lua.org, PUC-Rio"
+    },
+    "results": {
+      "sets/05_symmetric_manual": {
+        "medians": {
+          "Hua": 0.2374901999719441,
+          "Python": 0.037225599866360426,
+          "Lua": 0.01640440011397004
+        },
+        "walls": {
+          "Hua": [
+            0.2374901999719441,
+            0.23873610002920032,
+            0.2245836998336017
+          ],
+          "Python": [
+            0.038888899609446526,
+            0.03460340015590191,
+            0.037225599866360426
+          ],
+          "Lua": [
+            0.022824399638921022,
+            0.01621050015091896,
+            0.01640440011397004
+          ]
+        }
+      }
+    }
+  },
+  "bits_manual": {
+    "suite": "stdlib",
+    "hua": "E:\\project\\hua\\tests\\artifacts\\stdlib-p1-bits-20261104\\baseline-runtime\\hua.exe",
+    "references": {
+      "Python": "Python 3.14.3",
+      "Lua": "Lua 5.4.7  Copyright (C) 1994-2024 Lua.org, PUC-Rio"
+    },
+    "results": {
+      "math/06_bit_tools_manual": {
+        "medians": {
+          "Hua": 1.055419099982828,
+          "Python": 0.1606415999121964,
+          "Lua": 0.03830219991505146
+        },
+        "walls": {
+          "Hua": [
+            1.0505933999083936,
+            1.055419099982828,
+            1.0656773000955582
+          ],
+          "Python": [
+            0.17072799988090992,
+            0.1606415999121964,
+            0.15773809980601072
+          ],
+          "Lua": [
+            0.044742999598383904,
+            0.03748199995607138,
+            0.03830219991505146
+          ]
+        }
+      }
+    }
+  },
+  "production_implementation": false
+}

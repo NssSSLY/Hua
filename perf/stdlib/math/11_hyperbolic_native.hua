@@ -1,0 +1,10 @@
+# since22原生双曲函数；输入与10相同。
+import std.math as math
+fn main() {
+    var total=0.0
+    for i in 0..10000 {
+        let x=float(i%100+1)*0.0073
+        total+=unwrap(math.sinh(x))+unwrap(math.cosh(x))+unwrap(math.tanh(x))+unwrap(math.asinh(x))+unwrap(math.acosh(x+1.0))+unwrap(math.atanh(x/2.0))
+    }
+    print(int(total))
+}

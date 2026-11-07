@@ -14,6 +14,18 @@ Value bytes_ok(std::string data){return standard_result(Value(BytesValue{managed
 Value syntax(const std::string& what){return standard_result(Value("ENC_SYNTAX: "+what),false,"Bytes");}
 void text_limit(std::size_t size,const SourceSpan& s){if(size>max_text)runtime_error(s,"encoded text exceeds 16 MiB","E4099");}
 
+// One strict UTF-8 scalar at `at`, same rules as text_utf8_error; {-1,0} when invalid or out of range.
+std::pair<std::int64_t,std::int64_t> utf8_scalar(const std::string& in,std::int64_t offset){
+    if(offset<0||static_cast<std::uint64_t>(offset)>=in.size())return {-1,0};
+    const auto at=static_cast<std::size_t>(offset);const auto lead=static_cast<unsigned char>(in[at]);
+    if(lead<128)return {lead,1};
+    std::size_t extra;std::int64_t scalar,least;
+    if(lead>=194&&lead<=223){extra=1;scalar=lead&31;least=128;}else if(lead>=224&&lead<=239){extra=2;scalar=lead&15;least=2048;}else if(lead>=240&&lead<=244){extra=3;scalar=lead&7;least=65536;}else return {-1,0};
+    if(extra>in.size()-at-1)return {-1,0};
+    for(std::size_t i=1;i<=extra;++i){const auto c=static_cast<unsigned char>(in[at+i]);if((c&192)!=128)return {-1,0};scalar=scalar<<6|(c&63);}
+    if(scalar<least||scalar>0x10ffff||(scalar>=0xd800&&scalar<=0xdfff))return {-1,0};
+    return {scalar,static_cast<std::int64_t>(extra+1)};
+}
 std::string base64_encode(const std::string& in,const char* alphabet,bool pad){
     std::string out;out.reserve((in.size()+2)/3*4);std::size_t i=0;
     for(;i+3<=in.size();i+=3){
@@ -49,8 +61,27 @@ Value base64_decode(const std::string& in,const std::array<unsigned char,256>& v
 }
 }
 
+bool append_utf8(std::string& out,std::int64_t scalar){
+    if(scalar<0||scalar>0x10ffff||(scalar>=0xd800&&scalar<=0xdfff))return false;
+    const auto v=static_cast<std::uint32_t>(scalar);
+    if(v<0x80)out+=static_cast<char>(v);
+    else if(v<0x800){out+=static_cast<char>(0xC0|v>>6);out+=static_cast<char>(0x80|(v&63));}
+    else if(v<0x10000){out+=static_cast<char>(0xE0|v>>12);out+=static_cast<char>(0x80|(v>>6&63));out+=static_cast<char>(0x80|(v&63));}
+    else{out+=static_cast<char>(0xF0|v>>18);out+=static_cast<char>(0x80|(v>>12&63));out+=static_cast<char>(0x80|(v>>6&63));out+=static_cast<char>(0x80|(v&63));}
+    return true;
+}
 Value invoke_encoding_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s){
     const auto& name=f.name;
+    if(name=="utf8_valid")return Value(text_utf8_error(*std::get<BytesValue>(args[0].data).data).empty());
+    if(name=="utf8_encode"){
+        std::string out;
+        if(!append_utf8(out,as_int(args[0],s)))return standard_result(Value(std::string("ENC_RANGE: invalid Unicode scalar")),false,"Bytes");
+        return bytes_ok(std::move(out));
+    }
+    if(name=="utf8_decode"){
+        const auto [scalar,size]=utf8_scalar(*std::get<BytesValue>(args[0].data).data,as_int(args[1],s));
+        return make_multi({Value(scalar),Value(size)});
+    }
     if(name=="hex_encode"||name=="base64_encode"||name=="base64url_encode"){
         const auto& in=*std::get<BytesValue>(args[0].data).data;
         if(name=="hex_encode"){

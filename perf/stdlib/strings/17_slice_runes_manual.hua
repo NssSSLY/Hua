@@ -1,0 +1,25 @@
+# 码点切片：手写逐字节数标量定位＋strings.slice（原生slice_runes对照见20）
+import std.strings as strings
+import std.bytes as bytes
+fn offset(data []int, target int) int {
+    var at = 0
+    var seen = 0
+    while seen < target {
+        at += 1
+        while at < len(data) && (data[at] & 192) == 128 { at += 1 }
+        seen += 1
+    }
+    return at
+}
+fn main() {
+    let text = strings.repeat("aé中😀", 100)
+    let data = unwrap(bytes.to_ints(bytes.from_text(text)))
+    var total = 0
+    for round in 0..4 {
+        for k in 0..200 {
+            let start = (k * 7) % 340
+            total += len(unwrap(strings.slice(text, offset(data, start), offset(data, start + 50))))
+        }
+    }
+    print(total)
+}

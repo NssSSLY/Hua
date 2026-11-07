@@ -99,8 +99,9 @@ Value sets_standard(const StandardFunction& f,const std::vector<Value>& args,con
         return Value(subset?i==x.end():true);
     }
     Entries out;
-    const bool keep_a=name=="union"||name=="difference",keep_b=name=="union",keep_both=name!="difference";
-    if(name!="union"&&name!="intersection"&&name!="difference")runtime_error(s,"unknown set operation","E4003");
+    const bool symmetric=name=="symmetric_difference";
+    const bool keep_a=name=="union"||name=="difference"||symmetric,keep_b=name=="union"||symmetric,keep_both=name!="difference"&&!symmetric;
+    if(name!="union"&&name!="intersection"&&name!="difference"&&!symmetric)runtime_error(s,"unknown set operation","E4003");
     while(i!=x.end()||j!=y.end()){
         work.tick();
         if(j==y.end()||(i!=x.end()&&i->first<j->first)){if(keep_a)add_key(out,i->first,s);++i;}

@@ -1,0 +1,12 @@
+# 居中补齐：原生strings.center（对照15手写）
+import std.strings as strings
+fn main() {
+    let words = ["a", "héllo", "中文字", "😀😀", "plain ascii text", "aé中😀"]
+    var total = 0
+    for round in 0..20000 {
+        for w in words {
+            total += len(strings.center(w, 21, "*"))
+        }
+    }
+    print(total)
+}

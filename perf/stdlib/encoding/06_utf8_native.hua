@@ -1,0 +1,19 @@
+# UTF-8校验与逐字符解码：原生utf8_valid/utf8_decode（对照05手写）
+import std.strings as strings
+import std.bytes as bytes
+import std.encoding as encoding
+fn main() {
+    let data = bytes.from_text(strings.repeat("aé中😀", 2000))
+    let size = bytes.len(data)
+    var total = 0
+    for round in 0..5 {
+        if encoding.utf8_valid(data) { total += 1 }
+        var i = 0
+        while i < size {
+            let cp, n = encoding.utf8_decode(data, i)
+            total += cp
+            i += n
+        }
+    }
+    print(total)
+}

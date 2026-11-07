@@ -55,6 +55,17 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
     auto text = [&](std::size_t i) -> const std::string& { return hua::string_value(args[i].data); };
     const auto& n = f.name;
 
+    if (n == "from_codepoints") {
+        auto items = std::get_if<SliceValue>(&args[0].data);
+        if (!items) runtime_error(s, "from_codepoints requires an int slice or array", "E4003");
+        std::string out;
+        out.reserve(items->length);
+        for (std::size_t i = 0; i < items->length; ++i) {
+            if (!append_utf8(out, integer(sequence_read(*items, i), s))) return err("TEXT_CODEPOINT: invalid Unicode scalar at index " + std::to_string(i));
+        }
+        limit_text(out.size(), s, "from_codepoints");
+        return ok(Value(std::move(out)));
+    }
     if (n == "format_int") {
         auto value = integer(args[0], s), base = integer(args[1], s);
         if (base < 2 || base > 36) runtime_error(s, "format_int base must be 2..36", "E4003");
@@ -164,7 +175,38 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
         }
         return string_list(std::move(out), s);
     }
-    if (n == "pad_left" || n == "pad_right") {
+    if (n == "codepoints" || n == "chars") {
+        const auto count = scalars(a);
+        if (count > max_items) runtime_error(s, n + " item limit exceeded", "E4099");
+        auto data = managed<std::vector<Value>>();
+        data->reserve(count);
+        for (std::size_t at = 0; at < a.size();) {
+            const auto end = scalar_end(a, at);
+            if (n == "chars") data->emplace_back(a.substr(at, end - at));
+            else {
+                // Valid by language invariant: the lead byte fixes the length.
+                const auto lead = static_cast<unsigned char>(a[at]);
+                I scalar = end - at == 1 ? lead : end - at == 2 ? lead & 0x1F : end - at == 3 ? lead & 0x0F : lead & 0x07;
+                for (auto i = at + 1; i < end; ++i) scalar = scalar << 6 | (static_cast<unsigned char>(a[i]) & 0x3F);
+                data->emplace_back(scalar);
+            }
+            at = end;
+        }
+        return Value(SliceValue{data, 0, data->size(), false, n == "chars" ? "string" : "int"});
+    }
+    if (n == "slice_runes") {
+        const auto start = integer(args[1], s), end = integer(args[2], s);
+        if (start < 0 || end < start) return err("string rune slice bounds are invalid");
+        std::size_t at = 0, first = 0;
+        for (I seen = 0; seen < end; ++seen) {
+            if (seen == start) first = at;
+            if (at >= a.size()) return err("string rune slice bounds are invalid");
+            at = scalar_end(a, at);
+        }
+        if (start == end) first = at;
+        return ok(Value(a.substr(first, at - first)));
+    }
+    if (n == "pad_left" || n == "pad_right" || n == "center") {
         auto width = integer(args[1], s);
         const auto& fill = text(2);
         if (width < 0) runtime_error(s, "pad width must not be negative", "E4003");
@@ -175,9 +217,10 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
         if (missing > (max_text - a.size()) / fill.size()) runtime_error(s, "pad text exceeds 16 MiB", "E4099");
         std::string out;
         out.reserve(a.size() + missing * fill.size());
-        if (n == "pad_right") out += a;
-        for (std::size_t i = 0; i < missing; ++i) out += fill;
-        if (n == "pad_left") out += a;
+        const auto before = n == "pad_left" ? missing : n == "center" ? missing / 2 : 0;
+        for (std::size_t i = 0; i < before; ++i) out += fill;
+        out += a;
+        for (std::size_t i = before; i < missing; ++i) out += fill;
         return Value(std::move(out));
     }
     if (n == "replace_n") {

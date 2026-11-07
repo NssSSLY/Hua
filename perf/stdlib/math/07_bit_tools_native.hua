@@ -1,0 +1,11 @@
+# P1原生位工具：与06使用相同输入和输出。
+import std.math as math
+fn main() {
+    var total=0
+    for i in 0..20000 {
+        let x=i*7919
+        total += math.popcount(x)+math.leading_zeros(x)+math.trailing_zeros(x)
+        total += (math.rotate_left(x,13) & 65535)+(math.rotate_right(x,13) & 65535)
+    }
+    print(total)
+}
