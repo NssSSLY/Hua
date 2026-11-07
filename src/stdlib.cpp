@@ -386,6 +386,10 @@ const std::vector<StandardFunction>& standard_functions() {
         {"json","encode_pretty",{"","int"},"Result<string,string>",false,false,27},
         {"json","decode_lines",{"string"},"Result<[]Json,string>",false,false,27},
         {"json","encode_lines",{"[]Json"},"Result<string,string>",false,false,27},
+        {"os","environ",{},"",false,false,28},
+        {"os","parse_args",{"[]string","[]string","[]string"},"",false,false,28},
+        {"process","run",{"[]string","Bytes","int"},"multi<int,Bytes,Bytes,string>",false,false,28},
+        {"process","run_with",{"[]string","Bytes","int","string","map<string,string>"},"multi<int,Bytes,Bytes,string>",false,false,28},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
@@ -442,6 +446,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
         runtime_error(s,"algorithm target requires identical element type","E4003");
     std::vector<Value> args;args.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],parameters[i],s));}
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<RngValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<DequeValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
+    if(f.since==28&&f.module=="process")return invoke_process_standard(f,args,s,context);
     if(f.module=="file")return invoke_file_standard(f,args,s,context);
     if(f.module=="error")return invoke_error_standard(f,args,s);
     if(f.module=="path"||(f.module=="fs"&&(f.since>=17||f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);

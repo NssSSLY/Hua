@@ -200,3 +200,4 @@ UR-1/2/3已接入并通过所选回归；最终3afa32e1/C0 32d46a34/14模块2847
 - 2026-11-07 HUA-D038 P1模板与千分位（since25）：[运行记录](runs/2026-11-07-p1-template.md)。
 - 2026-11-07 HUA-D038 P1 Unicode大小写（since26）：[运行记录](runs/2026-11-07-p1-unicode-case.md)。
 - 2026-11-07 HUA-D038 P1 JSON构造（since27，HUA-D005）：[运行记录](runs/2026-11-07-p1-json.md)。
+- 2026-11-07 HUA-D038 P1 os参数与子进程（since28，HUA-D022）：[运行记录](runs/2026-11-07-p1-os-process.md)。

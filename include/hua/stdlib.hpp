@@ -42,6 +42,7 @@ Value invoke_heap_standard(const StandardFunction& function,const std::vector<Va
 Value invoke_random_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_crypto_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 Value invoke_unicode_case(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
+Value invoke_process_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 Value invoke_encoding_standard(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span);
 Value invoke_list_extra(const StandardFunction& function,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* context);
 const std::vector<StandardFunction>& standard_functions();

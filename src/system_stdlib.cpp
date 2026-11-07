@@ -1,7 +1,9 @@
 #include "hua/stdlib.hpp"
 #include "hua/tasks.hpp"
 #include <chrono>
+#include <algorithm>
 #include <cstdlib>
+#include <map>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -11,9 +13,98 @@
 #endif
 #include <thread>
 
+#ifndef _WIN32
+extern char** environ;
+#endif
+
 namespace hua {
 namespace {
 constexpr std::size_t max_text = 16 * 1024 * 1024, max_name = 32767;
+Value string_map(const std::string& item_type) {
+    auto data = managed<MapData>();
+    data->key_type = "string";
+    data->item_type = item_type;
+    return Value(MapValue{std::move(data), true});
+}
+Value read_environment() {
+    const std::string type = "map<string,string>";
+    auto failed = [&](std::string why) { return standard_result(Value("ENV_ERROR: " + why), false, type); };
+    auto out = string_map("string");
+    auto& entries = std::get<MapValue>(out.data).data->entries;
+    auto add = [&](std::string entry) {
+        const auto at = entry.find('=', 1);
+        if (at != std::string::npos) entries.insert_or_assign(MapKey(entry.substr(0, at)), Value(entry.substr(at + 1)));
+    };
+#ifdef _WIN32
+    auto* block = GetEnvironmentStringsW();
+    if (!block) return failed("environment read failed");
+    for (auto* p = block; *p; p += wcslen(p) + 1) {
+        const auto length = static_cast<int>(wcslen(p));
+        if (*p == L'=') continue;  // per-drive working directory entries, not variables
+        const auto size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, p, length, nullptr, 0, nullptr, nullptr);
+        if (!size) { FreeEnvironmentStringsW(block); return failed("variable is not valid Unicode"); }
+        std::string entry(static_cast<std::size_t>(size), '\0');
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, p, length, entry.data(), size, nullptr, nullptr);
+        add(std::move(entry));
+    }
+    FreeEnvironmentStringsW(block);
+#else
+    for (auto** p = environ; p && *p; ++p) {
+        std::string entry(*p);
+        if (!text_utf8_error(entry).empty()) return failed("variable is not valid UTF-8");
+        add(std::move(entry));
+    }
+#endif
+    return standard_result(std::move(out), true, type);
+}
+std::vector<std::string> string_list_argument(const Value& value, const SourceSpan& span) {
+    auto items = std::get_if<SliceValue>(&value.data);
+    if (!items) runtime_error(span, "expected []string", "E4003");
+    std::vector<std::string> out;
+    out.reserve(items->length);
+    for (std::size_t i = 0; i < items->length; ++i) {
+        auto item = sequence_read(*items, i);
+        if (auto text = string_data(&item.data)) out.push_back(*text);
+        else runtime_error(span, "expected []string", "E4003");
+    }
+    return out;
+}
+Value parse_arguments(const std::vector<Value>& args, const SourceSpan& span) {
+    const std::string type = "map<string,[]string>";
+    auto failed = [&](std::string why) { return standard_result(Value(std::move(why)), false, type); };
+    const auto argv = string_list_argument(args[0], span);
+    const auto flag_names = string_list_argument(args[1], span), option_names = string_list_argument(args[2], span);
+    auto listed = [](const std::vector<std::string>& names, const std::string& name) { return std::find(names.begin(), names.end(), name) != names.end(); };
+    for (const auto& name : flag_names) if (listed(option_names, name)) runtime_error(span, "argument name is both a flag and an option: " + name, "E4003");
+    std::map<std::string, std::vector<std::string>> found;
+    found[""];
+    for (std::size_t i = 0; i < argv.size(); ++i) {
+        const auto& token = argv[i];
+        if (token == "--") { found[""].insert(found[""].end(), argv.begin() + static_cast<std::ptrdiff_t>(i) + 1, argv.end()); break; }
+        if (token.size() < 2 || token[0] != '-') { found[""].push_back(token); continue; }
+        const bool long_form = token[1] == '-';
+        const auto equals = long_form ? token.find('=') : std::string::npos;
+        const auto name = token.substr(long_form ? 2 : 1, equals == std::string::npos ? std::string::npos : equals - (long_form ? 2 : 1));
+        if (listed(flag_names, name)) {
+            if (equals != std::string::npos) return failed("ARGS_VALUE: flag takes no value: " + token);
+            found[name] = {"true"};
+        } else if (listed(option_names, name)) {
+            if (equals != std::string::npos) found[name].push_back(token.substr(equals + 1));
+            else if (i + 1 < argv.size()) found[name].push_back(argv[++i]);
+            else return failed("ARGS_VALUE: missing value for " + token);
+        } else return failed("ARGS_UNKNOWN: unknown argument " + token);
+    }
+    auto out = string_map("[]string");
+    auto& entries = std::get<MapValue>(out.data).data->entries;
+    for (auto& [name, values] : found) {
+        auto storage = managed<std::vector<Value>>();
+        storage->reserve(values.size());
+        for (auto& v : values) storage->emplace_back(std::move(v));
+        const auto n = storage->size();
+        entries.insert_or_assign(MapKey(name), Value(SliceValue{std::move(storage), 0, n, false, "string"}));
+    }
+    return standard_result(std::move(out), true, type);
+}
 Value environment_error(std::string message) {
     return standard_result(Value("ENV_ERROR: " + message), false, "string?");
 }
@@ -76,6 +167,8 @@ Value environment(const std::string& name) {
 Value invoke_os_standard(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span, RuntimeContext* context) {
     if (args.size() != f.parameters.size()) runtime_error(span, "standard function argument count mismatch", "E4003");
     const auto& name = f.name;
+    if (name == "environ") return read_environment();
+    if (name == "parse_args") return parse_arguments(args, span);
     if (name == "exit") {
         auto code = std::get_if<std::int64_t>(&args[0].data);
         if (!code) runtime_error(span, "expected int", "E4003");

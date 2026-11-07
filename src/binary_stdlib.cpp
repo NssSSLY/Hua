@@ -65,6 +65,7 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
         if(f.name=="sample"&&!element.empty())out.result="Result<[]"+element+",string>";
         return out;
     }
+    if(f.since==28&&f.module=="os"){out.result=f.name=="environ"?"Result<map<string,string>,string>":"Result<map<string,[]string>,string>";return out;}
     if(f.module!="list"||types.empty())return out;
     if(f.name=="from_slice"){auto end=types[0].find(']');auto element=types[0].starts_with('[')&&end!=std::string::npos?types[0].substr(end+1):"";out.result=element.empty()?"":"List<"+element+">";return out;}
     auto element=item_type(types[0]);out.parameters[0]=element.empty()?"":"List<"+element+">";

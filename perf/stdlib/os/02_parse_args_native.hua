@@ -1,0 +1,14 @@
+# 参数解析：原生os.parse_args（对照01手写）
+import std.os as os
+fn main() {
+    let argv = ["input.txt", "--verbose", "--name=hua", "-n", "second", "--name", "third", "output.txt", "--", "--literal"]
+    let flags = ["verbose"]
+    let options = ["name", "n"]
+    var total = 0
+    for round in 0..4000 {
+        let m = unwrap(os.parse_args(argv, flags, options))
+        total += len(unwrap(m[""])) + len(unwrap(m["name"])) + len(unwrap(m["n"]))
+        if has(m, "verbose") { total += 1 }
+    }
+    print(total)
+}

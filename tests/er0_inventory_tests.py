@@ -24,7 +24,8 @@ s24_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,24\},\s*
 s25_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,25\},\s*$',registry,re.M)}
 s26_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,26\},\s*$',registry,re.M)}
 s27_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,27\},\s*$',registry,re.M)}
-later=text_later|collection_later|callback_later|math_later|random_later|container_later|time_later|os_later|fs_later|report_later|alg_p0_later|alg_p1_later|bits_later|arithmetic_later|text_utf8_later|s24_later|s25_later|s26_later|s27_later
+s28_later={(m,n) for m,n in re.findall(r'^\s*\{"([^"]+)","([^"]+)",\{.*,28\},\s*$',registry,re.M)}
+later=text_later|collection_later|callback_later|math_later|random_later|container_later|time_later|os_later|fs_later|report_later|alg_p0_later|alg_p1_later|bits_later|arithmetic_later|text_utf8_later|s24_later|s25_later|s26_later|s27_later|s28_later
 text=(root/"docs/标准库与内建接口.md").read_text(encoding="utf-8")
 listed=re.findall(r'^\| ER0-S\d{3} \| std\.([^ ]+) \|',text,re.M)
 expected=[m+"."+n for m,n in functions if m not in {"error","file"} and (m,n) not in later]
@@ -66,7 +67,7 @@ alg_p0_rows=re.findall(r"^\| ER0-AD\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(alg_p0_rows)==len(set(alg_p0_rows))==len(alg_p0_later)==3 and set(alg_p0_rows)=={m+"."+n for m,n in alg_p0_later},(len(alg_p0_rows),len(alg_p0_later))
 alg_p1_rows=re.findall(r"^\| ER0-AE\d\d \| std\.([^ ]+) \|",text,re.M)
 assert len(alg_p1_rows)==len(set(alg_p1_rows))==len(alg_p1_later)==4 and set(alg_p1_rows)=={m+"."+n for m,n in alg_p1_later},(len(alg_p1_rows),len(alg_p1_later))
-for prefix,group,size in (("AF",bits_later,6),("AG",arithmetic_later,24),("AH",text_utf8_later,8),("AI",s24_later,8),("AJ",s25_later,3),("AK",s26_later,4),("AL",s27_later,11)):
+for prefix,group,size in (("AF",bits_later,6),("AG",arithmetic_later,24),("AH",text_utf8_later,8),("AI",s24_later,8),("AJ",s25_later,3),("AK",s26_later,4),("AL",s27_later,11),("AM",s28_later,4)):
     rows=re.findall(r"^\| ER0-"+prefix+r"\d\d \| ([^ ]+) \|",text,re.M)
     assert len(rows)==len(set(rows))==len(group)==size and set(rows)=={m+"."+n for m,n in group},(prefix,len(rows),len(group))
 assert len(callback_rows)==len(set(callback_rows))==len(callback_later)==15 and set(callback_rows)=={m+"."+n for m,n in callback_later},(len(callback_rows),len(callback_later))
