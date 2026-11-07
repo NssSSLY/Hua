@@ -56,7 +56,7 @@ Value void_ok(){return Value(ResultValue{true,{},"void","std.error.Value",true,f
 Value failed(FileHostFailure f,std::string_view op,std::string type){return result(Value(error(f,op)),false,std::move(type));}
 Value io_failed(FileHostFailure f,std::string_view op,std::optional<I> count={},std::optional<BytesValue> partial={}){
     return result(Value(IOFailureValue{managed<const IOFailureData>(IOFailureData{error(f,op),count,std::move(partial)})}),
-                  false,op=="read"?"Bytes?":"int","std.file.IOFailure");
+                  false,op=="read"||op=="read_exact"?"Bytes?":op=="read_all"?"Bytes":op=="read_line"?"string?":op=="write_all"?"void":"int","std.file.IOFailure");
 }
 struct QuotaBytes {R::Reservation reservation;std::string data;
     QuotaBytes(R::Reservation p,std::size_t n):reservation(std::move(p)),data(n,'\0'){}
@@ -172,6 +172,14 @@ Opened native_open(const std::filesystem::path& path,Mode m){
 }
 struct FileNativeState {
     std::mutex mutex;std::unique_ptr<FileBackend> backend;Mode mode;FileHostFailure first_close_error;
+    // Read-ahead of read_line: bytes already taken from the host but not yet delivered.
+    // Invisible to programs: read* consume it first, tell subtracts it, seek and write drop it.
+    std::string pending;std::size_t pending_at{};std::optional<R::Reservation> pending_quota;std::size_t pending_charged{};
+    std::size_t buffered()const{return pending.size()-pending_at;}
+    void drop_pending(){
+        if(pending.capacity()>1024*1024)std::string().swap(pending);else pending.clear();
+        pending_at=0;pending_quota.reset();pending_charged=0;
+    }
     explicit FileNativeState(Mode m):mode(m){}
 };
 FileScope::FileScope(R::TaskId id,std::shared_ptr<R::QuotaLedger> r,std::optional<R::Cost> custom)
@@ -223,6 +231,119 @@ struct OperationGuard {
     R::ResourceDomain& domain;R::Event event;bool submitted{};
     ~OperationGuard(){if(submitted)domain.settle(event,{R::ResultKind::failed,{},std::nullopt,{}});else domain.cancel(event);}
 };
+constexpr std::size_t read_ahead=64*1024,max_line=16*1024*1024,max_bulk=128*1024*1024;
+// One admitted host call of a bulk operation: the same reserve/submit/settle as read and write.
+template<class Call> FileHostIO guarded_io(FileData& file,RuntimeContext* c,std::size_t n,std::shared_ptr<void> keepalive,Call call){
+    auto admitted=file.scope->protocol.reserve(file.handle,c->task_id,{},R::Access::read,0,n,std::move(keepalive));
+    if(!admitted)return {I{0},resource_failure(admitted.error)};
+    OperationGuard operation{file.scope->protocol,*admitted.value};
+    if(auto e=file.scope->protocol.submit(operation.event))return {I{0},resource_failure(e)};
+    operation.submitted=true;FileHostIO observed;
+    try{observed=call();}catch(...){observed={{},failure("io","host operation threw; progress unknown")};}
+    if((observed.transferred&&(*observed.transferred<0||*observed.transferred>static_cast<I>(n)))||(!observed.error&&!observed.transferred))
+        observed={{},failure("io","invalid host progress; progress unknown")};
+    file.scope->protocol.settle(operation.event,{observed.error?R::ResultKind::failed:R::ResultKind::success,{},observed.transferred?std::optional<std::uint64_t>(*observed.transferred):std::nullopt,{}});
+    operation.submitted=false;
+    return observed;
+}
+// Reads at most n bytes into `out`.
+FileHostIO read_chunk(FileData& file,FileNativeState& native,RuntimeContext* c,std::size_t n,std::string& out){
+    auto permit=file.scope->ledger->reserve(R::cost(R::Metric::storage_bytes,n));
+    if(!permit)return {I{0},resource_failure(permit.error)};
+    auto storage=std::make_shared<QuotaBytes>(std::move(*permit.value),n);
+    auto got=guarded_io(file,c,n,storage,[&]{return native.backend->read(std::span<char>(storage->data.data(),n));});
+    if(got.transferred&&*got.transferred>0)out.append(storage->data.data(),static_cast<std::size_t>(*got.transferred));
+    return got;
+}
+// read_line's buffer is charged to the File quota, so one long line cannot go unaccounted.
+FileHostFailure charge_pending(FileData& file,FileNativeState& native,std::size_t size){
+    if(size<=native.pending_charged)return {};
+    const auto doubled=std::max(size,native.pending_charged*2);
+    native.pending_quota.reset();native.pending_charged=0;
+    auto permit=file.scope->ledger->reserve(R::cost(R::Metric::storage_bytes,doubled));
+    auto want=doubled;
+    if(!permit){want=size;permit=file.scope->ledger->reserve(R::cost(R::Metric::storage_bytes,want));}
+    if(!permit)return resource_failure(permit.error);
+    native.pending_quota=std::move(*permit.value);native.pending_charged=want;
+    return {};
+}
+// Puts the host cursor back at the logical position before a write.
+FileHostFailure settle_read_ahead(FileNativeState& native){
+    if(native.buffered()&&!native.mode.append){
+        auto position=native.backend->position();if(position.error)return position.error;
+        if(auto e=native.backend->seek(position.value-static_cast<I>(native.buffered())))return e;
+    }
+    native.drop_pending();
+    return {};
+}
+Value ok_bytes(std::string text,const char* type){return result(Value(BytesValue{managed<const std::string>(std::move(text))}),true,type,"std.file.IOFailure");}
+BytesValue partial_bytes(std::string text){return BytesValue{managed<const std::string>(std::move(text))};}
+Value bulk_operation(const std::string& name,FileData& file,FileNativeState& native,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* c){
+    if(name=="write_all"){
+        if(!native.mode.write)return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
+        if(auto e=settle_read_ahead(native))return io_failed(e,name,I{0});
+        auto data=std::get<BytesValue>(args[1].data).data;I total=0;
+        for(std::size_t at=0;at<data->size();){
+            if(at)task_checkpoint(c,span);
+            const auto n=std::min(data->size()-at,max_io);
+            auto wrote=guarded_io(file,c,n,std::const_pointer_cast<std::string>(data),[&]{return native.backend->write(std::span<const char>(data->data()+at,n));});
+            if(wrote.error)return io_failed(wrote.error,name,wrote.transferred?std::optional<I>(total+*wrote.transferred):std::nullopt);
+            if(*wrote.transferred==0)return io_failed(failure("io","host write made no progress"),name,total);
+            total+=*wrote.transferred;at+=static_cast<std::size_t>(*wrote.transferred);
+        }
+        return Value(ResultValue{true,{},"void","std.file.IOFailure",true,false});
+    }
+    if(!native.mode.read)return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
+    if(name=="read_line"){
+        std::size_t scan=native.pending_at;
+        for(;;){
+            const auto newline=native.pending.find('\n',scan);
+            const bool at_eof=scan==std::string::npos;
+            if(newline!=std::string::npos||at_eof){
+                const auto end=newline!=std::string::npos?newline:native.pending.size();
+                auto line=native.pending.substr(native.pending_at,end-native.pending_at);
+                native.pending_at=newline!=std::string::npos?newline+1:native.pending.size();
+                if(native.pending_at==native.pending.size())native.drop_pending();
+                if(newline!=std::string::npos&&!line.empty()&&line.back()=='\r')line.pop_back();
+                if(!text_utf8_error(line).empty()){const auto size=static_cast<I>(line.size());return io_failed(failure("invalid_utf8","line is not valid UTF-8"),name,size,partial_bytes(std::move(line)));}
+                return result(Value(std::move(line)),true,"string?","std.file.IOFailure");
+            }
+            if(native.buffered()>=max_line)return io_failed(failure("limit","line exceeds 16 MiB"),name,I{0});
+            if(native.pending_at){native.pending.erase(0,native.pending_at);native.pending_at=0;}
+            scan=native.pending.size();
+            if(auto e=charge_pending(file,native,native.pending.size()+read_ahead))return io_failed(e,name,I{0});
+            task_checkpoint(c,span);
+            auto got=read_chunk(file,native,c,read_ahead,native.pending);
+            if(got.error)return io_failed(got.error,name,I{0});
+            if(*got.transferred==0){
+                if(native.pending.empty())return result(Value{},true,"string?","std.file.IOFailure");
+                scan=std::string::npos;
+            }
+        }
+    }
+    // read_all and read_exact: buffered bytes first, then the host in chunks up to max_io.
+    const bool exact=name=="read_exact";
+    const auto wanted=exact?as_int(args[1],span):static_cast<I>(max_bulk);
+    if(wanted<0||wanted>static_cast<I>(max_bulk))return io_failed(failure("limit","one File operation requires 0..134217728 bytes"),name,I{0});
+    const auto goal=static_cast<std::size_t>(wanted);std::string out;
+    const auto take=std::min(goal,native.buffered());
+    out.append(native.pending,native.pending_at,take);native.pending_at+=take;
+    if(!native.buffered())native.drop_pending();
+    while(!exact||out.size()<goal){
+        if(!out.empty())task_checkpoint(c,span);
+        if(!exact&&out.size()>goal){const auto size=static_cast<I>(out.size());return io_failed(failure("limit","file exceeds 128 MiB"),name,size,partial_bytes(std::move(out)));}
+        // read_all probes one byte past the limit, so a file of exactly the limit still succeeds.
+        const auto n=out.size()<goal?std::min(goal-out.size(),max_io):std::size_t{1};
+        auto got=read_chunk(file,native,c,n,out);
+        if(got.error){const auto size=static_cast<I>(out.size());return io_failed(got.error,name,size,out.empty()?std::optional<BytesValue>{}:std::optional<BytesValue>(partial_bytes(std::move(out))));}
+        if(*got.transferred==0){
+            if(!exact)break;
+            if(out.empty())return result(Value{},true,"Bytes?","std.file.IOFailure");
+            const auto size=static_cast<I>(out.size());return io_failed(failure("unexpected_eof","file ended before the requested count"),name,size,partial_bytes(std::move(out)));
+        }
+    }
+    return ok_bytes(std::move(out),exact?"Bytes?":"Bytes");
+}
 }
 Value FileScope::adopt(std::unique_ptr<FileBackend> backend,std::string_view text){
     auto m=mode(text);if(!m||!backend)return failed(failure("bad_mode","invalid native File adoption"),"open","std.file.File");
@@ -258,7 +379,8 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         }catch(...){c->files->protocol.close(*h.value,c->task_id);c->files->pump();throw;}
     }
     auto val=std::get_if<FileValue>(&args[0].data);auto file=val?val->data:nullptr;
-    bool io=f.name=="read"||f.name=="write";
+    const bool bulk=f.since==29;
+    bool io=f.name=="read"||f.name=="write"||bulk;
     auto bad=[&](FileHostFailure e){return io?io_failed(e,f.name,I{0}):failed(e,f.name,type_arguments(f.result,"Result")[0]);};
     if(auto e=check(file,c,f.name!="state"&&f.name!="close_error"&&f.name!="close"))return bad(e);
     auto& native=*file->native;
@@ -279,11 +401,19 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         return result(Value(std::string(s==R::Lifecycle::open?"open":s==R::Lifecycle::closing?"closing":s==R::Lifecycle::closed?"closed":"poisoned")),true,"string");
     }
     if(f.name=="close_error")return result(native.first_close_error?Value(error(native.first_close_error,"close")):Value{},true,"std.error.Value?");
+    if(bulk)return bulk_operation(f.name,*file,native,args,span,c);
     if(io){
         I n=f.name=="read"?as_int(args[1],span):static_cast<I>(std::get<BytesValue>(args[1].data).data->size());
         if(n<0||n>static_cast<I>(max_io))return bad(failure("limit","one File operation requires 0..1048576 bytes"));
         if(f.name=="read"?!native.mode.read:!native.mode.write)return bad(failure("permission_denied","File mode does not permit this operation"));
         if(!n)return result(f.name=="read"?Value(BytesValue{managed<const std::string>()}):Value(I{0}),true,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
+        if(f.name=="read"&&native.buffered()){
+            const auto take=std::min(native.buffered(),static_cast<std::size_t>(n));
+            auto bytes=native.pending.substr(native.pending_at,take);native.pending_at+=take;
+            if(!native.buffered())native.drop_pending();
+            return ok_bytes(std::move(bytes),"Bytes?");
+        }
+        if(f.name=="write")if(auto e=settle_read_ahead(native))return bad(e);
         std::shared_ptr<QuotaBytes> storage;std::shared_ptr<void> keepalive;
         if(f.name=="read"){
             auto permit=file->scope->ledger->reserve(R::cost(R::Metric::storage_bytes,static_cast<std::uint64_t>(n)));
@@ -335,15 +465,15 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         if(!native.mode.write)return bad(failure("permission_denied","flush requires a writable File mode"));
         if(auto e=native.backend->flush())return bad(e);return void_ok();
     }
-    if(f.name=="tell"){auto pos=native.backend->position();if(pos.error)return bad(pos.error);return result(Value(pos.value),true,"int");}
+    if(f.name=="tell"){auto pos=native.backend->position();if(pos.error)return bad(pos.error);return result(Value(pos.value-static_cast<I>(native.buffered())),true,"int");}
     if(f.name=="seek"){
         auto offset=as_int(args[1],span);auto whence=hua::string_value(args[2].data);FileHostPosition base{};
-        if(whence=="current")base=native.backend->position();else if(whence=="end")base=native.backend->size();
+        if(whence=="current"){base=native.backend->position();base.value-=static_cast<I>(native.buffered());}else if(whence=="end")base=native.backend->size();
         else if(whence!="start")return bad(failure("invalid_argument","whence must be start, current or end"));
         if(base.error)return bad(base.error);
         if(base.value<0||(offset>0&&base.value>std::numeric_limits<I>::max()-offset)||(offset<0&&offset< -base.value))
             return bad(failure("invalid_argument","seek target is negative or overflows int64"));
-        auto target=base.value+offset;if(auto e=native.backend->seek(target))return bad(e);return result(Value(target),true,"int");
+        auto target=base.value+offset;if(auto e=native.backend->seek(target))return bad(e);native.drop_pending();return result(Value(target),true,"int");
     }
     runtime_error(span,"unknown File operation","E6001");
 }

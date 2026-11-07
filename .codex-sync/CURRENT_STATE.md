@@ -2,7 +2,7 @@
 
 ## 当前主线（2026-11-05收尾）：HUA-D038 P1整数/双曲交付
 
-已按用户确认实现24个math接口：add/sub/mul/neg/abs/pow的checked/wrapping/saturating三族，加6个双曲函数。since22/HUAB22，26模块332函数（math53）；三路径128次进程检查/7074行oracle、119原生边界、21项定向CTest通过。边界加法/双曲组合相对手写约1.50/1.54倍。core纯循环首轮0.89x，独立9轮复核1.00x，未复现；其余约0.98–1.04x，原始数据保留。 [本轮记录](knowledge/bootstrap-performance/runs/2026-11-04-p1-math-arithmetic.md)。上一批6接口与性能记录完整保留，当前不据本批比较关闭其旧source字符串布局差异。文本/UTF-8 8接口已按用户定稿W1–W7完成（2026-11-07，since23/HUAB23，26模块340函数；[记录](knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md)），已推送d835e57。用户2026-11-07要求完成剩余六组，提案已写（knowledge/bootstrap-performance/designs/2026-11-07-p1-remaining-six-groups-proposal.md），待用户审。L0-4仍待selfhost since9–23同步。2026-11-07全量CTest 91/102、C2逐字节不变（见记录）。
+已按用户确认实现24个math接口：add/sub/mul/neg/abs/pow的checked/wrapping/saturating三族，加6个双曲函数。since22/HUAB22，26模块332函数（math53）；三路径128次进程检查/7074行oracle、119原生边界、21项定向CTest通过。边界加法/双曲组合相对手写约1.50/1.54倍。core纯循环首轮0.89x，独立9轮复核1.00x，未复现；其余约0.98–1.04x，原始数据保留。 [本轮记录](knowledge/bootstrap-performance/runs/2026-11-04-p1-math-arithmetic.md)。上一批6接口与性能记录完整保留，当前不据本批比较关闭其旧source字符串布局差异。文本/UTF-8 8接口已按用户定稿W1–W7完成（2026-11-07，since23/HUAB23，26模块340函数；[记录](knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md)），已推送d835e57。用户2026-11-07要求的剩余六组（34函数，since24–29）也已完成并逐组推送，27模块374函数；P1只剩通用Reader/Writer；全量CTest 97/108，余11项属HUA-D036/D037已知类（[记录](knowledge/bootstrap-performance/runs/2026-11-07-p1-file-bulk.md)）。L0-4仍待selfhost since9–29同步。2026-11-07全量CTest 91/102、C2逐字节不变（见记录）。
 
 
 ## 最新阶段（2026-10-30）：S2-1试验未放行，默认接入撤回

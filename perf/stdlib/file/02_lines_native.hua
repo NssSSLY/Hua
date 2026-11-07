@@ -1,0 +1,20 @@
+# 按行读取：原生file.read_line（对照01手写）
+import std.file as f
+import std.fs as fs
+import std.strings as strings
+fn main() {
+    let path = unwrap(fs.temp_file(".", "hua-lines"))
+    unwrap(fs.write_text(path, strings.repeat("the quick brown fox jumps over\n", 20000)))
+    var total = 0
+    for round in 0..3 {
+        let h = unwrap(f.open(path, "r"))
+        while true {
+            let line = unwrap(f.read_line(h))
+            if is_none(line) { break }
+            total += len(unwrap(line)) + 1
+        }
+        unwrap(f.close(h))
+    }
+    unwrap(fs.remove(path))
+    print(total)
+}

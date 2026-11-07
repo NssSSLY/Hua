@@ -390,6 +390,10 @@ const std::vector<StandardFunction>& standard_functions() {
         {"os","parse_args",{"[]string","[]string","[]string"},"",false,false,28},
         {"process","run",{"[]string","Bytes","int"},"multi<int,Bytes,Bytes,string>",false,false,28},
         {"process","run_with",{"[]string","Bytes","int","string","map<string,string>"},"multi<int,Bytes,Bytes,string>",false,false,28},
+        {"file","read_line",{"std.file.File"},"Result<string?,std.file.IOFailure>",false,false,29},
+        {"file","read_all",{"std.file.File"},"Result<Bytes,std.file.IOFailure>",false,false,29},
+        {"file","read_exact",{"std.file.File","int"},"Result<Bytes?,std.file.IOFailure>",false,false,29},
+        {"file","write_all",{"std.file.File","Bytes"},"Result<void,std.file.IOFailure>",false,false,29},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}

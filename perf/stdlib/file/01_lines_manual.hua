@@ -1,0 +1,24 @@
+# 按行读取：手写分块read＋拼接＋按换行切（原生read_line对照见02）
+import std.file as f
+import std.fs as fs
+import std.bytes as bytes
+import std.strings as strings
+fn main() {
+    let path = unwrap(fs.temp_file(".", "hua-lines"))
+    unwrap(fs.write_text(path, strings.repeat("the quick brown fox jumps over\n", 20000)))
+    var total = 0
+    for round in 0..3 {
+        let h = unwrap(f.open(path, "r"))
+        var rest = ""
+        while true {
+            let chunk = unwrap(f.read(h, 4096))
+            if is_none(chunk) { break }
+            let parts = strings.split(rest + unwrap(bytes.to_text(unwrap(chunk))), "\n")
+            for i in 0..len(parts) - 1 { total += len(parts[i]) + 1 }
+            rest = parts[len(parts) - 1]
+        }
+        unwrap(f.close(h))
+    }
+    unwrap(fs.remove(path))
+    print(total)
+}

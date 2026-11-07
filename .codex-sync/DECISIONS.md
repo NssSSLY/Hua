@@ -97,3 +97,5 @@ Entry尺寸下降未产生整体收益；两个接入候选撤回默认，保留
 - 用户确认24接口按推荐方案；since22，checked为Result、wrapping补码、saturating钳制。
 
 - center奇数差额放右、codepoints与chars都提供、slice_runes越界Err、非法码点Err不替换、utf8_decode失败(-1,0)、HUAB23（用户2026-11-07定稿）
+
+- 用户2026-11-07定稿六组提案全部按推荐，并要求每组提交推送；通用Reader/Writer仍后置

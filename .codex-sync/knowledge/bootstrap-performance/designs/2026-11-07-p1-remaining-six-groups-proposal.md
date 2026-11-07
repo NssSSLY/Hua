@@ -140,3 +140,7 @@
 ## 不在本批
 
 Unicode规范化/分词/`title`、本地化格式、`std.flag`完整解析、流式子进程、信号、通用Reader/Writer、typed JSON。L0-4的selfhost同步范围随之扩到`since` 9–29，仍待恢复自举时做。
+
+## 实施记录（2026-11-07）
+
+全部完成并逐组提交推送：A c6d08aa、B 9eea2d8、C 71ec8d3、D 272a3a1、E与F 57d22fa（共用since28，一起验收）、G见其提交。各组结果见INDEX中的运行记录。与提案的差异：D组嵌套在构造时就限制64层（防止逐层构造的树释放时压垮宿主栈）；C组hua.exe增大约50 KiB（估计36 KiB）；G组read_line预读计入File额度。提案未写但实施中修复：E/F组`invoke_standard`与`standard_signature`公共路径上的比较造成1–4%退化，已改。

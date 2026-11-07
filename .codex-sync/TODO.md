@@ -94,7 +94,10 @@
 - L0-4仍待同步selfhost since9–22；本轮不扩展自举。
 
 - 文本/UTF-8 8接口已完成并推送（2026-11-07，since23/HUAB23，d835e57）；结果见knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md。
-- 用户2026-11-07要求完成剩余六组（Unicode大小写/equal_fold、端序pack、模板/千分位、JSON构造、os参数/子进程、缓冲I/O）；提案已写（knowledge/bootstrap-performance/designs/2026-11-07-p1-remaining-six-groups-proposal.md，34函数，since24–29），待用户审后逐组实施。
-- L0-4仍待selfhost since9–23同步。
+- 剩余六组已完成并逐组推送（2026-11-07，34函数，since24–29，27模块374函数）；见knowledge/bootstrap-performance/designs/2026-11-07-p1-remaining-six-groups-proposal.md。
+- P1只剩通用Reader/Writer（RS-DEC-01，需单独设计）；流式子进程未做；POSIX子进程未验证。下一项由用户选择：P2、路线第6步或VM提速S2-2。
+- L0-4仍待selfhost since9–29同步。
 
 - 用户决定是否提交since21/22/23三批；下一项由用户选择
+
+- P1只剩通用Reader/Writer；流式子进程未做；POSIX子进程未验证；下一项由用户选择P2、第6步或VM提速S2-2
