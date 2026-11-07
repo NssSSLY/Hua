@@ -1,0 +1,9 @@
+# 千分位：原生format_int_grouped（对照22手写）
+import std.strings as strings
+fn main() {
+    var total = 0
+    for i in 0..30000 {
+        total += len(strings.format_int_grouped(i * 7919, ","))
+    }
+    print(total)
+}

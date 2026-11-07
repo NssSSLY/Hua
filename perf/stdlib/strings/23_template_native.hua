@@ -1,0 +1,12 @@
+# 命名模板：原生strings.template（对照21手写）
+import std.strings as strings
+fn main() {
+    let t = "user={name} id={id} city={city} status={status}"
+    var m = map[string]string{"name": "hua", "city": "上海", "status": "active", "id": ""}
+    var total = 0
+    for i in 0..30000 {
+        m["id"] = str(i)
+        total += len(unwrap(strings.template(t, m)))
+    }
+    print(total)
+}

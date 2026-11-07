@@ -38,6 +38,77 @@ Value string_list(std::vector<std::string> values, const SourceSpan& span) {
 }
 I integer(const Value& value, const SourceSpan& span) { return as_int(value, span); }
 
+// Inserts `separator` every three digits of the integer part of a decimal number.
+std::string grouped(const std::string& number, const std::string& separator, const SourceSpan& span) {
+    if (!separator.empty() && scalar_end(separator, 0) != separator.size()) runtime_error(span, "group separator must be empty or one Unicode scalar", "E4003");
+    const std::size_t first = number[0] == '-';
+    const auto end = std::min(number.find('.'), number.size());
+    std::string out = number.substr(0, first);
+    for (auto i = first; i < end; ++i) {
+        out += number[i];
+        if (i + 1 < end && (end - i - 1) % 3 == 0) out += separator;
+    }
+    out.append(number, end);
+    return out;
+}
+// Appends `value` padded by a placeholder spec "[[fill]align][width]"; false when the spec is malformed.
+bool append_with_spec(std::string& out, const std::string& value, std::string_view spec, const SourceSpan& span) {
+    std::string_view fill = " ";
+    char align = '<';
+    auto is_align = [](char c) { return c == '<' || c == '>' || c == '^'; };
+    if (!spec.empty()) {
+        std::size_t lead = 1;
+        while (lead < spec.size() && continuation(spec[lead])) ++lead;
+        if (lead < spec.size() && is_align(spec[lead])) {
+            fill = spec.substr(0, lead);
+            align = spec[lead];
+            spec.remove_prefix(lead + 1);
+        } else if (is_align(spec[0])) {
+            align = spec[0];
+            spec.remove_prefix(1);
+        }
+    }
+    std::uint64_t width = 0;
+    for (char c : spec) {
+        if (c < '0' || c > '9') return false;
+        width = width * 10 + static_cast<unsigned>(c - '0');
+        if (width > max_text) runtime_error(span, "format text exceeds 16 MiB", "E4099");
+    }
+    const auto have = scalars(value);
+    const auto missing = width > have ? static_cast<std::size_t>(width) - have : 0;
+    if (missing > (max_text - std::min(max_text, out.size() + value.size())) / fill.size()) runtime_error(span, "format text exceeds 16 MiB", "E4099");
+    const auto before = align == '>' ? missing : align == '^' ? missing / 2 : 0;
+    for (std::size_t i = 0; i < before; ++i) out += fill;
+    out += value;
+    for (std::size_t i = before; i < missing; ++i) out += fill;
+    return true;
+}
+// Shared by format and template. `resolve(key)` returns the value or nullptr after setting `problem`.
+template <class Resolve>
+bool expand_placeholders(const std::string& a, std::string& out, std::string& problem, const SourceSpan& s, Resolve resolve) {
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const char c = a[i];
+        if (c == '}') {
+            if (i + 1 < a.size() && a[i + 1] == '}') { out += '}'; ++i; continue; }
+            problem = "FORMAT_ARGS: unmatched '}'";
+            return false;
+        }
+        if (c != '{') { out += c; continue; }
+        if (i + 1 < a.size() && a[i + 1] == '{') { out += '{'; ++i; continue; }
+        const auto close = a.find('}', i + 1);
+        if (close == std::string::npos) { problem = "FORMAT_ARGS: unclosed '{'"; return false; }
+        const std::string_view body(a.data() + i + 1, close - i - 1);
+        const auto colon = body.find(':');
+        const auto* value = resolve(body.substr(0, colon));
+        if (!value) return false;
+        if (colon == std::string_view::npos) out += *value;
+        else if (!append_with_spec(out, *value, body.substr(colon + 1), s)) { problem = "FORMAT_ARGS: invalid format spec"; return false; }
+        if (out.size() > max_text) runtime_error(s, "format text exceeds 16 MiB", "E4099");
+        i = close;
+    }
+    return true;
+}
+
 // Byte-wise digit value for bases up to 36, or 36 when the byte is not a digit.
 unsigned digit(char c) {
     if (c >= '0' && c <= '9') return static_cast<unsigned>(c - '0');
@@ -73,7 +144,8 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
         auto done = std::to_chars(buffer, buffer + sizeof buffer, value, static_cast<int>(base));
         return Value(std::string(buffer, done.ptr));
     }
-    if (n == "format_float") {
+    if (n == "format_int_grouped") return Value(grouped(std::to_string(integer(args[0], s)), text(1), s));
+    if (n == "format_float" || n == "format_float_grouped") {
         auto value = std::get<double>(args[0].data);
         auto decimals = integer(args[1], s);
         if (decimals < 0 || decimals > 17) runtime_error(s, "format_float decimals must be 0..17", "E4003");
@@ -81,7 +153,8 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
         char buffer[400];
         auto done = std::to_chars(buffer, buffer + sizeof buffer, value, std::chars_format::fixed, static_cast<int>(decimals));
         if (done.ec != std::errc()) runtime_error(s, "format_float output exceeds its buffer", "E4099");
-        return Value(std::string(buffer, done.ptr));
+        std::string fixed(buffer, done.ptr);
+        return Value(n == "format_float" ? std::move(fixed) : grouped(fixed, text(2), s));
     }
 
     const auto& a = text(0);
@@ -298,35 +371,37 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
     }
     if (n == "format") {
         const auto& items = std::get<SliceValue>(args[1].data);
-        std::string out;
+        std::string out, problem;
         std::size_t next = 0;
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            char c = a[i];
-            if (c == '}') {
-                if (i + 1 < a.size() && a[i + 1] == '}') { out += '}'; ++i; continue; }
-                return err("FORMAT_ARGS: unmatched '}'");
-            }
-            if (c != '{') { out += c; continue; }
-            if (i + 1 < a.size() && a[i + 1] == '{') { out += '{'; ++i; continue; }
-            auto close = a.find('}', i + 1);
-            if (close == std::string::npos) return err("FORMAT_ARGS: unclosed '{'");
+        auto resolve = [&](std::string_view key) -> const std::string* {
             std::size_t index = next;
-            if (close == i + 1) ++next;
+            if (key.empty()) ++next;
             else {
                 std::uint64_t value = 0;
-                for (auto k = i + 1; k < close; ++k) {
-                    if (a[k] < '0' || a[k] > '9') return err("FORMAT_ARGS: placeholder must be {} or {index}");
-                    value = value * 10 + static_cast<unsigned>(a[k] - '0');
-                    if (value > max_items) return err("FORMAT_ARGS: placeholder index out of range");
+                for (char c : key) {
+                    if (c < '0' || c > '9') { problem = "FORMAT_ARGS: placeholder must be {} or {index}"; return nullptr; }
+                    value = value * 10 + static_cast<unsigned>(c - '0');
+                    if (value > max_items) { problem = "FORMAT_ARGS: placeholder index out of range"; return nullptr; }
                 }
                 index = static_cast<std::size_t>(value);
             }
-            if (index >= items.length) return err("FORMAT_ARGS: placeholder index out of range");
-            out += hua::string_value((*items.storage)[items.start + index].data);
-            if (out.size() > max_text) runtime_error(s, "format text exceeds 16 MiB", "E4099");
-            i = close;
-        }
+            if (index >= items.length) { problem = "FORMAT_ARGS: placeholder index out of range"; return nullptr; }
+            return &hua::string_value((*items.storage)[items.start + index].data);
+        };
+        if (!expand_placeholders(a, out, problem, s, resolve)) return err(problem);
         limit_text(out.size(), s, "format");
+        return ok(Value(std::move(out)));
+    }
+    if (n == "template") {
+        const auto& values = std::get<MapValue>(args[1].data);
+        std::string out, problem;
+        auto resolve = [&](std::string_view key) -> const std::string* {
+            auto found = values.data->entries.find(map_key(values, Value(std::string(key)), s));
+            if (found == values.data->entries.end()) { problem = "FORMAT_ARGS: missing template key " + std::string(key); return nullptr; }
+            return &hua::string_value(found->second.data);
+        };
+        if (!expand_placeholders(a, out, problem, s, resolve)) return err(problem);
+        limit_text(out.size(), s, "template");
         return ok(Value(std::move(out)));
     }
     runtime_error(s, "unknown standard function", "E4003");

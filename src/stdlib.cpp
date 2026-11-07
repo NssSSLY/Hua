@@ -368,6 +368,9 @@ const std::vector<StandardFunction>& standard_functions() {
         {"encoding","pack_f64",{"float","string"},"Result<Bytes,string>",false,false,24},
         {"encoding","unpack_f32",{"Bytes","int","string"},"Result<float,string>",false,false,24},
         {"encoding","unpack_f64",{"Bytes","int","string"},"Result<float,string>",false,false,24},
+        {"strings","template",{"string","map<string,string>"},"Result<string,string>",false,false,25},
+        {"strings","format_int_grouped",{"int","string"},"string",false,false,25},
+        {"strings","format_float_grouped",{"float","int","string"},"string",false,false,25},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}

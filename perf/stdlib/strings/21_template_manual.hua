@@ -1,0 +1,15 @@
+# 命名模板：手写多次replace（原生strings.template对照见23）
+import std.strings as strings
+fn main() {
+    let t = "user={name} id={id} city={city} status={status}"
+    var total = 0
+    for i in 0..30000 {
+        let id = str(i)
+        var out = strings.replace(t, "{name}", "hua")
+        out = strings.replace(out, "{id}", id)
+        out = strings.replace(out, "{city}", "上海")
+        out = strings.replace(out, "{status}", "active")
+        total += len(out)
+    }
+    print(total)
+}

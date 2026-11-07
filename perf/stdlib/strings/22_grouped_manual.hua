@@ -1,0 +1,19 @@
+# 千分位：手写逐位插入（原生format_int_grouped对照见24）
+import std.strings as strings
+import std.buffer as buffer
+fn main() {
+    var total = 0
+    for i in 0..30000 {
+        let digits = str(i * 7919)
+        var out = buffer.new()
+        let n = len(digits)
+        for k in 0..n {
+            buffer.write_str(out, unwrap(strings.slice(digits, k, k + 1)))
+            if k + 1 < n && (n - k - 1) % 3 == 0 {
+                buffer.write_str(out, ",")
+            }
+        }
+        total += len(unwrap(buffer.take_text(out)))
+    }
+    print(total)
+}
