@@ -375,6 +375,17 @@ const std::vector<StandardFunction>& standard_functions() {
         {"strings","lower",{"string"},"string",false,false,26},
         {"strings","casefold",{"string"},"string",false,false,26},
         {"strings","equal_fold",{"string","string"},"bool",false,false,26},
+        {"json","null",{},"Json",false,false,27},
+        {"json","from",{""},"Result<Json,string>",false,false,27},
+        {"json","array",{"[]Json"},"Json",false,false,27},
+        {"json","object",{"map<string,Json>"},"Json",false,false,27},
+        {"json","set",{"Json","string","Json"},"Result<Json,string>",false,false,27},
+        {"json","remove",{"Json","string"},"Result<Json,string>",false,false,27},
+        {"json","append",{"Json","Json"},"Result<Json,string>",false,false,27},
+        {"json","set_at",{"Json","int","Json"},"Result<Json,string>",false,false,27},
+        {"json","encode_pretty",{"","int"},"Result<string,string>",false,false,27},
+        {"json","decode_lines",{"string"},"Result<[]Json,string>",false,false,27},
+        {"json","encode_lines",{"[]Json"},"Result<string,string>",false,false,27},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
@@ -479,7 +490,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
             std::ofstream file(p,std::ios::binary|((f.name=="append_text"||f.name=="append_bytes")?std::ios::app:std::ios::trunc));if(!file)return err("cannot open text file for writing");file.write(content.data(),static_cast<std::streamsize>(content.size()));file.flush();if(!file)return err("text file write failed");file.close();if(!file)return err("text file close failed");return ok(Value(true));
         }catch(const std::filesystem::filesystem_error&){return err("filesystem path operation failed");}catch(const std::runtime_error& e){return err(e.what());}
     }
-    if(f.module=="json") {if(f.name=="decode")return json_decode(text(0));if(f.name=="encode")return json_encode(args[0]);return json_access(f.name,args);}
+    if(f.module=="json") {if(f.since==27)return json_construct(f.name,args,s);if(f.name=="decode")return json_decode(text(0));if(f.name=="encode")return json_encode(args[0]);return json_access(f.name,args);}
     if(f.name=="join"){const auto& slice=std::get<SliceValue>(args[0].data);std::string out;for(std::size_t i=0;i<slice.length;++i){if(i){if(text(1).size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=text(1);}const auto& item=hua::string_value((*slice.storage)[slice.start+i].data);if(item.size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=item;}return Value(std::move(out));}
     const auto& a=text(0);bounded(a,s);const auto& n=f.name;
     if(n=="len_bytes")return Value(static_cast<I>(a.size()));

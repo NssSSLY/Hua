@@ -1,0 +1,15 @@
+# JSONL：手写split＋逐行decode（原生decode_lines对照见04）
+import std.json as json
+import std.strings as strings
+fn main() {
+    let text = strings.repeat("{\"id\":1,\"name\":\"abc\"}\n", 2000)
+    var total = 0
+    for round in 0..10 {
+        for line in strings.split(text, "\n") {
+            if !strings.is_empty(line) {
+                total += unwrap(json.as_int(unwrap(json.get(unwrap(json.decode(line)), "id"))))
+            }
+        }
+    }
+    print(total)
+}

@@ -52,6 +52,14 @@ struct Writer {
         else if(auto a=std::get_if<A>(&d)){add("[");for(std::size_t i=0;i<a->size();++i){if(i)add(",");value((*a)[i],depth+1);}add("]");}
         else {add("{");bool first=true;for(const auto& [k,v]:std::get<O>(d)){if(!first)add(",");first=false;quote(k);add(":");value(v,depth+1);}add("}");}
     }
+    void line_break(std::size_t spaces){add("\n");add(std::string(spaces,' '));}
+    void pretty(const P& p,std::size_t indent,std::size_t depth=0){
+        const auto* a=p?std::get_if<A>(&p->data):nullptr;const auto* o=p?std::get_if<O>(&p->data):nullptr;
+        if((!a||a->empty())&&(!o||o->empty())){value(p,depth);return;}
+        if(depth>max_depth||++nodes>max_nodes)throw Failure("JSON nesting/node limit exceeded");
+        if(a){add("[");for(std::size_t i=0;i<a->size();++i){if(i)add(",");line_break(indent*(depth+1));pretty((*a)[i],indent,depth+1);}line_break(indent*depth);add("]");return;}
+        add("{");bool first=true;for(const auto& [k,v]:*o){if(!first)add(",");first=false;line_break(indent*(depth+1));quote(k);add(": ");pretty(v,indent,depth+1);}line_break(indent*depth);add("}");
+    }
 };
 P convert(const Value& v,std::size_t depth,std::size_t& nodes){if(depth>max_depth||++nodes>max_nodes)throw Failure("JSON nesting/node limit exceeded");
     if(auto numeric=std::get_if<NumericValue>(&v.data)){try{auto number=convert_numeric(v,numeric_spec(numeric->type)->category=='f'?"float":"int",{},true);if(auto x=std::get_if<I>(&number.data))return node(*x);return node(std::get<double>(number.data));}catch(const Diagnostic&){throw Failure("JSON numeric value is outside int64/finite float64 range");}}
@@ -68,6 +76,58 @@ Value list(const std::vector<std::string>& xs){auto values=managed<std::vector<V
 std::string json_display(const JsonValue& v){Writer writer;writer.value(v.data);return writer.out;}
 Value json_decode(const std::string& text){try{return standard_result(Value(JsonValue{Parser(text).parse()}),true,"Json");}catch(const Failure& e){return standard_result(Value(std::string(e.what())),false,"Json");}}
 Value json_encode(const Value& value){try{std::size_t nodes=0;Writer writer;writer.value(convert(value,0,nodes));return standard_result(Value(std::move(writer.out)),true,"string");}catch(const Failure& e){return standard_result(Value(std::string(e.what())),false,"string");}}
+Value json_construct(const std::string& op,const std::vector<Value>& args,const SourceSpan& s){
+    auto result=[](const char* type,Value v){return standard_result(std::move(v),true,type);};
+    auto failed=[](const char* type,std::string e){return standard_result(Value(std::move(e)),false,type);};
+    constexpr const char* too_deep="JSON nesting exceeds 64";
+    auto payload=[&](const Value& v)->const P&{auto p=std::get_if<JsonValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected a Json value","E4003");return p->data;};
+    auto built=[&](P p){if(p->height>max_depth)return failed("Json",too_deep);return result("Json",Value(JsonValue{std::move(p)}));};
+    if(op=="null")return Value(JsonValue{node(std::monostate{})});
+    if(op=="from"){try{std::size_t nodes=0;return built(convert(args[0],0,nodes));}catch(const Failure& e){return failed("Json",e.what());}}
+    if(op=="array"){
+        const auto& items=std::get<SliceValue>(args[0].data);A out;out.reserve(items.length);
+        for(std::size_t i=0;i<items.length;++i)out.push_back(payload(sequence_read(items,i)));
+        auto p=node(std::move(out));if(p->height>max_depth)runtime_error(s,too_deep,"E4099");return Value(JsonValue{std::move(p)});
+    }
+    if(op=="object"){
+        const auto& map=std::get<MapValue>(args[0].data);O out;
+        for(const auto& [k,v]:map.data->entries)out.emplace(std::get<std::string>(k),payload(v));
+        auto p=node(std::move(out));if(p->height>max_depth)runtime_error(s,too_deep,"E4099");return Value(JsonValue{std::move(p)});
+    }
+    if(op=="set"||op=="remove"){
+        auto object=std::get_if<O>(&payload(args[0])->data);if(!object)return failed("Json","JSON value is not an object");
+        const auto& key=string_value(args[1].data);O out=*object;
+        if(op=="set")out.insert_or_assign(key,payload(args[2]));
+        else if(!out.erase(key))return failed("Json","JSON object key is missing");
+        return built(node(std::move(out)));
+    }
+    if(op=="append"||op=="set_at"){
+        auto array=std::get_if<A>(&payload(args[0])->data);if(!array)return failed("Json","JSON value is not an array");
+        A out=*array;
+        if(op=="append"){if(out.size()>=max_nodes)return failed("Json","JSON node limit exceeded");out.push_back(payload(args[1]));}
+        else{const auto at=as_int(args[1],s);if(at<0||static_cast<std::size_t>(at)>=out.size())return failed("Json","JSON array index out of bounds");out[static_cast<std::size_t>(at)]=payload(args[2]);}
+        return built(node(std::move(out)));
+    }
+    if(op=="encode_pretty"){
+        const auto indent=as_int(args[1],s);if(indent<1||indent>16)runtime_error(s,"JSON indent must be 1..16","E4003");
+        try{std::size_t nodes=0;Writer writer;writer.pretty(convert(args[0],0,nodes),static_cast<std::size_t>(indent));return result("string",Value(std::move(writer.out)));}catch(const Failure& e){return failed("string",e.what());}
+    }
+    if(op=="decode_lines"){
+        const auto& text=string_value(args[0].data);auto values=managed<std::vector<Value>>();std::size_t number=0;
+        for(std::size_t at=0;at<text.size();){
+            auto end=std::min(text.find('\n',at),text.size());auto line=text.substr(at,end-at);at=end+1;++number;
+            if(line.find_first_not_of(" \t\r")==std::string::npos)continue;
+            if(values->size()>=max_nodes)return failed("[]Json","JSON node limit exceeded");
+            try{values->emplace_back(JsonValue{Parser(line).parse()});}catch(const Failure& e){return failed("[]Json","line "+std::to_string(number)+": "+e.what());}
+        }
+        const auto n=values->size();return result("[]Json",Value(SliceValue{std::move(values),0,n,false,"Json"}));
+    }
+    if(op=="encode_lines"){
+        const auto& items=std::get<SliceValue>(args[0].data);
+        try{Writer writer;for(std::size_t i=0;i<items.length;++i){writer.value(payload(sequence_read(items,i)));writer.add("\n");}return result("string",Value(std::move(writer.out)));}catch(const Failure& e){return failed("string",e.what());}
+    }
+    runtime_error(s,"unknown json operation","E4003");
+}
 Value json_access(const std::string& op,const std::vector<Value>& args){const auto& data=std::get<JsonValue>(args[0].data).data->data;
     std::string type=op=="get"||op=="at"?"Json":op=="as_string"?"string":op=="as_bool"?"bool":op=="as_float"?"float":op=="keys"?"[]string":"int";
     auto ok=[&](Value v){return standard_result(std::move(v),true,type);};auto err=[&](std::string e){return standard_result(Value(std::move(e)),false,type);};

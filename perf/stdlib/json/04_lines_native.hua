@@ -1,0 +1,13 @@
+# JSONL：原生decode_lines（对照02手写）
+import std.json as json
+import std.strings as strings
+fn main() {
+    let text = strings.repeat("{\"id\":1,\"name\":\"abc\"}\n", 2000)
+    var total = 0
+    for round in 0..10 {
+        for row in unwrap(json.decode_lines(text)) {
+            total += unwrap(json.as_int(unwrap(json.get(row, "id"))))
+        }
+    }
+    print(total)
+}

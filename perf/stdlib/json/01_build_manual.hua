@@ -1,0 +1,16 @@
+# JSON构造：手写Buffer拼文本（原生array/object/encode对照见03）
+import std.buffer as buffer
+fn main() {
+    var total = 0
+    for round in 0..20 {
+        var out = buffer.new()
+        buffer.write_str(out, "[")
+        for i in 0..1000 {
+            if i > 0 { buffer.write_str(out, ",") }
+            buffer.write_str(out, "{\"id\":" + str(i) + ",\"name\":\"n" + str(i) + "\",\"ok\":true}")
+        }
+        buffer.write_str(out, "]")
+        total += len(unwrap(buffer.take_text(out)))
+    }
+    print(total)
+}

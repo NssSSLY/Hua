@@ -1,0 +1,16 @@
+# JSON构造：原生object/array/encode（对照01手写）
+import std.json as json
+import std.list as list
+fn main() {
+    let yes = unwrap(json.from(true))
+    var total = 0
+    for round in 0..20 {
+        var none []Json = []
+        var items = list.from_slice(none)
+        for i in 0..1000 {
+            unwrap(list.append(items, json.object(map[string]Json{"id": unwrap(json.from(i)), "name": unwrap(json.from("n" + str(i))), "ok": yes})))
+        }
+        total += len(unwrap(json.encode(json.array(list.snapshot(items)))))
+    }
+    print(total)
+}
