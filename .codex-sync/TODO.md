@@ -93,8 +93,8 @@
 - 24个整数/双曲接口已完成；下一项文本/编码基础精确提案。
 - L0-4仍待同步selfhost since9–22；本轮不扩展自举。
 
-- 文本/UTF-8 8接口已完成（2026-11-07，since23/HUAB23，未提交）；结果见knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md。since21/22/23三批都未提交。
-- 下一项由用户选择：Unicode大小写/equal_fold、端序pack、模板/千分位格式化、JSON构造、os参数/子进程、缓冲I/O。
+- 文本/UTF-8 8接口已完成并推送（2026-11-07，since23/HUAB23，d835e57）；结果见knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md。
+- 用户2026-11-07要求完成剩余六组（Unicode大小写/equal_fold、端序pack、模板/千分位、JSON构造、os参数/子进程、缓冲I/O）；提案已写（knowledge/bootstrap-performance/designs/2026-11-07-p1-remaining-six-groups-proposal.md，34函数，since24–29），待用户审后逐组实施。
 - L0-4仍待selfhost since9–23同步。
 
 - 用户决定是否提交since21/22/23三批；下一项由用户选择

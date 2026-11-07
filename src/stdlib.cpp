@@ -360,6 +360,14 @@ const std::vector<StandardFunction>& standard_functions() {
         {"encoding","utf8_valid",{"Bytes"},"bool",false,false,23},
         {"encoding","utf8_encode",{"int"},"Result<Bytes,string>",false,false,23},
         {"encoding","utf8_decode",{"Bytes","int"},"multi<int,int>",false,false,23},
+        {"encoding","pack_uint",{"int","int","string"},"Result<Bytes,string>",false,false,24},
+        {"encoding","pack_int",{"int","int","string"},"Result<Bytes,string>",false,false,24},
+        {"encoding","unpack_uint",{"Bytes","int","int","string"},"Result<int,string>",false,false,24},
+        {"encoding","unpack_int",{"Bytes","int","int","string"},"Result<int,string>",false,false,24},
+        {"encoding","pack_f32",{"float","string"},"Result<Bytes,string>",false,false,24},
+        {"encoding","pack_f64",{"float","string"},"Result<Bytes,string>",false,false,24},
+        {"encoding","unpack_f32",{"Bytes","int","string"},"Result<float,string>",false,false,24},
+        {"encoding","unpack_f64",{"Bytes","int","string"},"Result<float,string>",false,false,24},
     };return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}

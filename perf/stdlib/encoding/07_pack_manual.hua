@@ -1,0 +1,19 @@
+# 端序打包：手写移位＋bytes.from_ints与bytes.at（原生pack/unpack对照见08）
+import std.bytes as bytes
+fn main() {
+    var total = 0
+    for i in 0..30000 {
+        let v = i * 7919
+        let a = unwrap(bytes.from_ints([(v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255]))
+        total += (unwrap(bytes.at(a, 0)) << 24) | (unwrap(bytes.at(a, 1)) << 16) | (unwrap(bytes.at(a, 2)) << 8) | unwrap(bytes.at(a, 3))
+        let n = (i % 65536) - 32768
+        let u = n & 65535
+        let b = unwrap(bytes.from_ints([u & 255, u >> 8]))
+        var back = unwrap(bytes.at(b, 0)) | (unwrap(bytes.at(b, 1)) << 8)
+        if back >= 32768 {
+            back -= 65536
+        }
+        total += back
+    }
+    print(total)
+}
