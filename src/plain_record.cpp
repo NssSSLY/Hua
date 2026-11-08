@@ -14,7 +14,7 @@ unsigned scalar_tag(const Value& value){
 bool encode(const Value& value,const PlainRecordLayout::Field& field,std::array<std::uint64_t,8>& cells,unsigned depth){
     if(field.child){
         PlainRecord child;
-        if(auto p=std::get_if<PlainRecord>(&value.data))child=*p;
+        if(auto p=cget_if<PlainRecord>(&value.data))child=*p;
         else {auto boxed=std::get_if<StructValue>(&value.data);if(!boxed||!pack_plain_record(*boxed,child,depth))return false;}
         if(child.layout!=field.child)return false;
         std::copy_n(child.cells.begin(),child.layout->slots,cells.begin()+field.offset);return true;
@@ -51,7 +51,7 @@ bool pack_plain_record(const StructValue& input,PlainRecord& output,unsigned dep
         if(field.tag){++layout->slots;layout->depth=std::max(layout->depth,1u);}
         else{
             PlainRecord child;
-            if(auto packed=std::get_if<PlainRecord>(&value.data))child=*packed;
+            if(auto packed=cget_if<PlainRecord>(&value.data))child=*packed;
             else{auto record=std::get_if<StructValue>(&value.data);if(!record||!pack_plain_record(*record,child,depth+1)){
                 shape->plain_rejected.store(true,std::memory_order_relaxed);return false;}}
             field.child=child.layout;layout->slots+=child.layout->slots;layout->depth=std::max(layout->depth,child.layout->depth+1);
@@ -81,7 +81,7 @@ std::optional<Value> plain_record_field(const PlainRecord& input,const std::stri
     return Value(NumericValue{field.type,std::bit_cast<double>(bits)});
 }
 StructValue* materialize_record(Value& value){
-    if(auto input=std::get_if<PlainRecord>(&value.data)){
+    if(auto input=cget_if<PlainRecord>(&value.data)){
         // Publish only after the complete boxed record is ready. The old inline
         // snapshot remains usable if allocation or field construction throws.
         auto data=managed<StructData>();data->name=input->layout->name;data->fields=RecordFields(input->layout->shape);
@@ -94,6 +94,6 @@ void retain_record_alias(Value& value){
     // Values stored in shared containers may be observed through both readonly
     // and writable aliases. Materialize before exposing either view, so later
     // writes observe the original object rather than a newly captured snapshot.
-    if(std::holds_alternative<PlainRecord>(value.data))materialize_record(value);
+    if(holds<PlainRecord>(value.data))materialize_record(value);
 }
 }

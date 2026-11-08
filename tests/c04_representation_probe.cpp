@@ -4,10 +4,10 @@
 #include <set>
 using namespace hua;
 namespace {
-Value field(const Value& v,const char* key){if(auto p=std::get_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
+Value field(const Value& v,const char* key){if(auto p=cget_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
 const auto& map(const Value& v){return std::get<MapValue>(v.data).data->entries;}
 std::size_t slots(const Value& v){return map(field(v,"fields")).size();}
-std::size_t slice(const Value& v){if(auto n=std::get_if<std::int64_t>(&v.data))return *n!=0;return std::get<SliceValue>(v.data).length;}
+std::size_t slice(const Value& v){if(auto n=std::get_if<std::int64_t>(&v.data))return *n!=0;return cget<SliceValue>(v.data).length;}
 struct Observer final:VMCallObserver{
  bootstrap_phase::Session& session;bool lazy{};std::map<std::string,std::uint64_t> counts;
  explicit Observer(bootstrap_phase::Session& s):session(s){for(auto& [fn,n]:s.helpers)if(n=="instantiate_flat")lazy=true;}

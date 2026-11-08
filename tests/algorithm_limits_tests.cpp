@@ -36,17 +36,17 @@ int main() {
     // Independently assert signed-zero stability and rounding, not just printed equality.
     auto input = managed<std::vector<Value>>(); input->emplace_back(0.0); input->emplace_back(-0.0);
     auto result = result_payload(call("$std$alg$sorted", {Value(SliceValue{input,0,2,false,"float"})}), true, {});
-    auto values = std::get<SliceValue>(result.data);
+    auto values = cget<SliceValue>(result.data);
     check(!std::signbit(std::get<double>(sequence_read(values,0).data)), "unstable positive zero");
     check(std::signbit(std::get<double>(sequence_read(values,1).data)), "unstable negative zero");
     auto rounded = result_payload(call("$std$math$round", {Value(-0.5)}),true,{});
     check(std::signbit(std::get<double>(rounded.data)), "negative zero round");
     auto bad = call("$std$os$getenv", {Value(std::string(32768,'x'))});
-    check(!std::get<ResultValue>(bad.data).ok, "environment name bound");
+    check(!cget<ResultValue>(bad.data).ok, "environment name bound");
     diagnostic("E4003", [&] { call("$std$math$floor", {convert_numeric(Value(1.0),"f32",{},true)}); });
     diagnostic("E4003", [&] { call("$std$alg$contains", {Value(SliceValue{input,0,2,false,"float"}),Value(std::int64_t{0})}); });
     auto invalid = call("$std$math$floor", {Value(std::numeric_limits<double>::quiet_NaN())});
-    check(!std::get<ResultValue>(invalid.data).ok, "non-finite math input");
+    check(!cget<ResultValue>(invalid.data).ok, "non-finite math input");
     std::cout << "14 resource/cancellation/rounding/stability/type checks passed\n";
 
 }

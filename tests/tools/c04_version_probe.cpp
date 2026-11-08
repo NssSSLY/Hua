@@ -33,12 +33,12 @@ struct Observer final:hua::VMCallObserver {
         if(fn==analyze)begin=step;
         if(it->second=="numeric_view"){
             ++numeric_queries;
-            const auto& facts=std::get<hua::SliceValue>(member(args.at(0),"facts").data);
+            const auto& facts=hua::cget<hua::SliceValue>(member(args.at(0),"facts").data);
             auto id=std::get<std::int64_t>(args.at(1).data);
             if(id<0||std::size_t(id)>=facts.length||!facts.storage){++numeric_layout_failures;}
             else{
                 const auto& v=facts.storage->at(facts.start+std::size_t(id));
-                auto cell=std::get_if<hua::SliceValue>(&v.data);
+                auto cell=hua::cget_if<hua::SliceValue>(&v.data);
                 if(cell&&cell->fixed&&cell->length==2&&cell->element_type=="int"&&cell->packed&&cell->packed->size()==16)++packed_numeric_queries;
                 else ++numeric_layout_failures;
             }
@@ -54,7 +54,7 @@ struct Observer final:hua::VMCallObserver {
         if(!stack.empty())stack.back().children+=total;
         if(fn==analyze){
             c04_steps=metrics.steps.load()-begin;
-            const auto& model=*std::get<hua::ResultValue>(result->data).payload;
+            const auto& model=*hua::cget<hua::ResultValue>(result->data).payload;
             work=std::get<std::int64_t>(member(model,"work").data);passes=std::get<std::int64_t>(member(model,"passes").data);
         }
     }

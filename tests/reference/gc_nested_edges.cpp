@@ -33,9 +33,9 @@ std::size_t ManagedHeap::collect(){
 void heap_edges(const Value& v,const HeapVisitor& visit){
     std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
         if constexpr(requires{x.data.get();})visit(x.data.get());
-        else if constexpr(std::is_same_v<T,SliceValue>){visit(x.storage.get());visit(x.packed.get());}
-        else if constexpr(std::is_same_v<T,ResultValue>)visit(x.payload.get());
-        else if constexpr(std::is_same_v<T,Callable>){visit(x.closure.get());if(x.receiver)visit(x.receiver->data.get());}
+        else if constexpr(std::is_same_v<T,Cow<SliceValue>>){visit(x->storage.get());visit(x->packed.get());}
+        else if constexpr(std::is_same_v<T,Cow<ResultValue>>)visit(x->payload.get());
+        else if constexpr(std::is_same_v<T,Callable>){visit(x.closure().get());if(x.receiver())visit(x.receiver()->data.get());}
     },v.data);
 }
 void heap_edges(const IOFailureData& x,const HeapVisitor& v){v(x.error.data.get());if(x.partial)v(x.partial->data.get());}

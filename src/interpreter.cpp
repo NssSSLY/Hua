@@ -19,7 +19,7 @@ struct Broken {};struct Continued {};
 template<class T> struct Restore {T& value;T old;Restore(T& v,T next):value(v),old(v){value=next;}~Restore(){value=old;}};
 std::vector<const Node*> params(const Node& n) {std::vector<const Node*>out;for(const auto&c:n.children)if(c->kind==N::Parameter)out.push_back(c.get());return out;}
 bool mutable_param(const Node& p){return p.text.find(" mut")!=std::string::npos || (!p.children.empty()&&p.children[0]->kind==N::MutableType);}
-bool writable_value(const Value& v){if(auto p=std::get_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<RngValue>(&v.data))return p->writable;if(auto p=std::get_if<DequeValue>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=std::get_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=std::get_if<ResultValue>(&v.data))return p->writable;return false;}
+bool writable_value(const Value& v){if(auto p=cget_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<RngValue>(&v.data))return p->writable;if(auto p=std::get_if<DequeValue>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=cget_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=cget_if<ResultValue>(&v.data))return p->writable;return false;}
 
 Value read_member(const Value& v,bool writable){return writable ? v : read_only(v);}
 }
@@ -74,7 +74,7 @@ Callable Interpreter::closure(const Node& function){
     for(auto env=environment_;env&&env!=&global_;env=env->parent)for(const auto& [name,binding]:env->bindings)
         if(!captured->bindings.contains(name))captured->bindings.emplace(name,Binding{read_only(copy_value(binding.value)),binding.type,false});
     Callable out{&function,"",{},captured};std::weak_ptr<Environment> weak=captured;
-    out.resource_guard=[weak](unsigned d){if(auto env=weak.lock())for(const auto& [_,b]:env->bindings)if(contains_file(b.value,d+1))return true;return false;};
+    out.set_resource_guard([weak](unsigned d){if(auto env=weak.lock())for(const auto& [_,b]:env->bindings)if(contains_file(b.value,d+1))return true;return false;});
     return out;
 }
 Routine<void> Interpreter::drain(Environment& env){
@@ -88,7 +88,7 @@ Routine<void> Interpreter::execute(const Node& n) {
     co_await Yield{};tick(n);
     switch(n.kind) {
     case N::Function:bind(declared_name(n),Value(closure(n)),"fn:"+declared_name(n),false,n.span);break;
-    case N::Defer:{const auto& expression=*n.children[0];auto callee=(co_await evaluate(*expression.children[0]));std::vector<Value> args;for(std::size_t i=1;i<expression.children.size();++i)args.push_back((co_await evaluate(*expression.children[i])));auto fn=std::get_if<Callable>(&callee.data);if(!fn)runtime_error(expression.span,"defer requires a callable","E4003");try{for(auto& arg:args)arg=copy_value(std::move(arg));}catch(const Diagnostic& error){throw error.located(expression.span);}environment_->deferred.push_back({*fn,std::move(args),&expression});break;}
+    case N::Defer:{const auto& expression=*n.children[0];auto callee=(co_await evaluate(*expression.children[0]));std::vector<Value> args;for(std::size_t i=1;i<expression.children.size();++i)args.push_back((co_await evaluate(*expression.children[i])));auto fn=cget_if<Callable>(&callee.data);if(!fn)runtime_error(expression.span,"defer requires a callable","E4003");try{for(auto& arg:args)arg=copy_value(std::move(arg));}catch(const Diagnostic& error){throw error.located(expression.span);}environment_->deferred.push_back({*fn,std::move(args),&expression});break;}
     case N::ExternalInit:if(context_&&context_->in_task)runtime_error(n.span,"Native/WASM initialization cannot run in tasks","E4104");model_.external->initialize(n.text,n.span);break;
     case N::Block:co_await block(n);break;
     case N::Let:case N::Var:case N::Const: {
@@ -133,7 +133,7 @@ Routine<void> Interpreter::execute(const Node& n) {
         } else {
             auto value=(co_await evaluate(iterable));
             if(auto m=std::get_if<MapValue>(&value.data)){std::vector<std::pair<Value,Value>> entries;for(const auto& [k,v]:m->data->entries)entries.emplace_back(std::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v)));for(const auto& [k,v]:entries){tick(n);if(!(co_await iteration(k,count==1?k:v)))break;}break;}
-            auto slice=std::get_if<SliceValue>(&value.data);
+            auto slice=cget_if<SliceValue>(&value.data);
             if(!slice)runtime_error(iterable.span,"for requires a slice or range","E4003");
             const auto view=*slice;
             for(std::size_t i=0;i<view.length;++i){tick(n);if(!(co_await iteration(Value(static_cast<I>(i)),read_member(sequence_read(view,i),view.writable))))break;}
@@ -165,7 +165,7 @@ Routine<Interpreter::Location> Interpreter::locate(const Node& n) {
         co_return Location{&field->second,type,object->writable,object->data,{},{}};
     }
     if(n.kind==N::Index) {
-        auto base=(co_await evaluate(*n.children[0]));if(!std::holds_alternative<SliceValue>(base.data)&&!std::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index assignment requires a slice or map","E4003");
+        auto base=(co_await evaluate(*n.children[0]));if(!holds<SliceValue>(base.data)&&!std::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index assignment requires a slice or map","E4003");
         auto index=(co_await evaluate(*n.children[1]));co_return index_location(std::move(base),std::move(index),n.span);
     }
     runtime_error(n.span,"invalid assignment target","E4003");
@@ -175,10 +175,10 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     co_await Yield{};tick(n);
     switch(n.kind) {
     case N::Integer:case N::Float:case N::String:case N::Boolean:case N::Nil:co_return literal(n);
-    case N::Name:{auto& b=environment_->lookup(n.text,n.span);if(auto p=std::get_if<PlainRecord>(&b.value.data);p&&p->writable)materialize_record(b.value);co_return b.value;}
+    case N::Name:{auto& b=environment_->lookup(n.text,n.span);if(auto p=cget_if<PlainRecord>(&b.value.data);p&&p->writable)materialize_record(b.value);co_return b.value;}
     case N::Pack:{std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back((co_await evaluate(*c)));contextual.push_back(contextual_literal(*c));}for(auto& value:values)value=copy_value(std::move(value));co_return make_multi(std::move(values),std::move(contextual));}
     case N::MapLiteral:{auto value=make_map(type_name(*n.children[0]),n.span);auto& map=std::get<MapValue>(value.data);for(std::size_t i=1;i<n.children.size();++i){auto key=(co_await evaluate(*n.children[i]->children[0]));auto item=(co_await evaluate(*n.children[i]->children[1]));map_put(map,key,std::move(item),n.children[i]->span,contextual_literal(*n.children[i]->children[1]));}co_return value;}
-    case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=std::get_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value,n.span),false};co_return result_payload(value,true,n.span);}
+    case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=cget_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value,n.span),false};co_return result_payload(value,true,n.span);}
     case N::Unary: {
         if(n.text=="&")runtime_error(n.span,"safe reference execution is not implemented","E4008");
         if(numeric_literal(n))co_return literal(n);
@@ -207,9 +207,9 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
         for(const auto& c:n.children){auto value=copy_value((co_await evaluate(*c)));if(type.empty())type=value_type(value);else value=enforce_type(value,type,c->span,numeric_literal(*c));storage->push_back(std::move(value));}
         SliceValue array{storage,0,storage->size(),true,type};for(const auto& child:n.children)array.contextual.push_back(contextual_literal(*child));co_return Value(array);
     }
-    case N::Index:{auto base=(co_await evaluate(*n.children[0]));if(!std::holds_alternative<SliceValue>(base.data)&&!std::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index/slice requires a slice, array or map","E4003");auto key=(co_await evaluate(*n.children[1]));co_return index_value(base,key,n.span);}
+    case N::Index:{auto base=(co_await evaluate(*n.children[0]));if(!holds<SliceValue>(base.data)&&!std::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index/slice requires a slice, array or map","E4003");auto key=(co_await evaluate(*n.children[1]));co_return index_value(base,key,n.span);}
     case N::Slice: {
-        auto base=(co_await evaluate(*n.children[0]));auto slice=std::get_if<SliceValue>(&base.data);
+        auto base=(co_await evaluate(*n.children[0]));auto slice=cget_if<SliceValue>(&base.data);
         if(!slice)runtime_error(n.span,"index/slice requires a slice or array","E4003");
         I start=n.children[1]->kind==N::Omitted ? 0:as_int((co_await evaluate(*n.children[1])),n.span);
         I end=n.children[2]->kind==N::Omitted ? static_cast<I>(slice->length):as_int((co_await evaluate(*n.children[2])),n.span);
@@ -235,12 +235,12 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     }
     case N::Member: {
         auto base=(co_await evaluate(*n.children[0]));
-        if(n.text=="len" && (std::holds_alternative<SliceValue>(base.data)||std::holds_alternative<MapValue>(base.data)||is_string(base.data)))co_return aggregate_member(base,n.text,n.span);
-        if(auto p=std::get_if<PlainRecord>(&base.data))if(auto item=plain_record_field(*p,n.text))co_return std::move(*item);
+        if(n.text=="len" && (holds<SliceValue>(base.data)||std::holds_alternative<MapValue>(base.data)||is_string(base.data)))co_return aggregate_member(base,n.text,n.span);
+        if(auto p=cget_if<PlainRecord>(&base.data))if(auto item=plain_record_field(*p,n.text))co_return std::move(*item);
         auto object=materialize_record(base);if(!object)runtime_error(n.span,"member access requires a struct","E4003");
         if(auto field=std::as_const(object->data->fields).find(n.text);field!=std::as_const(object->data->fields).end()){
             const Value* item=&field->second;
-            if(std::holds_alternative<StructValue>(item->data)||std::holds_alternative<PlainRecord>(item->data)){
+            if(std::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
                 auto& alias=object->data->fields.at(n.text);retain_record_alias(alias);item=&alias;
             }
             co_return read_member(*item,object->writable);}
@@ -253,7 +253,7 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     case N::Call: {
         auto value=(co_await evaluate(*n.children[0]));
         std::vector<Value> args;for(std::size_t i=1;i<n.children.size();++i)args.push_back((co_await evaluate(*n.children[i])));
-        auto callable=std::get_if<Callable>(&value.data);if(!callable)runtime_error(n.span,"value is not callable","E4003");
+        auto callable=cget_if<Callable>(&value.data);if(!callable)runtime_error(n.span,"value is not callable","E4003");
         co_return (co_await call(*callable,args,n));
     }
     default:runtime_error(n.span,"expression is not executable in Phase 2","E4008");
@@ -276,13 +276,13 @@ Routine<Value> Interpreter::call(const Callable& callable,const std::vector<Valu
     if(context_->execution_metrics)context_->execution_metrics->call(calls_+1);
     Restore call_guard(calls_,calls_+1);
     auto ps=params(fn);if(ps.size()!=args.size())runtime_error(site.span,"function argument count mismatch","E4003");
-    if(context_&&context_->in_task&&callable.closure)std::static_pointer_cast<Environment>(callable.closure)->parent=&global_;
-    Environment local{callable.closure?static_cast<Environment*>(callable.closure.get()):&global_,{}};
-    if(callable.closure)local.bindings.emplace(name,Binding{Value(callable),"fn:"+name,false});
+    if(context_&&context_->in_task&&callable.closure())std::static_pointer_cast<Environment>(callable.closure())->parent=&global_;
+    Environment local{callable.closure()?static_cast<Environment*>(callable.closure().get()):&global_,{}};
+    if(callable.closure())local.bindings.emplace(name,Binding{Value(callable),"fn:"+name,false});
     Restore env_guard(environment_,&local);
-    if(callable.receiver) {
-        if(model_.mutating.at(name) && !callable.receiver->writable)runtime_error(site.span,"mutating method requires mutable receiver","E4007");
-        local.bindings.emplace("self",Binding{Value(*callable.receiver),callable.receiver->data->name,false});
+    if(callable.receiver()) {
+        if(model_.mutating.at(name) && !callable.receiver()->writable)runtime_error(site.span,"mutating method requires mutable receiver","E4007");
+        local.bindings.emplace("self",Binding{Value(*callable.receiver()),callable.receiver()->data->name,false});
         // self is not rebindable; reading its fields retains the receiver's capability.
     }
     for(std::size_t i=0;i<ps.size();++i) {
@@ -301,7 +301,7 @@ Routine<Value> Interpreter::call(const Callable& callable,const std::vector<Valu
 
 }
 Routine<Value> Interpreter::builtin(const std::string& name,const std::vector<Value>& args,const Node& site) {
-    if(name=="task_start"){if(args.empty()||!std::holds_alternative<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=Node(NodeKind::Call,site.span);for(std::size_t i=1;i<site.children.size();++i)nested.add(std::make_unique<Node>(site.children[i]->kind,site.children[i]->span,site.children[i]->text));co_return co_await launch(std::get<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested);}
+    if(name=="task_start"){if(args.empty()||!holds<Callable>(args[0].data))runtime_error(site.span,"spawn requires a Hua function","E4104");auto nested=Node(NodeKind::Call,site.span);for(std::size_t i=1;i<site.children.size();++i)nested.add(std::make_unique<Node>(site.children[i]->kind,site.children[i]->span,site.children[i]->text));co_return co_await launch(cget<Callable>(args[0].data),std::vector<Value>(args.begin()+1,args.end()),nested);}
     if(name=="parallel_map")co_return co_await parallel(args,site);
     if(const auto& info=builtin_info(name);info.standard&&info.standard->callback){
         struct Host final:CallbackHost {

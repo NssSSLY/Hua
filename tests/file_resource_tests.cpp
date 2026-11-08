@@ -13,7 +13,7 @@ void check(bool b,const char* msg){++checks;if(!b)throw std::runtime_error(msg);
 using I=std::int64_t;
 Value integer(I n){return Value(n);}Value text(const char* s){return Value(std::string(s));}
 Value bytes(const char* s){return Value(BytesValue{managed<const std::string>(s)});}
-const ResultValue& outcome(const Value& v){return std::get<ResultValue>(v.data);}
+const ResultValue& outcome(const Value& v){return cget<ResultValue>(v.data);}
 Value unwrap(const Value& v){check(outcome(v).ok,"expected success");return outcome(v).payload?*outcome(v).payload:Value{};}
 ErrorValue err(const Value& v){check(!outcome(v).ok,"expected error");return std::get<ErrorValue>(outcome(v).payload->data);}
 IOFailureValue ioerr(const Value& v){check(!outcome(v).ok,"expected IOFailure");return std::get<IOFailureValue>(outcome(v).payload->data);}
@@ -131,7 +131,7 @@ void clone_boundaries(){
     auto map=managed<MapData>();map->key_type="string";map->item_type="std.file.File";map->entries.emplace(std::string("x"),f.file);
     auto structure=managed<StructData>();structure->name="Box";structure->fields.emplace("x",f.file);
     auto storage=managed<std::vector<Value>>();storage->push_back(f.file);
-    Callable closure;closure.resource_guard=[list](unsigned d){for(const auto& x:list->values)if(contains_file(x,d+1))return true;return false;};
+    Callable closure;closure.set_resource_guard([list](unsigned d){for(const auto& x:list->values)if(contains_file(x,d+1))return true;return false;});
     std::vector<Value> values{f.file,Value(ListValue{list,true}),Value(MapValue{map,true}),Value(StructValue{structure,true}),
         Value(SliceValue{storage,0,1,true,"std.file.File"}),make_multi({f.file}),result_payload(call(f.context,"state",{f.file}),true,{}),Value(closure)};
     values.erase(values.begin()+6); // state result is plain string, so independently verify it remains copyable below.

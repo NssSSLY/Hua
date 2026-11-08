@@ -218,7 +218,7 @@ std::vector<std::size_t> first_positions(std::size_t n, Hash hash, Same same, Wo
     return kept;
 }
 const SliceValue& slice_argument(const Value& value, const SourceSpan& span) {
-    auto input = std::get_if<SliceValue>(&value.data);
+    auto input = cget_if<SliceValue>(&value.data);
     if (!input) runtime_error(span, "algorithm requires an array or slice", "E4003");
     if (input->length > max_items) runtime_error(span, "algorithm item limit exceeded (1000000)", "E4099");
     return *input;
@@ -393,7 +393,7 @@ Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Val
         if (f.name == "windows") return windows(input, args[1], work);
         return product(input, work);
     }
-    auto input = std::get_if<SliceValue>(&args[0].data);
+    auto input = cget_if<SliceValue>(&args[0].data);
     if (!input || (input->element_type != "int" && input->element_type != "float" && input->element_type != "string"))
         runtime_error(span, "algorithm requires int/float/string slice or array", "E4003");
     if (f.name == "sum" && input->element_type == "string")

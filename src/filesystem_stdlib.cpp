@@ -96,7 +96,7 @@ Value lexical(const StandardFunction& f,const std::vector<Value>& args,const Sou
     auto text=[&](std::size_t i)->const std::string&{return hua::string_value(args[i].data);};
     Lex p;
     if(f.name=="join"){
-        auto slice=std::get<SliceValue>(args[0].data);
+        auto slice=cget<SliceValue>(args[0].data);
         if(slice.length>max_parts)fail("PATH_LIMIT","join accepts at most 1024 parts");
         std::size_t total=0;
         for(std::size_t i=0;i<slice.length;++i){

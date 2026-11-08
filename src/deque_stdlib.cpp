@@ -55,7 +55,7 @@ Value invoke_deque_standard(const StandardFunction& f,const std::vector<Value>& 
     if(args.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
     const auto& name=f.name;
     if(name=="from_slice"){
-        auto source=std::get_if<SliceValue>(&args[0].data);if(!source||source->element_type.empty())runtime_error(s,"from_slice requires a typed slice/array","E4003");
+        auto source=cget_if<SliceValue>(&args[0].data);if(!source||source->element_type.empty())runtime_error(s,"from_slice requires a typed slice/array","E4003");
         if(source->length>max_items)runtime_error(s,"deque item limit exceeded","E4099");
         auto data=managed<DequeData>();data->element_type=source->element_type;
         for(std::size_t i=0;i<source->length;++i)data->values.push_back(copy_value(sequence_read(*source,i),true,0,true));
@@ -90,7 +90,7 @@ Value invoke_heap_standard(const StandardFunction& f,const std::vector<Value>& a
     if(args.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
     const auto& name=f.name;
     if(name=="smallest"||name=="largest"){
-        auto xs=std::get_if<SliceValue>(&args[0].data);if(!xs)runtime_error(s,"expected a slice or array","E4003");
+        auto xs=cget_if<SliceValue>(&args[0].data);if(!xs)runtime_error(s,"expected a slice or array","E4003");
         auto k=integer(args[1],s);if(k<0)runtime_error(s,"heap top-k requires k >= 0","E4003");
         auto kind=kind_of(xs->element_type,s);const auto type="[]"+xs->element_type;
         std::vector<Value> items;items.reserve(xs->length);for(std::size_t i=0;i<xs->length;++i)items.push_back(sequence_read(*xs,i));

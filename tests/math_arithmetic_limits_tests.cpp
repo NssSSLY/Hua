@@ -25,15 +25,15 @@ int main(){
     for(const char* name:{"sinh","cosh","tanh","asinh","acosh","atanh"}){
         const auto& f=*standard_function(std::string("$std$math$")+name);
         for(double input:{std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}){
-            auto v=call(f,{Value(input)});const auto& result=std::get<ResultValue>(v.data);
+            auto v=call(f,{Value(input)});const auto& result=cget<ResultValue>(v.data);
             check(!result.ok&&string_value(result.payload->data).starts_with("MATH_DOMAIN:"));
         }
     }
     for(const char* name:{"sinh","tanh","asinh","atanh"}){
         auto v=call(*standard_function(std::string("$std$math$")+name),{Value(-0.0)});
-        const auto& result=std::get<ResultValue>(v.data);check(result.ok&&std::signbit(std::get<double>(result.payload->data)));
+        const auto& result=cget<ResultValue>(v.data);check(result.ok&&std::signbit(std::get<double>(result.payload->data)));
     }
     auto v=call(*standard_function("$std$math$acosh"),{Value(1.0)});
-    const auto& result=std::get<ResultValue>(v.data);check(result.ok&&std::get<double>(result.payload->data)==0.0&&!std::signbit(std::get<double>(result.payload->data)));
+    const auto& result=cget<ResultValue>(v.data);check(result.ok&&std::get<double>(result.payload->data)==0.0&&!std::signbit(std::get<double>(result.payload->data)));
     std::cout<<checks<<" math arithmetic native type/arity/cancellation/finite/zero checks passed\n";
 }

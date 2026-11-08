@@ -44,7 +44,8 @@ def main():
                     failed = True
         base, new = statistics.median(walls["base"]), statistics.median(walls["new"])
         note = "" if steps["base"] == steps["new"] else f"  步数变化 {steps['base']}→{steps['new']}"
-        failed |= bool(note)
+        # D4 (2026-11-08): budget steps follow executed VM instructions, so a VM change may
+        # change them; it is reported, not a failure. Output must still match.
         results[name] = {"steps": steps["new"], "base": base, "new": new, "walls": walls}
         print(f"{name:<{width}}{steps['new']:>12}{base:>10.3f}{new:>10.3f}{base / new:>7.2f}x{note}", flush=True)
     if options.save:

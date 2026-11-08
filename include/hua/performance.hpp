@@ -23,7 +23,7 @@ namespace hua::performance {
  X(result_payload_unique) X(result_payload_shared) X(result_payload_struct) X(result_payload_nested) X(result_payload_fixed_array) \
  X(result_contextual_constraints) X(result_readonly_constraints) X(result_materializations) X(result_payload_type_changes) \
  X(managed_allocations) X(tracked_object_bytes) X(gc_collections) X(gc_records) X(gc_live_records) X(gc_edges) X(gc_nanoseconds) \
- X(resource_pumps) X(resource_candidates) X(resource_fast_returns) X(file_checkpoints)
+ X(resource_pumps) X(resource_candidates) X(resource_fast_returns) X(file_checkpoints) X(copy_struct_readonly) X(copy_struct_pinned) X(cow_shares) X(cow_unshares) X(cow_write_paths) X(cow_unpinned_writes) X(slice_rewraps) X(slice_rewrap_empty) X(slice_rewrap_from_empty_type)
 enum class ConstraintOrigin { other, binding, argument, returning, borrow, assignment, count };
 inline thread_local ConstraintOrigin constraint_origin=ConstraintOrigin::other;
 struct ConstraintSource {
@@ -45,6 +45,8 @@ struct Counters {
  std::array<std::atomic<std::uint64_t>,op_slots> ops{};
  std::array<std::atomic<std::uint64_t>,kind_slots> load_kinds{},constant_kinds{},copy_const_kinds{},copy_move_kinds{};
  std::atomic<std::uint64_t> fused_steps{};
+ // Executed op pairs (previous dispatched op, this op) on one thread; superinstruction input.
+ std::array<std::atomic<std::uint64_t>,op_slots*op_slots> op_pairs{};
  bool builtin_histogram_enabled{};
  mutable std::mutex builtin_mutex;
  std::map<std::string,std::uint64_t> builtin_calls_by_name;
@@ -55,7 +57,8 @@ inline constexpr std::size_t op_count=sizeof(op_names)/sizeof(*op_names);
 // Names follow hua::Value::Data alternative order (include/hua/value.hpp).
 inline constexpr const char* kind_names[]={"nil","bool","int","float","string","slice","struct","callable","map","multi","result","json","bytes","buffer","list","numeric","task","error","void","file","io_failure","plain_record"};
 inline std::atomic<Counters*> active{nullptr};
-inline void record_op(std::size_t op){if(auto* counters=active.load(std::memory_order_relaxed))counters->ops[op].fetch_add(1,std::memory_order_relaxed);}
+inline thread_local std::size_t previous_op=0;
+inline void record_op(std::size_t op){if(auto* counters=active.load(std::memory_order_relaxed)){counters->ops[op].fetch_add(1,std::memory_order_relaxed);counters->op_pairs[previous_op*Counters::op_slots+op].fetch_add(1,std::memory_order_relaxed);}previous_op=op;}
 inline void record_kind(std::array<std::atomic<std::uint64_t>,Counters::kind_slots> Counters::* table,std::size_t kind){if(auto* counters=active.load(std::memory_order_relaxed))(counters->*table)[kind].fetch_add(1,std::memory_order_relaxed);}
 inline void record_builtin(const std::string& name){
  if(auto* counters=active.load(std::memory_order_relaxed);counters&&counters->builtin_histogram_enabled){std::lock_guard lock(counters->builtin_mutex);++counters->builtin_calls_by_name[name];}
@@ -92,6 +95,9 @@ inline void write(std::ostream& output,const Counters& counters) {
  output<<",\"ops\":{";bool first_op=true;
  for(std::size_t i=0;i<op_count;++i)if(auto n=counters.ops[i].load()){if(!first_op)output<<',';first_op=false;output<<std::quoted(op_names[i])<<':'<<n;}
  output<<"},\"fused_steps\":"<<counters.fused_steps.load();
+ output<<",\"op_pairs\":{";bool first_pair=true;
+ for(std::size_t a=0;a<op_count;++a)for(std::size_t b=0;b<op_count;++b)if(auto n=counters.op_pairs[a*Counters::op_slots+b].load();n>=10000){if(!first_pair)output<<',';first_pair=false;output<<'"'<<op_names[a]<<'+'<<op_names[b]<<"\":"<<n;}
+ output<<'}';
  kinds("load_kinds",counters.load_kinds);kinds("constant_kinds",counters.constant_kinds);
  kinds("copy_const_kinds",counters.copy_const_kinds);kinds("copy_move_kinds",counters.copy_move_kinds);
  if(counters.builtin_histogram_enabled){

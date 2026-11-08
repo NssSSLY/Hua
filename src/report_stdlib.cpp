@@ -49,6 +49,7 @@ void log_line(int level,const std::string& message,const MapValue* fields,const 
     auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::string line="ts="+format_rfc3339_utc(static_cast<I>(now))+" level="+names[level]+" msg=";
     append_value(line,message);
+    // Map iteration is ascending, which is the with_fields key byte order.
     if(fields)for(const auto& [key,value]:fields->data->entries){
         const auto& k=std::get<std::string>(key);valid_key(k,s);
         line+=' ';line+=k;line+='=';append_value(line,text(value,s));

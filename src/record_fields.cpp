@@ -68,20 +68,20 @@ bool acyclic_field(const Value& value){
     if(auto p=std::get_if<MapValue>(&value.data))return scalar_type(p->data->item_type);
     if(auto p=std::get_if<ListValue>(&value.data))return scalar_type(p->data->element_type);
     if(auto p=std::get_if<DequeValue>(&value.data))return scalar_type(p->data->element_type);
-    if(auto p=std::get_if<SliceValue>(&value.data))return !p->fixed&&scalar_type(p->element_type);
+    if(auto p=cget_if<SliceValue>(&value.data))return !p->fixed&&scalar_type(p->element_type);
     return false;
 }
 unsigned copy_depth(const Value& v,unsigned depth){
     if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
     if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     unsigned result=0;
-    if(auto p=std::get_if<PlainRecord>(&v.data))result=p->layout->depth;
+    if(auto p=cget_if<PlainRecord>(&v.data))result=p->layout->depth;
     else if(auto p=std::get_if<StructValue>(&v.data)){
         require_complete_enum(*p->data);
         std::as_const(p->data->fields).each_value([&](const Value& x){result=std::max(result,1+copy_depth(x,depth+1));});
-    }else if(auto p=std::get_if<ResultValue>(&v.data);p&&p->payload)result=1+copy_depth(*p->payload,depth+1);
+    }else if(auto p=cget_if<ResultValue>(&v.data);p&&p->payload)result=1+copy_depth(*p->payload,depth+1);
     else if(auto p=std::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)result=std::max(result,1+copy_depth(x,depth+1));
-    else if(auto p=std::get_if<SliceValue>(&v.data);p&&p->fixed)for(std::size_t i=0;i<p->length;++i)result=std::max(result,1+copy_depth(sequence_copy_source(*p,i),depth+1));
+    else if(auto p=cget_if<SliceValue>(&v.data);p&&p->fixed)for(std::size_t i=0;i<p->length;++i)result=std::max(result,1+copy_depth(sequence_copy_source(*p,i),depth+1));
     if(depth+result>128)runtime_error({},"value nesting limit exceeded","E4099");
     return result;
 }

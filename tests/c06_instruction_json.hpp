@@ -7,7 +7,7 @@
 #include <ostream>
 #include <map>
 static std::string quoted(const std::string& s) {
-    auto v=hua::json_encode(hua::Value(s));auto r=std::get<hua::ResultValue>(v.data);
+    auto v=hua::json_encode(hua::Value(s));auto r=hua::cget<hua::ResultValue>(v.data);
     if(!r.ok)throw std::runtime_error("cannot encode instruction text");
     return hua::string_value(r.payload->data);
 }

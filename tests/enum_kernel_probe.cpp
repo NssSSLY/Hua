@@ -84,7 +84,7 @@ int preflight(){
   require(std::get<hua::StructValue>(full.data).data->fields.size()==60);
   require(std::get<hua::StructValue>(sparse.data).data->fields.size()==2);
   require(hua::show(full)==hua::show(sparse));
-  require(!std::get<hua::ResultValue>(hua::json_encode(full).data).ok&&!std::get<hua::ResultValue>(hua::json_encode(sparse).data).ok);
+  require(!hua::cget<hua::ResultValue>(hua::json_encode(full).data).ok&&!hua::cget<hua::ResultValue>(hua::json_encode(sparse).data).ok);
   auto copied=hua::copy_value(hua::read_only(sparse));require(hua::show(copied)==hua::show(sparse));
   const auto key="$V58#0#"+type;
   if(type=="void")require(hua::show(copied)=="Item.V58()");

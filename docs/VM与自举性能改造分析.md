@@ -383,6 +383,12 @@ python perf/run_bench.py --hua tests/build/hua.exe --compare perf/results/win-ba
 
 ### 0.3 下一步
 
+<a id="route-reorder-20261108"></a>
+
+#### 路线重排：先做结构体COW（2026-11-08）
+
+用户要求对照C++/Go等重新核定底层，并于2026-11-08选择新次序。真实编译（ast_pool）剖析：复制约28%（包含式）、结构盒分配约15.5%、GC约11%、字符串类型检查约7–12%，分发自身7.2%，lookup约1.9%；计数版显示struct复制1,737,545次，而字段写入只有173,532次。因此S2原次序（S2-2类型槽→S2-3帧分离→S2-4 Value瘦身）让位于“值与内存层”：V1结构体COW → 重新剖析后定V2类型ID/V3 GC跟踪范围 → Map哈希化、紧凑指令、Value瘦身。寄存器VM改变步数合同，需用户另行决定。[对照与提案](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-08-vm-lower-layer-review-proposal.md)；[V1细化设计](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-08-v1-struct-cow-design.md)（待审定，未实施）。V1与2026-10-29字段体共享的区别：共享整个结构盒，不新增GC图节点；钉住只在写路径期间有效。
+
 <a id="value-copy-priority1-results"></a>
 
 #### 值复制第一优先（2026-10-29）
@@ -392,6 +398,31 @@ python perf/run_bench.py --hua tests/build/hua.exe --compare perf/results/win-ba
 正式基线为776d5f8源码用同一工具链新构建，5轮交替A/B：结构体1.494→1.316秒（1.13x）；type_rules编译0.812→0.783秒（1.04x）；ast_pool编译3.727→3.750秒（0.99x，基本持平）；其余0.99–1.02x。九项输出和步数一致，真实编译产物SHA256相同。申请次数约-7.2%、申请字节约-15.5%，但GC扫描对象仍约+19%，因此本轮没有显著加速真实编译。申请字节不是峰值内存。 冷路径布局保留修复后的另一组5轮A/B为结构体1.26x、type_rules 1.04x、ast_pool 0.96x；调用/Map疑似退化经9轮独立复核为1.01x/0.97x。保留两组结果，整体性能目标尚未放行。
 
 63项最终回归通过（73.91秒），完整A07/C04通过（192.57秒，600秒硬限）；新增2027项共享/故障/类型转换/GC反例通过，最后的无分配clear布局保留修复后16项核心复验通过。广域套件遇既有位置的30秒宿主前端超时后已停止，未重试该套件。未跑完整自举，本轮不更新历史197/204秒结论。被否决候选、构建身份及原始结果见[过程记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-29-value-snapshots.md)。
+
+<a id="s2-2a-results-20261107"></a>
+
+#### S2-2a 作用域复用与绑定槽（2026-11-07）
+
+**已实现并通过验收，未提交。** 按0.3“S2-2先核定再做最小切片”的要求，先剖析（`tests/build-prof`，`-g -fno-omit-frame-pointer`，busiest-thread采样）：3000万次`for`的算术循环里，每次迭代的作用域环境取得与释放（`FrameArena::acquire`/`retire`、shared_ptr控制块与删除器、weak lock）合计约16.5%，`bind_named`（含按名字哈希插入、`value_type`、`copy_value`、`read_only`）12.6%；直接对应“原始类型槽”的`lookup`只有3.6%。fib(35)中环境取得/释放约14%。真实编译（ast_pool）里`lookup`约3%，系统分配约22%。所以本切片先做环境与绑定，不改槽的存储形态（Value仍144字节，Entry不变）。
+
+改动（只在`include/hua/vm.hpp`、`src/vm.cpp`，字节码、HUAB、步数和语义不变）：
+
+1. **租约直接复用**：离开作用域或函数返回时，若帧持有的是唯一租约（`use_count()==1`），清空环境并连同shared_ptr放回该布局的`ready`表（每布局最多16个），下次进入同形作用域直接取用，不经控制块分配、删除器和weak lock。任何Location、挂起的continuation仍持有租约时走原删除路径。`ready`声明在`spare`之后，析构时租约删除器还能把环境退回`spare`。
+2. **Bind/IterNext绑定槽在加载时解析**：`CodeLayout::bind_slots`按指令记录名字所在作用域与槽号；运行时核对当前环境的布局相同且槽为空才直接写，否则回到原按名字路径（含晚绑定、省略作用域与重复绑定报错）。
+3. **标量绑定快路径**：bool/int/float绑定跳过`value_type`、`copy_value`与`read_only`（三者对这些类型是恒等）。
+4. 进入作用域把父链移入新环境，离开时按唯一租约把父链移回，省去两次原子引用计数。
+
+正确性：新增`tests/scope_reuse_tests.py`（44项，三路径），覆盖跨迭代不残留（含条件绑定）、迭代中途的晚绑定遮蔽全局、key/item/`_`/map遍历、各类值逐迭代独立、闭包快照、每次迭代的defer、跨调用的赋值目标与多重赋值、超过16层停放上限的递归、嵌套作用域内提前返回、运行时错误、GC不保留（5轮live计数不变）、Task内跨yield与collect；同一测试在改前二进制上也全部通过。全量CTest 109项，-j 4首轮12项失败，与改动前（2026-11-07 since29验收）完全相同；array_size_syntax单独重跑通过，因此98/109，余11项属HUA-D036/D037已知类，没有新增失败。
+
+性能（`perf/results/win-s2-2a-core-ab.json`，5轮交替，base为同工具链改前构建）：
+
+| 循环 | 算术 | 调用 | 结构体 | Map | Map合并 | 字符串 | type_rules编译 | ast_pool编译 |
+|---|---|---|---|---|---|---|---|---|
+| 1.00x | 1.46x | 1.12x | 1.02x | 1.09x | 1.09x | 1.04x | 1.00x | 1.00x |
+
+stdlib 132项中位1.054x（`win-s2-2a-stdlib-ab.json`），最低两项复测（base复制对照）：list/07 1.07x（首轮0.76x为噪声）、fs/04 1.00x。自举C2逐字节不变（f73869fa…，1,281,255,218步）。
+
+结论：`for`/`while`内声明变量与调用密集的代码明显受益；真实编译负载基本不变，它的主要成本在分配、复制与GC，不在环境与绑定。下一步不建议直接做“原始类型槽”（`lookup`只占3–5%），应按真实编译负载的剖析先处理分配与`copy_value`。[过程记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-07-s2-2a.md)。
 
 <a id="s2-1-results-20261030"></a>
 

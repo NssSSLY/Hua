@@ -54,8 +54,8 @@ void result_and_strings(){
  for(unsigned i=0;i<1000;++i){auto copy=copy_value(text);check(string_value(copy.data).data()==string_value(text.data).data(),"immutable text buffer not shared");}
  check(native_allocation::snapshot().calls==begin.calls,"long text copy allocated");
  Value result(ResultValue{true,managed<Value>(text),"string","string",true,false});
- auto payload=std::get<ResultValue>(result.data).payload;auto before=managed_heap().allocated();begin=native_allocation::snapshot();
- for(unsigned i=0;i<1000;++i){auto copy=copy_value(result);copy=enforce_type(std::move(copy),"Result<string,string>",{});check(std::get<ResultValue>(copy.data).payload==payload,"unchanged Result box rebuilt");}
+ auto payload=cget<ResultValue>(result.data).payload;auto before=managed_heap().allocated();begin=native_allocation::snapshot();
+ for(unsigned i=0;i<1000;++i){auto copy=copy_value(result);copy=enforce_type(std::move(copy),"Result<string,string>",{});check(cget<ResultValue>(copy.data).payload==payload,"unchanged Result box rebuilt");}
  check(managed_heap().allocated()==before,"unchanged Result allocated managed payload");
  check(native_allocation::snapshot().calls==begin.calls,"unchanged Result allocated native storage");
  auto converted=enforce_type(Value(ResultValue{true,managed<Value>(Value(std::int64_t(255))),"int","string",true,true}),"Result<u8,string>",{});

@@ -95,7 +95,7 @@ struct Session {
     v.before.clear();v.volume_before.clear();
    }
    if(f.name=="field_defaults"&&result){auto count=size(*result);++volume["shape-calls:"+f.type];volume["shape-steps:"+f.type]+=delta;volume["shape-fields:"+f.type]+=count;volume["default-instantiated-fields"]+=count;volume["shape-max:"+f.type]=std::max(volume["shape-max:"+f.type],count);for(const auto& [_,v]:std::get<MapValue>(result->data).data->entries)volume["default-instantiated-origins"]+=size(member(v,"origins"));}
-   if(f.name=="analyze"&&result){const auto& model=*std::get<ResultValue>(result->data).payload;volume["actual-passes"]=std::get<std::int64_t>(member(model,"passes").data);volume["logical-work"]=std::get<std::int64_t>(member(model,"work").data);}
+   if(f.name=="analyze"&&result){const auto& model=*cget<ResultValue>(result->data).payload;volume["actual-passes"]=std::get<std::int64_t>(member(model,"passes").data);volume["logical-work"]=std::get<std::int64_t>(member(model,"work").data);}
   }
   auto found=routes.find(fn);if(found==routes.end()||!found->second.phase)return;
   if(stack.empty()||stack.back().first!=fn)throw std::runtime_error("unbalanced VM phase return");event("end",stack.back().second);stack.pop_back();

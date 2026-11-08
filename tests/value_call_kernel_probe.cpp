@@ -26,7 +26,7 @@ hua::Value fixture(const std::string& kind,int width,int depth,int results){
     return value;
 }
 I leaf(const hua::Value& value){
-    if(auto result=std::get_if<hua::ResultValue>(&value.data))return leaf(*result->payload);
+    if(auto result=hua::cget_if<hua::ResultValue>(&value.data))return leaf(*result->payload);
     if(auto structure=std::get_if<hua::StructValue>(&value.data))return leaf(structure->data->fields.at(key(0)));
     if(auto list=std::get_if<hua::ListValue>(&value.data))return std::get<I>(list->data->values.front().data);
     return std::get<I>(value.data);
@@ -93,7 +93,7 @@ int preflight(){
     require(!std::get<hua::ListValue>(view.data).writable);
     for(int depth:{1,2,4}){
         auto result=fixture("struct",8,1,depth);auto isolated=hua::copy_value(hua::read_only(result));
-        require(leaf(isolated)==17);require(std::get<hua::ResultValue>(isolated.data).payload!=std::get<hua::ResultValue>(result.data).payload);
+        require(leaf(isolated)==17);require(hua::cget<hua::ResultValue>(isolated.data).payload!=hua::cget<hua::ResultValue>(result.data).payload);
         auto enforced=hua::enforce_type(result,hua::value_type(result),{});require(leaf(enforced)==17);
     }
     std::vector<hua::Value> slots{hua::Value(I(17)),hua::Value(I(18))};auto scalar_copy=slots;scalar_copy[0]=hua::Value(I(99));require(std::get<I>(slots[0].data)==17);

@@ -31,8 +31,8 @@ int main(){try{
     SourceTrace trace;for(unsigned i=0;i<80;++i)trace.add({"failure.hua",i,i+1,i+1,1},"Result propagated here");
     auto value=Value(ResultValue{false,managed<Value>(Value(std::string("bad"))),"int","string",true,false});
     value=record_failure_source(std::move(value),span);auto copied=copy_value(value,true);auto propagated=propagated_error(copied,unicode.span(0,1));
-    auto& result=std::get<ResultValue>(propagated.data);check(result.failure_source&&result.failure_source->sites.size()==2,"failure source survives clone/propagation");
-    check(std::get<ResultValue>(value.data).failure_source->sites.size()==1,"failure source copy isolation");
+    auto& result=cget<ResultValue>(propagated.data);check(result.failure_source&&result.failure_source->sites.size()==2,"failure source survives clone/propagation");
+    check(cget<ResultValue>(value.data).failure_source->sites.size()==1,"failure source copy isolation");
     try{result_payload(propagated,true,span);throw std::runtime_error("unwrap error accepted");}catch(const Diagnostic& d){check(d.code()=="E4009"&&!d.trace().sites.empty(),"unwrap includes failure source");}
     check(trace.sites.size()==32&&trace.truncated,"Result trace budget");
     std::cout<<"A10 source/diagnostic: "<<checks<<" checks passed\n";return 0;

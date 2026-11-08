@@ -7,8 +7,8 @@ namespace hua {
 namespace {
 using I=std::int64_t;
 constexpr std::size_t max_work=32000000,max_entries=1000000;
-const Callable& callable_arg(const Value& v,const SourceSpan& s){auto p=std::get_if<Callable>(&v.data);if(!p||!p->function||!p->builtin.empty())runtime_error(s,"callback requires a Hua function","E4003");return *p;}
-const SliceValue& slice_arg(const Value& v,const SourceSpan& s){auto p=std::get_if<SliceValue>(&v.data);if(!p)runtime_error(s,"expected a slice or array","E4003");return *p;}
+const Callable& callable_arg(const Value& v,const SourceSpan& s){auto p=cget_if<Callable>(&v.data);if(!p||!p->function||!p->builtin.empty())runtime_error(s,"callback requires a Hua function","E4003");return *p;}
+const SliceValue& slice_arg(const Value& v,const SourceSpan& s){auto p=cget_if<SliceValue>(&v.data);if(!p)runtime_error(s,"expected a slice or array","E4003");return *p;}
 bool mutable_parameter(const Node& p){return p.text.find(" mut")!=std::string::npos||(!p.children.empty()&&p.children[0]->kind==NodeKind::MutableType);}
 struct Work {
     const SourceSpan& span;RuntimeContext* context;std::size_t count{};

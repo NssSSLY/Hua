@@ -21,7 +21,7 @@ Value call(const std::string& name,std::vector<Value> args,RuntimeContext* conte
     return invoke_builtin("$std$"+name,args,{},std::cout,{},{},context);
 }
 Value text(const std::string& s){return Value(s);}
-bool success(const Value& v){return std::get<ResultValue>(v.data).ok;}
+bool success(const Value& v){return cget<ResultValue>(v.data).ok;}
 void failure(const char* code,const std::string& name,std::vector<Value> args){
     auto v=call(name,std::move(args));check(!success(v),"expected Err");
     check(show(result_payload(v,false,{})).starts_with(code),"wrong failure prefix");

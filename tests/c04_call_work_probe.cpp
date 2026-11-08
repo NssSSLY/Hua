@@ -5,7 +5,7 @@
 #include <set>
 using namespace hua;
 namespace {
-Value member(const Value& v,const std::string& key){if(auto p=std::get_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
+Value member(const Value& v,const std::string& key){if(auto p=cget_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
 std::string str(const Value& v){return hua::string_value(v.data);}
 bool flag(const Value& v){return std::get<bool>(v.data);}
 const auto& entries(const Value& v){return std::get<MapValue>(v.data).data->entries;}
@@ -29,7 +29,7 @@ struct Observer final:VMCallObserver {
    auto summaries=member(state,"summaries");auto summary=entries(summaries).find(target);if(summary!=entries(summaries).end()){
     auto ws=member(summary->second,"writes");std::set<std::string> owners;
     for(const auto& [k,v]:entries(ws)){auto origin=std::get<std::string>(k);owners.insert(origin.substr(0,origin.find('|')));}
-    count["candidate_write_entries"]+=entries(ws).size();count["candidate_write_owners"]+=owners.size();auto params=std::get<SliceValue>(member(function,"parameters").data);count["candidate_parameter_scan_iterations"]+=params.length*entries(ws).size();count["candidate_unique_owner_scan_iterations"]+=params.length*owners.size();
+    count["candidate_write_entries"]+=entries(ws).size();count["candidate_write_owners"]+=owners.size();auto params=cget<SliceValue>(member(function,"parameters").data);count["candidate_parameter_scan_iterations"]+=params.length*entries(ws).size();count["candidate_unique_owner_scan_iterations"]+=params.length*owners.size();
    }
   }
   if(name=="projection"&&!projections.empty()&&session.helpers.contains(caller)&&session.helpers.at(caller)=="invoke"){

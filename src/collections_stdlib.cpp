@@ -6,7 +6,7 @@
 namespace hua {
 namespace {
 using I=std::int64_t;
-using Entries=std::map<MapKey,Value>;
+using Entries=MapEntries;
 constexpr std::size_t max_entries=1000000,max_items=1000000,max_work=32000000;
 // HUA-D038 slice 2 (since 10). Every call does bounded native work and checks
 // cancellation every 1024 units, like std.alg.
@@ -24,14 +24,22 @@ Value key_value(const MapKey& k){return std::visit([](const auto& x){return Valu
 Value slice(std::shared_ptr<std::vector<Value>> values,const std::string& element){auto n=values->size();return Value(SliceValue{std::move(values),0,n,false,element});}
 // Map reads follow index_value: the stored value, read-only through a read-only map.
 Value read_entry(const MapValue& m,Value& v){retain_record_alias(v);return m.writable?v:read_only(v);}
-Value new_set(const std::string& key,Entries entries){auto data=managed<MapData>();data->key_type=key;data->item_type="bool";data->entries=std::move(entries);return Value(MapValue{data,true});}
-void add_key(Entries& out,const MapKey& k,const SourceSpan& s){if(out.size()>=max_entries)runtime_error(s,"map entry limit exceeded","E4099");out.emplace_hint(out.end(),k,Value(true));}
+// Set results are built from sorted keys, so the result map is appended in ascending order.
+Value new_set(const std::string& key,std::vector<MapKey> keys,const SourceSpan& s){
+    if(keys.size()>max_entries)runtime_error(s,"map entry limit exceeded","E4099");
+    std::sort(keys.begin(),keys.end());
+    auto data=managed<MapData>();data->key_type=key;data->item_type="bool";data->entries.reserve(keys.size());
+    for(auto& k:keys)data->entries.emplace(std::move(k),Value(true));
+    return Value(MapValue{data,true});
+}
+void add_key(std::vector<MapKey>& out,const MapKey& k,const SourceSpan& s){if(out.size()>=max_entries)runtime_error(s,"map entry limit exceeded","E4099");out.push_back(k);}
 
 Value maps_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s,RuntimeContext* context){
     const auto& m=map_arg(args[0],s);auto& entries=m.data->entries;Work work{s,context};
     const auto& name=f.name;
     if(name=="keys"||name=="values"||name=="entries"){
-        // Ascending key order is the contract of these three functions (D1).
+        // Ascending key order is the contract of these three functions (D1); map
+        // iteration is ascending (MapEntries).
         std::shared_ptr<std::vector<Value>> keys,values;
         if(name!="values"){keys=managed<std::vector<Value>>();keys->reserve(entries.size());}
         if(name!="keys"){values=managed<std::vector<Value>>();values->reserve(entries.size());}
@@ -49,21 +57,12 @@ Value maps_standard(const StandardFunction& f,const std::vector<Value>& args,con
         writable(m,s);const auto& source=map_arg(args[1],s);
         if(source.data->key_type!=m.data->key_type||source.data->item_type!=m.data->item_type)runtime_error(s,"merge requires identical map types","E4003");
         if(source.data==m.data)return Value(I{0});
-        // Count first so an over-limit merge leaves dst unchanged; both passes walk
-        // the two ordered trees together, so each is linear in their sizes.
-        std::size_t added=0;auto d=entries.begin();
-        for(const auto& [k,v]:source.data->entries){
-            while(d!=entries.end()&&d->first<k){work.tick();++d;}
-            work.tick();if(d==entries.end()||k<d->first)++added;
-        }
+        // Count first so an over-limit merge leaves dst unchanged.
+        std::size_t added=0;
+        for(const auto& [k,v]:source.data->entries){work.tick();if(!entries.contains(k))++added;}
         if(added>max_entries-entries.size())runtime_error(s,"map entry limit exceeded","E4099");
-        d=entries.begin();
-        for(auto& [k,v]:source.data->entries){
-            while(d!=entries.end()&&d->first<k)++d;
-            auto value=copy_value(source.writable?v:read_only(v));
-            if(d!=entries.end()&&!(k<d->first)){d->second=std::move(value);++d;}
-            else d=std::next(entries.emplace_hint(d,k,std::move(value)));
-        }
+        entries.reserve(entries.size()+added);
+        for(auto& [k,v]:source.data->entries)entries.insert_or_assign(k,copy_value(source.writable?v:read_only(v)));
         return Value(static_cast<I>(added));
     }
     runtime_error(s,"unknown map operation","E4003");
@@ -72,43 +71,41 @@ Value maps_standard(const StandardFunction& f,const std::vector<Value>& args,con
 Value sets_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s,RuntimeContext* context){
     Work work{s,context};const auto& name=f.name;
     if(name=="from_slice"){
-        auto input=std::get_if<SliceValue>(&args[0].data);
+        auto input=cget_if<SliceValue>(&args[0].data);
         if(!input||(input->element_type!="bool"&&input->element_type!="int"&&input->element_type!="string"))runtime_error(s,"set from_slice requires a bool/int/string slice or array","E4003");
-        Entries out;
+        Entries seen;std::vector<MapKey> out;
         for(std::size_t i=0;i<input->length;++i){
             work.tick();auto v=sequence_read(*input,i);MapKey k;
             if(auto p=std::get_if<bool>(&v.data))k=*p;else if(auto p=std::get_if<I>(&v.data))k=*p;else if(auto p=hua::string_data(&v.data))k=std::move(*p);else runtime_error(s,"set element type mismatch","E4003");
-            // Ascending runs (common for generated keys) append at the end in O(1).
-            if(!out.empty()&&std::prev(out.end())->first<k)add_key(out,k,s);
-            else if(!out.contains(k)){if(out.size()>=max_entries)runtime_error(s,"map entry limit exceeded","E4099");out.emplace(std::move(k),Value(true));}
+            if(seen.emplace(k,Value{}).second)add_key(out,k,s);
         }
-        return new_set(input->element_type,std::move(out));
+        return new_set(input->element_type,std::move(out),s);
     }
     const auto& a=map_arg(args[0],s);const auto& b=map_arg(args[1],s);
     if(a.data->key_type!=b.data->key_type)runtime_error(s,"set operation requires maps with identical key types","E4003");
     const auto& x=a.data->entries;const auto& y=b.data->entries;
-    auto i=x.begin();auto j=y.begin();
-    if(name=="is_subset"||name=="is_disjoint"){
-        const bool subset=name=="is_subset";
-        while(i!=x.end()&&j!=y.end()){
-            work.tick();
-            if(i->first<j->first){if(subset)return Value(false);++i;}
-            else if(j->first<i->first)++j;
-            else{if(!subset)return Value(false);++i;++j;}
-        }
-        return Value(subset?i==x.end():true);
+    if(name=="is_subset"){
+        if(x.size()>y.size())return Value(false);
+        for(const auto& [k,_]:x){work.tick();if(!y.contains(k))return Value(false);}
+        return Value(true);
     }
-    Entries out;
-    const bool symmetric=name=="symmetric_difference";
-    const bool keep_a=name=="union"||name=="difference"||symmetric,keep_b=name=="union"||symmetric,keep_both=name!="difference"&&!symmetric;
-    if(name!="union"&&name!="intersection"&&name!="difference"&&!symmetric)runtime_error(s,"unknown set operation","E4003");
-    while(i!=x.end()||j!=y.end()){
-        work.tick();
-        if(j==y.end()||(i!=x.end()&&i->first<j->first)){if(keep_a)add_key(out,i->first,s);++i;}
-        else if(i==x.end()||j->first<i->first){if(keep_b)add_key(out,j->first,s);++j;}
-        else{if(keep_both)add_key(out,i->first,s);++i;++j;}
+    if(name=="is_disjoint"){
+        const auto& small=x.size()<=y.size()?x:y;const auto& large=x.size()<=y.size()?y:x;
+        for(const auto& [k,_]:small){work.tick();if(large.contains(k))return Value(false);}
+        return Value(true);
     }
-    return new_set(a.data->key_type,std::move(out));
+    std::vector<MapKey> out;
+    if(name=="union"){
+        out.reserve(x.size()+y.size());
+        for(const auto& [k,_]:x){work.tick();add_key(out,k,s);}
+        for(const auto& [k,_]:y){work.tick();if(!x.contains(k))add_key(out,k,s);}
+    }else if(name=="intersection"){
+        for(const auto& [k,_]:x){work.tick();if(y.contains(k))add_key(out,k,s);}
+    }else if(name=="difference"||name=="symmetric_difference"){
+        for(const auto& [k,_]:x){work.tick();if(!y.contains(k))add_key(out,k,s);}
+        if(name=="symmetric_difference")for(const auto& [k,_]:y){work.tick();if(!x.contains(k))add_key(out,k,s);}
+    }else runtime_error(s,"unknown set operation","E4003");
+    return new_set(a.data->key_type,std::move(out),s);
 }
 
 bool same_scalar(const Value& a,const Value& b,const SourceSpan& s,Work& work){

@@ -4,7 +4,7 @@
 #include <ostream>
 namespace hua {
 EntryResult entry_result(const Value& value,const SourceSpan& span) {
-    auto result=std::get_if<ResultValue>(&value.data);
+    auto result=cget_if<ResultValue>(&value.data);
     if(!result || result->ok)return {};
     if(!result->payload)throw std::logic_error("entry Result error has no payload");
     EntryResult out{1,"main returned Err: ",span};

@@ -58,7 +58,7 @@ Value read_environment() {
     return standard_result(std::move(out), true, type);
 }
 std::vector<std::string> string_list_argument(const Value& value, const SourceSpan& span) {
-    auto items = std::get_if<SliceValue>(&value.data);
+    auto items = cget_if<SliceValue>(&value.data);
     if (!items) runtime_error(span, "expected []string", "E4003");
     std::vector<std::string> out;
     out.reserve(items->length);

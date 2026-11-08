@@ -38,7 +38,7 @@ Value simd_standard(std::string_view operation,const std::vector<Value>& args,co
         return Value(std::string("scalar"));
 #endif
     }
-    auto a=std::get_if<SliceValue>(&args[0].data),b=std::get_if<SliceValue>(&args[1].data);
+    auto a=cget_if<SliceValue>(&args[0].data),b=cget_if<SliceValue>(&args[1].data);
     if(!a||!b||a->element_type!=b->element_type||(a->element_type!="f32"&&a->element_type!="f64"&&a->element_type!="float"))runtime_error(span,"SIMD requires matching f32/f64/float arrays","E4003");
     if(a->length!=b->length)return standard_result(Value(std::string("SIMD length mismatch")),false,"[]"+a->element_type);
     if(a->length>1000000)runtime_error(span,"SIMD item limit exceeded","E4099");

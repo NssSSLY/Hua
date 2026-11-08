@@ -42,7 +42,7 @@ template<class F>static std::size_t blocks(const J& j,std::size_t maximum,F cons
     const auto& bs=array(j);if(bs.empty()||bs.size()>maximum)throw std::runtime_error("invalid image blocks");
     std::size_t total=0;
     for(const auto& b:bs){
-        auto decoded=hua::json_decode(str(*b));const auto& r=std::get<hua::ResultValue>(decoded.data);
+        auto decoded=hua::json_decode(str(*b));const auto& r=hua::cget<hua::ResultValue>(decoded.data);
         if(!r.ok)throw std::runtime_error("invalid block JSON");
         const auto& value=*std::get<hua::JsonValue>(r.payload->data).data;const auto& rows=array(value);
         if(rows.empty()||rows.size()>1024||rows.size()>maximum-total)throw std::runtime_error("block record budget");
@@ -68,7 +68,7 @@ static int run(const std::vector<std::string>& args){
         if(!stream||stream.tellg()<0||stream.tellg()>16*1024*1024)throw std::runtime_error("cannot read bounded image");
         stream.seekg(0);hua::ManagedHeap heap{65536};hua::HeapScope scope{heap};
         auto decoded=hua::json_decode(std::string(std::istreambuf_iterator<char>(stream),{}));
-        const auto& r=std::get<hua::ResultValue>(decoded.data);if(!r.ok)throw std::runtime_error("invalid image JSON");
+        const auto& r=hua::cget<hua::ResultValue>(decoded.data);if(!r.ok)throw std::runtime_error("invalid image JSON");
         const auto& j=*std::get<hua::JsonValue>(r.payload->data).data;
         const bool packed=str(field(j,"schema"))=="hua.bytecode.image.v2";
         if((!packed&&str(field(j,"schema"))!="hua.bytecode.image.v1")||str(field(j,"profile"))!="C06-BC1"||str(field(j,"status"))!="ok")throw std::runtime_error("invalid image envelope");

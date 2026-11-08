@@ -25,8 +25,8 @@ Value chain(unsigned count){
     return value;
 }
 Callable captured(const std::shared_ptr<LifetimeCapture>& env){
-    Callable result;result.closure=env;std::weak_ptr<LifetimeCapture> weak=env;
-    result.resource_guard=[weak](unsigned depth){if(auto c=weak.lock())for(const auto& v:c->values)if(contains_file(v,depth+1))return true;return false;};
+    Callable result;result.set_closure(env);std::weak_ptr<LifetimeCapture> weak=env;
+    result.set_resource_guard([weak](unsigned depth){if(auto c=weak.lock())for(const auto& v:c->values)if(contains_file(v,depth+1))return true;return false;});
     return result;
 }
 void copy_limits(){
@@ -52,7 +52,7 @@ void views_and_aliases(){
     Value safe(SliceValue{storage,0,1,true,""}),unsafe(SliceValue{storage,1,1,true,""});
     check(!contains_file(safe)&&contains_file(unsafe),"slice visible ranges");
     auto pair=managed<MultiData>();pair->values={safe,unsafe};rejects([&]{copy_value(Value(MultiValue{pair}),true);},"E4007");
-    auto cloned=copy_value(safe,true);check(as_int(sequence_read(std::get<SliceValue>(cloned.data),0),{})==3,"safe view clone");
+    auto cloned=copy_value(safe,true);check(as_int(sequence_read(cget<SliceValue>(cloned.data),0),{})==3,"safe view clone");
     auto child=managed<ListData>();child->values.emplace_back(std::int64_t{9});
     auto parent=managed<ListData>();parent->values={Value(ListValue{child,false}),Value(ListValue{child,false})};
     auto copied=std::get<ListValue>(copy_value(Value(ListValue{parent,false}),true).data);
@@ -69,7 +69,7 @@ void closure_scan(){
     capture->values.push_back(chain(81));rejects([&]{contains_file(Value(fn));},"E4099");capture->values.pop_back();
     check(!contains_file(Value(fn)),"exception restores resource scan context");
     fn={};std::weak_ptr<LifetimeCapture> weak=capture;capture.reset();heap.collect();check(weak.expired()&&heap.live()==0,"closure cycle released");
-    Callable native;native.resource_guard=[](unsigned){return true;};rejects([&]{copy_value(Value(native),true);},"E4007");
+    Callable native;native.set_resource_guard([](unsigned){return true;});rejects([&]{copy_value(Value(native),true);},"E4007");
 }
 void compiler_roots(){
     ++cases;ManagedHeap heap(8192);HeapScope scope(heap);
@@ -84,7 +84,7 @@ void compiler_roots(){
     auto address=witnesses[0].lock().get();auto before=heap.live();check(heap.collect()==0&&heap.live()==before,"AST/symbol roots");
     for(unsigned i=0;i<witnesses.size();++i){auto node=witnesses[i].lock();check(node&&value_kind(node->fields.at("text"))==4,"AST/string root retained");}
     check(witnesses[0].lock().get()==address,"AST address stable");
-    auto payload=std::get<ResultValue>(symbols->entries.at("0").data).payload;
+    auto payload=cget<ResultValue>(symbols->entries.at("0").data).payload;
     auto view=nodes->values[0];nodes.reset();symbols.reset();heap.collect();
     check(!witnesses[0].expired()&&witnesses[1].expired(),"Result and view roots");
     payload.reset();view={};heap.collect();check(heap.live()==0&&witnesses[0].expired(),"compiler graph release");

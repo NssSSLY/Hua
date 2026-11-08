@@ -6,7 +6,7 @@
 #include <unordered_map>
 using namespace hua;
 namespace {
-Value member(const Value& value,const std::string& key){if(auto p=std::get_if<PlainRecord>(&value.data))return *plain_record_field(*p,key);return std::get<StructValue>(value.data).data->fields.at(key);}
+Value member(const Value& value,const std::string& key){if(auto p=cget_if<PlainRecord>(&value.data))return *plain_record_field(*p,key);return std::get<StructValue>(value.data).data->fields.at(key);}
 std::string string(const Value& value){return hua::string_value(value.data);}
 std::int64_t integer(const Value& value){return std::get<std::int64_t>(value.data);}
 const auto& entries(const Value& value){return std::get<MapValue>(value.data).data->entries;}
@@ -16,7 +16,7 @@ std::string owner(const Value& state,const Value& environment,const Value& id){
  auto refs=member(state,"refs");auto ref=entries(refs).find(string(member(member(environment,"unit"),"id"))+":"+std::to_string(index));
  if(kind=="Name"||(kind=="Member"&&ref!=entries(refs).end()))return ref==entries(refs).end()?"":string(ref->second);
  if(kind!="Member")return "";
- return owner(state,environment,sequence_copy_source(std::get<SliceValue>(member(node,"children").data),0));
+ return owner(state,environment,sequence_copy_source(cget<SliceValue>(member(node,"children").data),0));
 }
 void append(std::string& out,const std::string& value){out+=std::to_string(value.size())+":"+value;}
 struct Observer:VMCallObserver {
@@ -36,7 +36,7 @@ struct Observer:VMCallObserver {
   }
   if(name=="invoke"){
    ++invokes;Call call;auto state=args[0],env=args[1],node=args[2],function=args[3];std::string key=string(member(function,"target"));
-   auto versions=member(env,"versions"),values=member(env,"values");auto children=std::get<SliceValue>(member(node,"children").data);bool valid=true;
+   auto versions=member(env,"versions"),values=member(env,"values");auto children=cget<SliceValue>(member(node,"children").data);bool valid=true;
    for(std::size_t i=1;i<children.length;++i){auto source=owner(state,env,sequence_copy_source(children,i));if(source.empty()||!entries(values).contains(source)){valid=false;break;}append(key,source);auto version=entries(versions).find(source);key+=":"+std::to_string(version==entries(versions).end()?0:integer(version->second));}
    if(valid){for(const auto& [global,unused]:entries(member(state,"global_symbols"))){append(key,std::get<std::string>(global));auto version=entries(versions).find(global);key+=":"+std::to_string(version==entries(versions).end()?0:integer(version->second));}
     auto site=string(member(member(env,"unit"),"id"))+":"+std::to_string(integer(member(member(node,"id"),"index")));

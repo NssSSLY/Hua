@@ -65,9 +65,9 @@ P convert(const Value& v,std::size_t depth,std::size_t& nodes){if(depth>max_dept
     if(auto numeric=std::get_if<NumericValue>(&v.data)){try{auto number=convert_numeric(v,numeric_spec(numeric->type)->category=='f'?"float":"int",{},true);if(auto x=std::get_if<I>(&number.data))return node(*x);return node(std::get<double>(number.data));}catch(const Diagnostic&){throw Failure("JSON numeric value is outside int64/finite float64 range");}}
     if(auto p=std::get_if<JsonValue>(&v.data))return p->data;
     if(v.data.index()==0)return node(std::monostate{});if(auto p=std::get_if<bool>(&v.data))return node(*p);if(auto p=std::get_if<I>(&v.data))return node(*p);if(auto p=std::get_if<double>(&v.data))return node(*p);if(auto p=hua::string_data(&v.data))return node(*p);
-    if(auto p=std::get_if<SliceValue>(&v.data)){A out;for(std::size_t i=0;i<p->length;++i)out.push_back(convert(sequence_copy_source(*p,i),depth+1,nodes));return node(std::move(out));}
+    if(auto p=cget_if<SliceValue>(&v.data)){A out;for(std::size_t i=0;i<p->length;++i)out.push_back(convert(sequence_copy_source(*p,i),depth+1,nodes));return node(std::move(out));}
     if(auto p=std::get_if<MapValue>(&v.data)){if(p->data->key_type!="string")throw Failure("JSON objects require string Map keys");O out;for(const auto& [k,x]:p->data->entries)out.emplace(std::get<std::string>(k),convert(x,depth+1,nodes));return node(std::move(out));}
-    if(auto p=std::get_if<PlainRecord>(&v.data)){O out;for(const auto& f:p->layout->fields)out.emplace(f.name,convert(*plain_record_field(*p,f.name),depth+1,nodes));return node(std::move(out));}
+    if(auto p=cget_if<PlainRecord>(&v.data)){O out;for(const auto& f:p->layout->fields)out.emplace(f.name,convert(*plain_record_field(*p,f.name),depth+1,nodes));return node(std::move(out));}
     if(auto p=std::get_if<StructValue>(&v.data)){if(p->data->fields.contains("$case"))throw Failure("enum JSON encoding requires an explicit representation");O out;for(const auto& [k,x]:p->data->fields)out.emplace(k,convert(x,depth+1,nodes));return node(std::move(out));}
     throw Failure("unsupported JSON value type: "+display_type(value_type(v)));
 }
@@ -85,7 +85,7 @@ Value json_construct(const std::string& op,const std::vector<Value>& args,const 
     if(op=="null")return Value(JsonValue{node(std::monostate{})});
     if(op=="from"){try{std::size_t nodes=0;return built(convert(args[0],0,nodes));}catch(const Failure& e){return failed("Json",e.what());}}
     if(op=="array"){
-        const auto& items=std::get<SliceValue>(args[0].data);A out;out.reserve(items.length);
+        const auto& items=cget<SliceValue>(args[0].data);A out;out.reserve(items.length);
         for(std::size_t i=0;i<items.length;++i)out.push_back(payload(sequence_read(items,i)));
         auto p=node(std::move(out));if(p->height>max_depth)runtime_error(s,too_deep,"E4099");return Value(JsonValue{std::move(p)});
     }
@@ -123,7 +123,7 @@ Value json_construct(const std::string& op,const std::vector<Value>& args,const 
         const auto n=values->size();return result("[]Json",Value(SliceValue{std::move(values),0,n,false,"Json"}));
     }
     if(op=="encode_lines"){
-        const auto& items=std::get<SliceValue>(args[0].data);
+        const auto& items=cget<SliceValue>(args[0].data);
         try{Writer writer;for(std::size_t i=0;i<items.length;++i){writer.value(payload(sequence_read(items,i)));writer.add("\n");}return result("string",Value(std::move(writer.out)));}catch(const Failure& e){return failed("string",e.what());}
     }
     runtime_error(s,"unknown json operation","E4003");

@@ -8,7 +8,7 @@ namespace {
 unsigned checks{},cases{};
 void check(bool value,const char* reason){++checks;if(!value)throw std::runtime_error(reason);}
 Value number(std::int64_t n){return Value(n);}
-Value unwrap(const Value& value){auto& r=std::get<ResultValue>(value.data);if(!r.ok)throw std::runtime_error(show(value));return r.payload?*r.payload:Value{};}
+Value unwrap(const Value& value){auto& r=cget<ResultValue>(value.data);if(!r.ok)throw std::runtime_error(show(value));return r.payload?*r.payload:Value{};}
 Routine<Value> nested_wait(TaskRuntime& runtime,Value value){co_await Yield{true};co_return co_await runtime.await_async(value,{});}
 void nested_and_races(){
     ++cases;RuntimeContext context;std::ostringstream out;TaskRuntime runtime(context,out);context.tasks=&runtime;

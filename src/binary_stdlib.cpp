@@ -8,7 +8,7 @@ using I=std::int64_t;
 constexpr std::size_t max_bytes=128*1024*1024,max_text=16*1024*1024,max_items=1000000;
 Value bytes(std::string text){return Value(BytesValue{managed<const std::string>(std::move(text))});}
 std::string integer_bytes(std::uint64_t bits,unsigned count){std::string out;for(unsigned i=0;i<count;++i)out+=static_cast<char>((bits>>(i*8))&255);return out;}
-std::string item_type(const std::string& type){auto items=type_arguments(type,"List");return items.size()==1?items[0]:"";}
+std::string item_type(const std::string& type){const auto& items=type_arguments(type,"List");return items.size()==1?items[0]:"";}
 }
 StandardSignature standard_signature(const StandardFunction& f,const std::vector<std::string>& types){
     StandardSignature out{f.parameters,f.result};
@@ -27,14 +27,14 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
     }
     if(f.module=="simd"&&f.name!="backend"&&types.size()==2){auto close=types[0].find(']');auto element=types[0].starts_with('[')&&close!=std::string::npos?types[0].substr(close+1):"";if(!element.empty()){out.parameters={"[]"+element,"[]"+element};out.result="Result<[]"+element+",string>";}return out;}
     if(f.module=="task"&&!types.empty()){
-        auto task=type_arguments(types[0],"Task");if(task.size()==1){out.parameters[0]=types[0];if(f.name=="all"||f.name=="race")out.parameters[1]=types[0];
+        const auto& task=type_arguments(types[0],"Task");if(task.size()==1){out.parameters[0]=types[0];if(f.name=="all"||f.name=="race")out.parameters[1]=types[0];
             if(f.name=="timeout")out.result="Result<"+task[0]+",string>";
             if(f.name=="all")out.result="Task<[]"+task[0]+">";
             if(f.name=="race")out.result=types[0];}return out;
     }
     if(f.since>=10&&(f.module=="maps"||f.module=="sets")&&!types.empty()){
         if(f.module=="sets"&&f.name=="from_slice"){auto end=types[0].find(']');auto key=types[0].starts_with('[')&&end!=std::string::npos?types[0].substr(end+1):"";out.result=key.empty()?"":"map<"+key+",bool>";return out;}
-        auto kv=type_arguments(types[0],"map");if(kv.size()!=2)return out;
+        const auto& kv=type_arguments(types[0],"map");if(kv.size()!=2)return out;
         out.parameters[0]=types[0];
         if(f.module=="sets"){out.parameters[1]=types.size()>1?types[1]:"";out.result=f.name=="is_subset"||f.name=="is_disjoint"?"bool":"map<"+kv[0]+",bool>";return out;}
         if(f.name=="keys")out.result="[]"+kv[0];
@@ -81,7 +81,7 @@ StandardSignature standard_signature(const StandardFunction& f,const std::vector
 Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s){
     // invoke_standard has already checked the specialized signature and arguments.
     // List success metadata comes from its checked backing type, without reparsing List<T>.
-    auto result=type_arguments(f.result,"Result");auto success=result.empty()?"":result[0];
+    const auto& result=type_arguments(f.result,"Result");auto success=result.empty()?"":result[0];
     if(f.module=="list"&&(f.name=="get"||f.name=="pop")){
         auto list=std::get_if<ListValue>(&args[0].data);
         if(!list||!list->data)runtime_error(s,"expected List<T>","E4003");
@@ -92,7 +92,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
     auto integer=[&](std::size_t i){return as_int(args[i],s);};
     if(f.module=="list"){
         if(f.name=="from_slice"){
-            auto source=std::get_if<SliceValue>(&args[0].data);if(!source||source->element_type.empty())runtime_error(s,"from_slice requires a typed slice/array","E4003");
+            auto source=cget_if<SliceValue>(&args[0].data);if(!source||source->element_type.empty())runtime_error(s,"from_slice requires a typed slice/array","E4003");
             if(source->length>max_items)runtime_error(s,"list item limit exceeded","E4099");
             auto data=managed<ListData>();data->element_type=source->element_type;data->values.reserve(source->length);
             for(std::size_t i=0;i<source->length;++i)data->values.push_back(copy_value(sequence_read(*source,i),true,0,true));
@@ -106,7 +106,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
         if(f.name=="reserve"){auto n=integer(1);if(n<0||n>static_cast<I>(max_items))return err("list capacity outside 0..1000000");auto capacity=static_cast<std::size_t>(n);bool changed=capacity>data.values.capacity();if(changed)data.values.reserve(capacity);return ok(Value(changed));}
         if(f.name=="pop"){if(data.values.empty())return err("cannot pop an empty list");auto value=copy_value(read_only(data.values.back()));data.values.pop_back();return ok(std::move(value));}
         if(f.name=="append"){if(data.values.size()>=max_items)return err("list item limit exceeded");auto value=copy_value(enforce_type(args[1],data.element_type,s));data.values.push_back(std::move(value));return ok(Value(static_cast<I>(data.values.size())));}
-        if(f.name=="extend"){auto source=std::get_if<SliceValue>(&args[1].data);if(!source)runtime_error(s,"extend requires a slice/array","E4003");if(source->length>max_items-data.values.size())return err("list item limit exceeded");std::vector<Value> extra;extra.reserve(source->length);for(std::size_t i=0;i<source->length;++i)extra.push_back(copy_value(enforce_type(sequence_read(*source,i),data.element_type,s)));data.values.insert(data.values.end(),extra.begin(),extra.end());return ok(Value(static_cast<I>(data.values.size())));}
+        if(f.name=="extend"){auto source=cget_if<SliceValue>(&args[1].data);if(!source)runtime_error(s,"extend requires a slice/array","E4003");if(source->length>max_items-data.values.size())return err("list item limit exceeded");std::vector<Value> extra;extra.reserve(source->length);for(std::size_t i=0;i<source->length;++i)extra.push_back(copy_value(enforce_type(sequence_read(*source,i),data.element_type,s)));data.values.insert(data.values.end(),extra.begin(),extra.end());return ok(Value(static_cast<I>(data.values.size())));}
     }
     if(f.module=="buffer"){
         if(f.name=="new")return Value(BufferValue{managed<std::string>(),true});
@@ -129,7 +129,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
     }
     if(f.module=="bytes"){
         if(f.name=="from_text"){const auto& text=hua::string_value(args[0].data);if(text.size()>max_text)runtime_error(s,"text exceeds 16 MiB","E4099");auto invalid=text_utf8_error(text);if(!invalid.empty())runtime_error(s,invalid,"E4003");return bytes(text);}
-        if(f.name=="from_ints"){const auto& source=std::get<SliceValue>(args[0].data);if(source.length>max_items)return err("byte input exceeds 1000000 items");std::string out;out.reserve(source.length);for(std::size_t i=0;i<source.length;++i){auto value=as_int(sequence_read(source,i),s);if(value<0||value>255)return err("byte outside 0..255");out+=static_cast<char>(value);}return ok(bytes(std::move(out)));}
+        if(f.name=="from_ints"){const auto& source=cget<SliceValue>(args[0].data);if(source.length>max_items)return err("byte input exceeds 1000000 items");std::string out;out.reserve(source.length);for(std::size_t i=0;i<source.length;++i){auto value=as_int(sequence_read(source,i),s);if(value<0||value>255)return err("byte outside 0..255");out+=static_cast<char>(value);}return ok(bytes(std::move(out)));}
         if(f.name=="u32_le"){auto value=integer(0);if(value<0||value>4294967295LL)return err("u32 outside 0..4294967295");return ok(bytes(integer_bytes(static_cast<std::uint64_t>(value),4)));}
         if(f.name=="i64_le")return bytes(integer_bytes(std::bit_cast<std::uint64_t>(integer(0)),8));
         auto handle=std::get_if<BytesValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Bytes","E4003");const auto& data=*handle->data;

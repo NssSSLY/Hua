@@ -293,7 +293,7 @@ Value bytes_value(std::string text) { return Value(BytesValue{managed<const std:
 }
 Value invoke_process_standard(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& s, RuntimeContext* context) {
     Request request;
-    const auto& argv = std::get<SliceValue>(args[0].data);
+    const auto& argv = cget<SliceValue>(args[0].data);
     if (argv.length == 0) runtime_error(s, "process argv must not be empty", "E4003");
     auto started = [](std::string problem) { return make_multi({Value(I{-1}), bytes_value({}), bytes_value({}), Value(std::move(problem))}); };
     for (std::size_t i = 0; i < argv.length; ++i) {

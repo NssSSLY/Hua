@@ -50,7 +50,7 @@ ErrorValue error(FileHostFailure f,std::string_view op){
     return {managed<const ErrorData>(std::move(d))};
 }
 Value result(Value payload,bool ok,std::string type,std::string err="std.error.Value"){
-    return Value(ResultValue{ok,managed<Value>(std::move(payload)),std::move(type),std::move(err),true,false});
+    return Value(ResultValue{ok,result_box(std::move(payload)),std::move(type),std::move(err),true,false});
 }
 Value void_ok(){return Value(ResultValue{true,{},"void","std.error.Value",true,false});}
 Value failed(FileHostFailure f,std::string_view op,std::string type){return result(Value(error(f,op)),false,std::move(type));}
@@ -452,7 +452,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
             assign(detail->native_domain,observed.error.native_domain,128);detail->native_code=observed.error.native_code;
             issue->transferred=observed.transferred;issue->partial=bytes;return unsuccessful;
         }
-        *std::get<ResultValue>(success.data).payload=f.name=="read"?(bytes?Value(*bytes):Value{}):Value(*observed.transferred);
+        *cget<ResultValue>(success.data).payload=f.name=="read"?(bytes?Value(*bytes):Value{}):Value(*observed.transferred);
         return success;
     }
     // All position/flush operations also reserve an operation and prevent close until native return.

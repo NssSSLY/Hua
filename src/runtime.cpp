@@ -33,7 +33,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
     if(info.core==CoreBuiltin::task_await){if(args.size()!=1||!context||!context->tasks)runtime_error(span,"invalid task await","E4103");return context->tasks->await(args[0],span);}
     if(info.core==CoreBuiltin::task_group_begin){if(!args.empty()||!context||!context->tasks)runtime_error(span,"invalid taskgroup","E4103");return Value(static_cast<I>(context->tasks->begin_group()));}
     if(info.core==CoreBuiltin::task_group_end){if(args.size()!=1||!context||!context->tasks)runtime_error(span,"invalid taskgroup","E4103");context->tasks->end_group(static_cast<std::size_t>(as_int(args[0],span)),span);return {};}
-    if(info.core==CoreBuiltin::simd_check){if(args.size()!=1)runtime_error(span,"invalid SIMD metadata","E4104");auto array=std::get_if<SliceValue>(&args[0].data);if(!array||!numeric_spec(array->element_type))runtime_error(span,"SIMD requires a numeric array","E4104");return {};}
+    if(info.core==CoreBuiltin::simd_check){if(args.size()!=1)runtime_error(span,"invalid SIMD metadata","E4104");auto array=cget_if<SliceValue>(&args[0].data);if(!array||!numeric_spec(array->element_type))runtime_error(span,"SIMD requires a numeric array","E4104");return {};}
     if(info.standard)return record_failure_source(invoke_standard(*info.standard,args,span,output,context),span);
     auto arity=(info.core==CoreBuiltin::min||info.core==CoreBuiltin::max||info.core==CoreBuiltin::has||info.core==CoreBuiltin::delete_||info.core==CoreBuiltin::unwrap_or)?2u:info.core==CoreBuiltin::clamp?3u:1u;
     if(info.core!=CoreBuiltin::print && !(info.core==CoreBuiltin::ok&&args.empty()) && args.size()!=arity)runtime_error(span,"builtin argument count mismatch","E4003");
@@ -42,14 +42,14 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
         return convert_numeric(args[0],name,span,true);
     }
     if((info.core==CoreBuiltin::int_||info.core==CoreBuiltin::float_)&&std::holds_alternative<NumericValue>(args[0].data))return convert_numeric(args[0],name,span,true);
-    if(info.core==CoreBuiltin::ok&&args.empty()){auto types=type_arguments(result_type,"Result");if(types.size()!=2||types[0]!="void"||types[1].empty())runtime_error(span,"ok() requires Result<void,E> metadata","E4003");return Value(ResultValue{true,nullptr,"void",types[1],false,false});}
-    if(info.core==CoreBuiltin::ok||info.core==CoreBuiltin::err){bool ok=info.core==CoreBuiltin::ok;auto v=copy_value(args[0]);auto type=value_type(v);return record_failure_source(Value(ResultValue{ok,managed<Value>(std::move(v)),ok?type:"",ok?"":type,true,!contextual.empty()&&contextual[0]}),span);}
-    if(info.core==CoreBuiltin::is_ok||info.core==CoreBuiltin::is_err){auto r=std::get_if<ResultValue>(&args[0].data);if(!r)runtime_error(span,"expected Result","E4003");return Value(r->ok==(info.core==CoreBuiltin::is_ok));}
+    if(info.core==CoreBuiltin::ok&&args.empty()){const auto& types=type_arguments(result_type,"Result");if(types.size()!=2||types[0]!="void"||types[1].empty())runtime_error(span,"ok() requires Result<void,E> metadata","E4003");return Value(ResultValue{true,nullptr,"void",types[1],false,false});}
+    if(info.core==CoreBuiltin::ok||info.core==CoreBuiltin::err){bool ok=info.core==CoreBuiltin::ok;auto v=copy_value(args[0]);auto type=value_type(v);return record_failure_source(Value(ResultValue{ok,result_box(std::move(v)),ok?type:"",ok?"":type,true,!contextual.empty()&&contextual[0]}),span);}
+    if(info.core==CoreBuiltin::is_ok||info.core==CoreBuiltin::is_err){auto r=cget_if<ResultValue>(&args[0].data);if(!r)runtime_error(span,"expected Result","E4003");return Value(r->ok==(info.core==CoreBuiltin::is_ok));}
     if(info.core==CoreBuiltin::is_some||info.core==CoreBuiltin::is_none)return Value((args[0].data.index()!=0)==(info.core==CoreBuiltin::is_some));
     if(info.core==CoreBuiltin::unwrap_err)return result_payload(args[0],false,span);
-    if(info.core==CoreBuiltin::unwrap) {if(std::holds_alternative<ResultValue>(args[0].data))return result_payload(args[0],true,span);if(args[0].data.index()==0)runtime_error(span,"cannot unwrap nil Optional","E4009");return copy_value(args[0]);}
+    if(info.core==CoreBuiltin::unwrap) {if(holds<ResultValue>(args[0].data))return result_payload(args[0],true,span);if(args[0].data.index()==0)runtime_error(span,"cannot unwrap nil Optional","E4009");return copy_value(args[0]);}
     if(info.core==CoreBuiltin::unwrap_or) {
-        if(auto r=std::get_if<ResultValue>(&args[0].data)){auto fallback=enforce_type(args[1],r->success_type,span,contextual.size()>1&&contextual[1]);return r->ok?result_payload(args[0],true,span):copy_value(fallback);}
+        if(auto r=cget_if<ResultValue>(&args[0].data)){auto fallback=enforce_type(args[1],r->success_type,span,contextual.size()>1&&contextual[1]);return r->ok?result_payload(args[0],true,span):copy_value(fallback);}
         if(args[0].data.index()==0)return copy_value(enforce_type(args[1],result_type,span,contextual.size()>1&&contextual[1]));enforce_type(args[1],value_type(args[0]),span,contextual.size()>1&&contextual[1]);return copy_value(args[0]);
     }
     if(info.core==CoreBuiltin::has||info.core==CoreBuiltin::delete_) {
@@ -68,7 +68,7 @@ Value invoke_builtin(const BuiltinInfo& info,const std::string& name,const std::
     }
     if(info.core==CoreBuiltin::len) {
         if(auto p=std::get_if<MapValue>(&args[0].data))return Value(static_cast<I>(p->data->entries.size()));
-        if(auto p=std::get_if<SliceValue>(&args[0].data))return Value(static_cast<I>(p->length));
+        if(auto p=cget_if<SliceValue>(&args[0].data))return Value(static_cast<I>(p->length));
         if(auto p=hua::string_data(&args[0].data))return Value(static_cast<I>(p->size()));
         runtime_error(span,"len requires a slice or string","E4003");
     }

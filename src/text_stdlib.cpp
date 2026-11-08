@@ -119,7 +119,7 @@ unsigned digit(char c) {
 }
 
 Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& s) {
-    auto result = type_arguments(f.result, "Result");
+    const auto& result = type_arguments(f.result, "Result");
     const std::string success = result.empty() ? "" : result[0];
     auto ok = [&](Value v) { return standard_result(std::move(v), true, success); };
     auto err = [&](std::string text) { return standard_result(Value(std::move(text)), false, success); };
@@ -127,7 +127,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
     const auto& n = f.name;
 
     if (n == "from_codepoints") {
-        auto items = std::get_if<SliceValue>(&args[0].data);
+        auto items = cget_if<SliceValue>(&args[0].data);
         if (!items) runtime_error(s, "from_codepoints requires an int slice or array", "E4003");
         std::string out;
         out.reserve(items->length);
@@ -370,7 +370,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
         return ok(Value(value));
     }
     if (n == "format") {
-        const auto& items = std::get<SliceValue>(args[1].data);
+        const auto& items = cget<SliceValue>(args[1].data);
         std::string out, problem;
         std::size_t next = 0;
         auto resolve = [&](std::string_view key) -> const std::string* {

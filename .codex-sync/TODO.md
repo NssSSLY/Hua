@@ -95,7 +95,7 @@
 
 - 文本/UTF-8 8接口已完成并推送（2026-11-07，since23/HUAB23，d835e57）；结果见knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md。
 - 剩余六组已完成并逐组推送（2026-11-07，34函数，since24–29，27模块374函数）；见knowledge/bootstrap-performance/designs/2026-11-07-p1-remaining-six-groups-proposal.md。
-- P1只剩通用Reader/Writer（RS-DEC-01，需单独设计）；流式子进程未做；POSIX子进程未验证。下一项由用户选择：P2、路线第6步或VM提速S2-2。
+- P1只剩通用Reader/Writer（RS-DEC-01，需单独设计）；流式子进程未做；POSIX子进程未验证。VM提速S2-2a（作用域复用与绑定槽）已完成未提交（2026-11-07，算术1.46x、调用1.12x、真实编译持平）；2026-11-08用户选择路线重排：先做V1结构体COW，细化设计knowledge/bootstrap-performance/designs/2026-11-08-v1-struct-cow-design.md待审定（V1-D1–D4）；审定后先V1a（框架，共享关闭）再V1b。
 - L0-4仍待selfhost since9–29同步。
 
 - 用户决定是否提交since21/22/23三批；下一项由用户选择

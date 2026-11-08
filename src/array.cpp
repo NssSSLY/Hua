@@ -60,7 +60,7 @@ Value load(const std::shared_ptr<std::string> &bytes, std::size_t offset,
 void store(std::string &bytes, std::size_t offset, const std::string &type,
            const Value &value) {
   if (type.starts_with('[')) {
-    const auto &sequence = std::get<SliceValue>(value.data);
+    const auto &sequence = cget<SliceValue>(value.data);
     auto [count, element] = array_type(type);
     auto stride = *packed_width(element);
     for (std::size_t i = 0; i < count; ++i)
@@ -159,7 +159,7 @@ SliceValue fixed_array(SliceValue s, const std::string &element,
   return result;
 }
 std::size_t value_size(const Value &v, const SourceSpan &span) {
-  if (auto sequence = std::get_if<SliceValue>(&v.data)) {
+  if (auto sequence = cget_if<SliceValue>(&v.data)) {
     if (!sequence->fixed)
       runtime_error(span, "sizeof requires a numeric/bool value or fixed array",
                     "E4003");
@@ -173,7 +173,7 @@ std::size_t value_size(const Value &v, const SourceSpan &span) {
                 "E4003");
 }
 std::size_t value_alignment(const Value &v, const SourceSpan &span) {
-  if (auto sequence = std::get_if<SliceValue>(&v.data)) {
+  if (auto sequence = cget_if<SliceValue>(&v.data)) {
     if (!sequence->fixed)
       runtime_error(span, "alignof requires a fixed array or scalar", "E4003");
     auto type = sequence->element_type;

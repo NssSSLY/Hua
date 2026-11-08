@@ -30,7 +30,7 @@ RngState& state(const Value& v,const SourceSpan& s){
     return *p->data;
 }
 I integer(const Value& v,const SourceSpan& s){auto p=std::get_if<I>(&v.data);if(!p)runtime_error(s,"expected int","E4003");return *p;}
-const SliceValue& slice_arg(const Value& v,const SourceSpan& s){auto p=std::get_if<SliceValue>(&v.data);if(!p)runtime_error(s,"expected a slice or array","E4003");return *p;}
+const SliceValue& slice_arg(const Value& v,const SourceSpan& s){auto p=cget_if<SliceValue>(&v.data);if(!p)runtime_error(s,"expected a slice or array","E4003");return *p;}
 }
 
 Value invoke_random_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s){

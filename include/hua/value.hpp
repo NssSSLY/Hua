@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <variant>
 #include <set>
 #include <unordered_set>
@@ -75,7 +76,31 @@ struct SliceValue {
 // Eight scalar cells cover common identifier/span records without widening
 // the existing SliceValue-sized Value storage. Nominal/type metadata is owned.
 struct PlainRecord {std::shared_ptr<const PlainRecordLayout> layout;std::array<std::uint64_t,8> cells{};bool writable{true};};
-struct StructValue { std::shared_ptr<StructData> data; bool writable{true}; };
+// V1 copy-on-write. A struct body reached only through write paths is mutated in place;
+// copies made by copy_value inside the VM share the body instead (share_ref, counted in
+// StructData::shares). A write path pins every body on it (PinPath) so that a copy taken
+// while the write is pending, or during a mut borrow / mutating method call, is eager.
+// fields_readonly: a writable copy of a read-only source whose reference-typed fields
+// must still read as read-only (A07-1); it is materialized before any write.
+struct PinPath;
+struct StructValue {
+    std::shared_ptr<StructData> data; bool writable{true};
+    bool fields_readonly{false}, share_ref{false};
+    std::shared_ptr<PinPath> path;
+    StructValue()=default;
+    StructValue(std::shared_ptr<StructData> body,bool write=true):data(std::move(body)),writable(write){}
+    // Every handle copied from a share is itself counted: StructData::shares is the number of
+    // live share handles, so a share that changes hands (copy, then the original dies) is kept.
+    StructValue(const StructValue& o):data(o.data),writable(o.writable),fields_readonly(o.fields_readonly),share_ref(o.share_ref),path(o.path){acquire();}
+    StructValue(StructValue&& o)noexcept:data(std::move(o.data)),writable(o.writable),fields_readonly(o.fields_readonly),share_ref(o.share_ref),path(std::move(o.path)){o.share_ref=false;}
+    StructValue& operator=(const StructValue& o){if(this!=&o){release();data=o.data;writable=o.writable;fields_readonly=o.fields_readonly;share_ref=o.share_ref;path=o.path;acquire();}return *this;}
+    StructValue& operator=(StructValue&& o)noexcept{if(this!=&o){release();data=std::move(o.data);writable=o.writable;fields_readonly=o.fields_readonly;share_ref=o.share_ref;o.share_ref=false;path=std::move(o.path);}return *this;}
+    ~StructValue(){release();}
+    inline void release()noexcept;
+    inline void acquire()noexcept;
+};
+// Copy policy: true while a VirtualMachine runs on this thread (AST interpreter: eager).
+inline thread_local bool cow_values=false;
 // Builtin names are interned for the process lifetime: function values are
 // loaded and copied very often, and copying the name is then a pointer copy.
 class BuiltinName {
@@ -89,8 +114,22 @@ public:
     bool empty() const {return text_->empty();}
     friend bool operator==(const BuiltinName& a,std::string_view b){return *a.text_==b;}
 };
-struct Callable { const Node* function{}; BuiltinName builtin; std::optional<StructValue> receiver; std::shared_ptr<void> closure;std::function<bool(unsigned)> resource_guard;
-    Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)),receiver(std::move(object)),closure(std::move(captured)){}
+// V6: a plain function value is three pointers (copy without atomics); the rarely present
+// receiver/closure/resource guard live in a shared, immutable extra (set_* copies it).
+struct CallableExtra { std::optional<StructValue> receiver; std::shared_ptr<void> closure; std::function<bool(unsigned)> resource_guard; };
+struct Callable { const Node* function{}; BuiltinName builtin; std::shared_ptr<const CallableExtra> extra;
+    Callable(const Node* fn=nullptr,std::string name={},std::optional<StructValue> object={},std::shared_ptr<void> captured={}):function(fn),builtin(std::move(name)){
+        if(object||captured){auto e=std::make_shared<CallableExtra>();e->receiver=std::move(object);e->closure=std::move(captured);extra=std::move(e);}
+    }
+    const std::optional<StructValue>& receiver()const{static const std::optional<StructValue> none;return extra?extra->receiver:none;}
+    const std::shared_ptr<void>& closure()const{static const std::shared_ptr<void> none;return extra?extra->closure:none;}
+    const std::function<bool(unsigned)>& resource_guard()const{static const std::function<bool(unsigned)> none;return extra?extra->resource_guard:none;}
+    void set_receiver(std::optional<StructValue> value){edit().receiver=std::move(value);}
+    void set_closure(std::shared_ptr<void> value){edit().closure=std::move(value);}
+    void set_resource_guard(std::function<bool(unsigned)> value){edit().resource_guard=std::move(value);}
+private:
+    // An unshared extra (just created by this handle) is edited in place.
+    CallableExtra& edit(){if(extra&&extra.use_count()==1)return const_cast<CallableExtra&>(*extra);auto e=extra?std::make_shared<CallableExtra>(*extra):std::make_shared<CallableExtra>();auto& out=*e;extra=std::move(e);return out;}
 };
 // Language strings are immutable. Short text stays inline; long text is shared
 // across loads, calls, snapshots and terminal Task copies. No writable host view.
@@ -100,8 +139,23 @@ public:
     explicit StringValue(std::string text):shared_(std::make_shared<const std::string>(std::move(text))){}
     const std::string& text()const{return *shared_;}
 };
+// V6: the large alternatives (Slice/Result/PlainRecord, 88-120 bytes) are held by a
+// copy-on-write handle so a Value is 48 bytes. Copies share the body; cget* reads it and
+// mget* unshares it first, so each handle still behaves as an independent value. A
+// moved-from handle reads as a default T.
+template<class T> class Cow {
+    std::shared_ptr<T> p_;
+    static const T& empty(){static const T value{};return value;}
+public:
+    Cow()=default;
+    Cow(T value):p_(std::make_shared<T>(std::move(value))){}
+    const T& get()const{return p_?*p_:empty();}
+    T& mut(){if(!p_)p_=std::make_shared<T>();else if(p_.use_count()!=1)p_=std::make_shared<T>(*p_);return *p_;}
+    const T* operator->()const{return &get();}
+    const T& operator*()const{return get();}
+};
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, SliceValue, StructValue, Callable, MapValue, MultiValue, ResultValue, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue>;
+    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue>;
     Data data;
     Value() = default;
     explicit Value(const char* text):Value(std::string(text)){}
@@ -111,6 +165,15 @@ struct Value {
     }
     template<class T> explicit Value(T value) : data(std::move(value)) {}
 };
+template<class T> struct is_cow_alternative:std::bool_constant<std::is_same_v<T,SliceValue>||std::is_same_v<T,ResultValue>>{};
+template<class T> using data_alternative=std::conditional_t<is_cow_alternative<T>::value,Cow<T>,T>;
+// Read access to any alternative (works for all, boxed or not).
+template<class T> const T* cget_if(const Value::Data* d){if constexpr(is_cow_alternative<T>::value){auto b=std::get_if<Cow<T>>(d);return b?&b->get():nullptr;}else return std::get_if<T>(d);}
+template<class T> const T& cget(const Value::Data& d){if constexpr(is_cow_alternative<T>::value)return std::get<Cow<T>>(d).get();else return std::get<T>(d);}
+// Write access: unshares a boxed body first.
+template<class T> T* mget_if(Value::Data* d){if constexpr(is_cow_alternative<T>::value){auto b=std::get_if<Cow<T>>(d);return b?&b->mut():nullptr;}else return std::get_if<T>(d);}
+template<class T> T& mget(Value::Data& d){if constexpr(is_cow_alternative<T>::value)return std::get<Cow<T>>(d).mut();else return std::get<T>(d);}
+template<class T> bool holds(const Value::Data& d){return std::holds_alternative<data_alternative<T>>(d);}
 inline const std::string& string_value(const Value::Data& data){if(auto p=std::get_if<std::string>(&data))return *p;return std::get<StringValue>(data).text();}
 inline const std::string* string_data(const Value::Data* data){if(auto p=std::get_if<std::string>(data))return p;auto p=std::get_if<StringValue>(data);return p?&p->text():nullptr;}
 inline std::size_t value_kind(const Value& value){auto kind=value.data.index();return kind==24?4:kind;}
@@ -255,8 +318,21 @@ struct StructData {
     std::string name; RecordFields fields;
     std::shared_ptr<const EnumLayout> enumeration;
     const EnumVariant* variant{}; // Owned by enumeration, never points into an AST/model.
+    // V1 COW bookkeeping (see StructValue). no_share: a long-lived alias (stored mutating
+    // method value, slice view of a fixed-array field) exists, so copies are always eager.
+    std::uint32_t pins{},shares{};bool no_share{};
 };
-struct MapData { std::string key_type, item_type; std::map<MapKey, Value> entries; };
+inline void StructValue::release()noexcept{if(share_ref){if(data&&data->shares)--data->shares;share_ref=false;}}
+inline void StructValue::acquire()noexcept{if(share_ref){if(data)++data->shares;else share_ref=false;}}
+struct PinPath {
+    std::vector<std::shared_ptr<StructData>> bodies;
+    void add(const std::shared_ptr<StructData>& body){++body->pins;bodies.push_back(body);}
+    ~PinPath(){for(auto& body:bodies)--body->pins;}
+};
+}
+#include "hua/map_entries.hpp"
+namespace hua {
+struct MapData { std::string key_type, item_type; MapEntries entries; };
 struct MultiData { std::vector<Value> values; std::vector<bool> contextual; };
 struct ValueLocation {
     Value* value{}; std::string type; bool writable{true}; std::shared_ptr<void> owner;
@@ -273,13 +349,14 @@ void sequence_write(const SliceValue& slice,std::size_t index,const Value& value
 SliceValue fixed_array(SliceValue slice,const std::string& element,const SourceSpan& span,bool contextual);
 std::size_t value_size(const Value& value,const SourceSpan& span);
 std::size_t value_alignment(const Value& value,const SourceSpan& span);
-std::vector<std::string> type_arguments(std::string_view type, std::string_view constructor);
+// Cached per thread; the reference stays valid for the thread's lifetime.
+const std::vector<std::string>& type_arguments(std::string_view type, std::string_view constructor);
 Value make_multi(std::vector<Value> values, std::vector<bool> contextual = {});
 std::vector<Value> unpack_multi(const Value& value, std::size_t count, const SourceSpan& span);
 Value make_map(const std::string& type, const SourceSpan& span);
 MapKey map_key(const MapValue& map, const Value& key, const SourceSpan& span);
 // Single lookup entry for reads (m[k], has, delete, maps.get_or/pop).
-std::map<MapKey, Value>::iterator map_find(const MapValue& map, const Value& key, const SourceSpan& span);
+MapEntries::iterator map_find(const MapValue& map, const Value& key, const SourceSpan& span);
 void map_put(MapValue& map, const Value& key, Value value, const SourceSpan& span, bool contextual = false);
 Value index_value(const Value& base, const Value& index, const SourceSpan& span);
 ValueLocation index_location(Value base, Value index, const SourceSpan& span);
@@ -289,14 +366,20 @@ Value enforce_borrow(Value value,const std::string& type,const SourceSpan& span)
 Value enforce_return(Value value, const Node& function, const SourceSpan& span, bool contextual = false);
 Value enforce_return(Value value, const std::vector<std::string>& types, const SourceSpan& span, bool contextual = false);
 Value aggregate_member(const Value& value, const std::string& name, const SourceSpan& span);
-Value record_failure_source(Value,const SourceSpan&,std::string message="Result error created here");
+Value record_failure_source(Value,const SourceSpan&,std::string_view message="Result error created here");
 Value propagated_error(const Value& value,const SourceSpan& span={});
 Value result_payload(const Value& value, bool success, const SourceSpan& span);
 std::string declared_name(const Node& node);
 std::optional<std::uint64_t> fixed_extent(std::string_view text);
 std::string canonical_type(std::string_view type);
+// canonical_type, cached per thread; the reference stays valid for the thread's lifetime.
+const std::string& canonical_spelling(std::string_view type);
 std::string type_name(const Node& node);
 std::string value_type(const Value& value);
+// value_type(value)==type without building the type text for common kinds.
+bool value_type_is(const Value& value,std::string_view type);
+// True when enforce_type(value,type) is certain to return value unchanged (cheap, no allocation).
+bool enforce_identity(const Value& value,const std::string& type);
 std::string display_type(std::string type);
 std::string show(const Value& value);
 bool compatible(std::string_view expected, std::string_view actual);
@@ -307,6 +390,8 @@ Value unary_value(std::string_view op, const Value& value, const SourceSpan& spa
 Value binary_value(std::string_view op, const Value& left, const Value& right, const SourceSpan& span, bool contextual_right=false);
 bool contains_file(const Value&,unsigned depth=0);
 Value copy_value(const Value& value, bool deep_slices = false, unsigned depth = 0, bool resource_alias = false);
+// Result payload storage: untracked by the collector when the payload cannot form a cycle.
+std::shared_ptr<Value> result_box(Value payload);
 Value copy_value(Value&& value, bool deep_slices = false, unsigned depth = 0, bool resource_alias = false);
 Value read_only(Value value);
 Value enforce_type(Value value, const std::string& expected, const SourceSpan& span, bool contextual_number = false);

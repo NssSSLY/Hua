@@ -39,7 +39,7 @@ static int run(const std::vector<std::string>& args){
         // Interpreter/VM execution continues to select its own default/compiler policy.
         hua::ManagedHeap core_heap{65536};hua::HeapScope core_heap_scope{core_heap};
         const auto decoded=hua::json_decode(std::string(std::istreambuf_iterator<char>(stream),{}));
-        const auto& result=std::get<hua::ResultValue>(decoded.data);
+        const auto& result=hua::cget<hua::ResultValue>(decoded.data);
         if(!result.ok)throw std::runtime_error("invalid core JSON");
         const auto& report=*std::get<hua::JsonValue>(result.payload->data).data;
         if(str(field(report,"schema"))!="hua.core.lowered.v1"||str(field(report,"profile"))!="C05-L1"||str(field(report,"status"))!="ok")throw std::runtime_error("invalid core envelope");

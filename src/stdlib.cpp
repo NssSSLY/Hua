@@ -1,4 +1,5 @@
 #include "hua/stdlib.hpp"
+#include <deque>
 #include "hua/file.hpp"
 #include "hua/tasks.hpp"
 #include "hua/simd.hpp"
@@ -415,7 +416,7 @@ const StandardFunction* standard_function(std::string_view name){
     return found==index.end()?nullptr:found->second;
 }
 bool standard_module(std::string_view name){for(const auto& f:standard_functions())if(name=="std."+f.module)return true;return false;}
-Value standard_result(Value value,bool ok,const std::string& type){return Value(ResultValue{ok,managed<Value>(std::move(value)),type,"string",true,false});}
+Value standard_result(Value value,bool ok,const std::string& type){return Value(ResultValue{ok,result_box(std::move(value)),type,"string",true,false});}
 std::string text_utf8_error(std::string_view s) {
     for(std::size_t i=0;i<s.size();) {auto b=static_cast<unsigned char>(s[i++]);if(b<128)continue;unsigned n;std::uint32_t v,min;
         if(b>=194&&b<=223){n=1;v=b&31;min=128;}else if(b>=224&&b<=239){n=2;v=b&15;min=2048;}else if(b>=240&&b<=244){n=3;v=b&7;min=65536;}else return "invalid UTF-8";
@@ -423,57 +424,86 @@ std::string text_utf8_error(std::string_view s) {
         if(v<min||v>0x10ffff||(v>=0xd800&&v<=0xdfff))return "invalid UTF-8 code point";
     }return {};
 }
+namespace {
+// standard_signature depends only on the function row and its first argument's type at
+// run time, so each (row, type) pair is computed once per thread. A deque keeps returned
+// references valid while a nested (callback) call adds rows.
+thread_local std::unordered_map<const StandardFunction*,std::deque<std::pair<std::string,StandardSignature>>> signature_cache;
+const StandardSignature* cached_signature(const StandardFunction& f,const Value& first,std::size_t count){
+    auto& rows=signature_cache[&f];
+    for(const auto& [type,signature]:rows)if(value_type_is(first,type))return &signature;
+    if(rows.size()>=64)return nullptr;
+    std::vector<std::string> types(count);types[0]=value_type(first);
+    auto key=types[0];rows.emplace_back(std::move(key),standard_signature(f,types));return &rows.back().second;
+}
+// Normalized argument vectors are recycled; a lease (not one buffer) keeps nested calls safe.
+thread_local std::vector<std::vector<Value>> argument_vectors;
+struct ArgumentVector {
+    std::vector<Value> values;
+    ArgumentVector(){if(!argument_vectors.empty()){values=std::move(argument_vectors.back());argument_vectors.pop_back();}}
+    ~ArgumentVector(){values.clear();if(argument_vectors.size()<32&&values.capacity()<=16)argument_vectors.push_back(std::move(values));}
+    ArgumentVector(const ArgumentVector&)=delete;ArgumentVector& operator=(const ArgumentVector&)=delete;
+};
+}
 Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,const SourceSpan& s,std::ostream& output,RuntimeContext* context) {
     if(input.size()!=f.parameters.size())runtime_error(s,"standard function argument count mismatch","E4003");
+    const auto mid=standard_module_id(f);
     // maps/sets check their own map arguments without building signature strings.
-    if(f.since>=10&&(f.module=="maps"||f.module=="sets"))return invoke_collection_standard(f,input,s,context);
+    if(f.since>=10&&(mid==module_code("maps")||mid==module_code("sets")))return invoke_collection_standard(f,input,s,context);
     // std.random draws are one-word operations: check the few argument kinds directly.
-    if(f.since>=13&&f.module=="random")return invoke_random_standard(f,input,s);
-    if(f.since>=14&&f.module=="deque")return invoke_deque_standard(f,input,s);
-    if(f.since>=15&&f.module=="time")return invoke_time_standard(f,input,s);
-    if(f.since>=16&&f.module=="os")return invoke_os_standard(f,input,s,context);
-    if(f.since>=18&&(f.module=="io"||f.module=="test"||f.module=="log"))return invoke_report_standard(f,input,s);
-    if(f.since>=14&&f.module=="heap"&&!f.callback)return invoke_heap_standard(f,input,s);
-    if(f.since>=19&&f.module=="alg")return invoke_algorithm_standard(f,input,s,context);
+    if(f.since>=13&&mid==module_code("random"))return invoke_random_standard(f,input,s);
+    if(f.since>=14&&mid==module_code("deque"))return invoke_deque_standard(f,input,s);
+    if(f.since>=15&&mid==module_code("time"))return invoke_time_standard(f,input,s);
+    if(f.since>=16&&mid==module_code("os"))return invoke_os_standard(f,input,s,context);
+    if(f.since>=18&&(mid==module_code("io")||mid==module_code("test")||mid==module_code("log")))return invoke_report_standard(f,input,s);
+    if(f.since>=14&&mid==module_code("heap")&&!f.callback)return invoke_heap_standard(f,input,s);
+    if(f.since>=19&&mid==module_code("alg"))return invoke_algorithm_standard(f,input,s,context);
     // Only alg/simd/task/list signatures depend on argument types, and only on the
     // first argument's type (simd also on the count); others are the declaration.
-    const bool typed=f.module=="alg"||f.module=="simd"||f.module=="task"||f.module=="list";
-    std::vector<std::string> types;if(typed&&!input.empty()){types.resize(input.size());types[0]=value_type(input[0]);}
-    const auto signature=typed?standard_signature(f,types):StandardSignature{};
-    const auto& parameters=typed?signature.parameters:f.parameters;
-    if(f.module=="math"){
+    const bool typed=mid==module_code("alg")||mid==module_code("simd")||mid==module_code("task")||mid==module_code("list");
+    StandardSignature computed;const StandardSignature* signature=nullptr;
+    if(typed){
+        if(!input.empty())signature=cached_signature(f,input[0],input.size());
+        if(!signature){std::vector<std::string> types(input.size());if(!input.empty())types[0]=value_type(input[0]);computed=standard_signature(f,types);signature=&computed;}
+    }
+    const auto& parameters=typed?signature->parameters:f.parameters;
+    if(mid==module_code("math")){
         // Each math parameter is exactly default float or int: no implicit numeric widening.
         for(std::size_t i=0;i<input.size();++i)if(value_type(input[i])!=f.parameters[i])runtime_error(s,"math requires explicit default "+f.parameters[i]+" arguments","E4003");
         return invoke_algorithm_standard(f,input,s,context);
     }
-    if(f.module=="alg"&&input.size()==2&&value_type(input[1])!=parameters[1])
+    if(mid==module_code("alg")&&input.size()==2&&!value_type_is(input[1],parameters[1]))
         runtime_error(s,"algorithm target requires identical element type","E4003");
-    std::vector<Value> args;args.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}args.push_back(enforce_type(input[i],parameters[i],s));}
+    // Arguments already of their exact parameter type are used as they are, without copies.
+    bool identical=true;for(std::size_t i=0;i<input.size()&&identical;++i)identical=enforce_identity(input[i],parameters[i]);
+    ArgumentVector lease;
+    if(!identical){auto& normalized=lease.values;normalized.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!std::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!std::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=std::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}normalized.push_back(enforce_type(input[i],parameters[i],s));}}
+    const std::vector<Value>& args=identical?input:lease.values;
     if(f.mutates_first){bool writable=false;if(auto p=std::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<RngValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<DequeValue>(&args[0].data))writable=p->writable;if(auto p=std::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
-    if(f.since==28&&f.module=="process")return invoke_process_standard(f,args,s,context);
-    if(f.module=="file")return invoke_file_standard(f,args,s,context);
-    if(f.module=="error")return invoke_error_standard(f,args,s);
-    if(f.module=="path"||(f.module=="fs"&&(f.since>=17||f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
-    if(f.module=="alg")return invoke_algorithm_standard(f,args,s,context);
-    if(f.module=="time"||(f.module=="os"&&f.name=="getenv"))return invoke_system_standard(f,args,s,context);
-    if(f.module=="simd")return simd_standard(f.name,args,s,context);
-    if(f.module=="gc"){auto& heap=managed_heap();auto n=f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected();if(f.name=="collect"&&(!context||!context->resumable||!context->in_task))file_checkpoint(context);return Value(static_cast<I>(n));}
-    if(f.module=="task")return task_standard(f.name,args,s,context);
-    if(f.since>=10&&f.module=="list")return invoke_list_extra(f,args,s,context);
-    if(f.since>=12&&f.module=="encoding")return invoke_encoding_standard(f,args,s);
-    if(f.since>=13&&f.module=="crypto")return invoke_crypto_standard(f,args,s,context);
-    if(f.module=="bytes"||f.module=="buffer"||f.module=="list")return invoke_binary_standard(f,args,s);
-    if(f.module=="strings")for(const auto& v:args)if(auto t=hua::string_data(&v.data))bounded(*t,s);
-    if(f.module=="strings"&&f.since==26)return invoke_unicode_case(f,args,s);
-    if(f.module=="strings"&&f.since>=9)return invoke_text_standard(f,args,s);
-    auto result=type_arguments(f.result,"Result");std::string success=result.empty()?"":result[0];
+    if(f.since==28&&mid==module_code("process"))return invoke_process_standard(f,args,s,context);
+    if(mid==module_code("file"))return invoke_file_standard(f,args,s,context);
+    if(mid==module_code("error"))return invoke_error_standard(f,args,s);
+    if(mid==module_code("path")||(mid==module_code("fs")&&(f.since>=17||f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);
+    if(mid==module_code("alg"))return invoke_algorithm_standard(f,args,s,context);
+    if(mid==module_code("time")||(mid==module_code("os")&&f.name=="getenv"))return invoke_system_standard(f,args,s,context);
+    if(mid==module_code("simd"))return simd_standard(f.name,args,s,context);
+    if(mid==module_code("gc")){auto& heap=managed_heap();auto n=f.name=="collect"?heap.collect():f.name=="live"?heap.live():f.name=="allocated"?heap.allocated():heap.collected();if(f.name=="collect"&&(!context||!context->resumable||!context->in_task))file_checkpoint(context);return Value(static_cast<I>(n));}
+    if(mid==module_code("task"))return task_standard(f.name,args,s,context);
+    if(f.since>=10&&mid==module_code("list"))return invoke_list_extra(f,args,s,context);
+    if(f.since>=12&&mid==module_code("encoding"))return invoke_encoding_standard(f,args,s);
+    if(f.since>=13&&mid==module_code("crypto"))return invoke_crypto_standard(f,args,s,context);
+    if(mid==module_code("bytes")||mid==module_code("buffer")||mid==module_code("list"))return invoke_binary_standard(f,args,s);
+    if(mid==module_code("strings"))for(const auto& v:args)if(auto t=hua::string_data(&v.data))bounded(*t,s);
+    if(mid==module_code("strings")&&f.since==26)return invoke_unicode_case(f,args,s);
+    if(mid==module_code("strings")&&f.since>=9)return invoke_text_standard(f,args,s);
+    const auto& result=type_arguments(f.result,"Result");std::string success=result.empty()?"":result[0];
     auto ok=[&](Value v){return standard_result(std::move(v),true,success);};auto err=[&](std::string text){return standard_result(Value(std::move(text)),false,success);};
     auto text=[&](std::size_t i)->const std::string& {return hua::string_value(args[i].data);};
-    if(f.module=="os") {
+    if(mid==module_code("os")) {
         if(f.name=="args")return strings(context?context->arguments:std::vector<std::string>{});
         try{return ok(Value(utf8(context&&!context->working_directory.empty()?context->working_directory:std::filesystem::current_path())));}catch(const std::filesystem::filesystem_error&){return err("cannot get working directory");}
     }
-    if(f.module=="io") {
+    if(mid==module_code("io")) {
         if(f.name=="write"){if(text(0).size()>max_text)return err("stdout text exceeds 16 MiB");auto invalid=text_utf8_error(text(0));if(!invalid.empty())return err(invalid);output.write(text(0).data(),static_cast<std::streamsize>(text(0).size()));if(!output)return err("stdout write failed");return ok(Value(static_cast<I>(text(0).size())));}
         if(!context||!context->input)return err("stdin is unavailable");auto& stream=*context->input;std::string value;char c;bool any=false,line_end=false;
         while(stream.get(c)){any=true;if(f.name=="read_line"&&c=='\n'){line_end=true;break;}if(value.size()>=max_text)return err("stdin text exceeds 16 MiB");value+=c;}
@@ -482,7 +512,7 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
         if(f.name=="read_line"&&line_end&&!value.empty()&&value.back()=='\r')value.pop_back();
         auto invalid=text_utf8_error(value);if(!invalid.empty())return err(invalid);return ok(Value(std::move(value)));
     }
-    if(f.module=="fs") {
+    if(mid==module_code("fs")) {
         try {
             auto p=path(text(0),context);std::error_code ec;
             if(f.name=="exists"){bool exists=std::filesystem::exists(p,ec);return ec?err("cannot inspect path"):ok(Value(exists));}
@@ -499,8 +529,8 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
             std::ofstream file(p,std::ios::binary|((f.name=="append_text"||f.name=="append_bytes")?std::ios::app:std::ios::trunc));if(!file)return err("cannot open text file for writing");file.write(content.data(),static_cast<std::streamsize>(content.size()));file.flush();if(!file)return err("text file write failed");file.close();if(!file)return err("text file close failed");return ok(Value(true));
         }catch(const std::filesystem::filesystem_error&){return err("filesystem path operation failed");}catch(const std::runtime_error& e){return err(e.what());}
     }
-    if(f.module=="json") {if(f.since==27)return json_construct(f.name,args,s);if(f.name=="decode")return json_decode(text(0));if(f.name=="encode")return json_encode(args[0]);return json_access(f.name,args);}
-    if(f.name=="join"){const auto& slice=std::get<SliceValue>(args[0].data);std::string out;for(std::size_t i=0;i<slice.length;++i){if(i){if(text(1).size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=text(1);}const auto& item=hua::string_value((*slice.storage)[slice.start+i].data);if(item.size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=item;}return Value(std::move(out));}
+    if(mid==module_code("json")) {if(f.since==27)return json_construct(f.name,args,s);if(f.name=="decode")return json_decode(text(0));if(f.name=="encode")return json_encode(args[0]);return json_access(f.name,args);}
+    if(f.name=="join"){const auto& slice=cget<SliceValue>(args[0].data);std::string out;for(std::size_t i=0;i<slice.length;++i){if(i){if(text(1).size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=text(1);}const auto& item=hua::string_value((*slice.storage)[slice.start+i].data);if(item.size()>max_text-out.size())runtime_error(s,"join text exceeds 16 MiB","E4099");out+=item;}return Value(std::move(out));}
     const auto& a=text(0);bounded(a,s);const auto& n=f.name;
     if(n=="len_bytes")return Value(static_cast<I>(a.size()));
     if(n=="contains"||n=="starts_with"||n=="ends_with"||n=="index"){const auto& b=text(1);if(n=="contains")return Value(a.find(b)!=std::string::npos);if(n=="starts_with")return Value(a.starts_with(b));if(n=="ends_with")return Value(a.ends_with(b));auto found=a.find(b);return Value(found==std::string::npos?I{-1}:static_cast<I>(found));}
