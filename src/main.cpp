@@ -1,3 +1,4 @@
+#include "hua/native_backend.hpp"
 #include "hua/ast.hpp"
 #include "hua/lexer.hpp"
 #include "hua/parser.hpp"
@@ -81,6 +82,22 @@ int cli(const std::vector<std::string>& args) {
         std::cout << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
     }
     if (args.size() == 2 && (args[1] == "--help" || args[1] == "help")) { usage(std::cout); return 0; }
+    if(args.size()==5&&args[1]=="native"&&args[3]=="-o"){
+        hua::ModuleLoader native_loader;
+        try{
+            const auto& tree=native_loader.load(std::filesystem::path(std::u8string(args[2].begin(),args[2].end())));auto model=hua::SemanticAnalyzer{}.analyze(tree,native_loader.externals());
+            const auto code=hua::emit_native(tree,model);
+            std::ofstream out(std::filesystem::path(std::u8string(args[4].begin(),args[4].end())),std::ios::binary);out<<code;
+            if(!out){std::cerr<<"error[E0001]: cannot write "<<args[4]<<char(10);return 1;}
+            std::cout<<"Generated "<<args[4]<<char(10);return 0;
+        }catch(const hua::NativeUnsupported& u){std::cerr<<"native: unsupported "<<u.what<<" at "<<u.span.file_id<<':'<<u.span.line<<':'<<u.span.column<<char(10);return 2;}
+        catch(const hua::Diagnostic& d){std::cerr<<"error["<<d.code()<<"]: "<<d.what()<<char(10);return 1;}
+    }
+    if(args.size()==3&&args[1]=="typed-ast"){
+        hua::ModuleLoader typed_loader;
+        try{const auto& tree=typed_loader.load(std::filesystem::path(std::u8string(args[2].begin(),args[2].end())));auto model=hua::SemanticAnalyzer{}.analyze(tree,typed_loader.externals());std::cout<<hua::dump_typed_ast(tree,model);return 0;}
+        catch(const hua::Diagnostic& d){std::cerr<<"error["<<d.code()<<"]: "<<d.what()<<char(10);return 1;}
+    }
     bool build = args.size() >= 3 && args[1] == "build";
     bool execute=args.size()>=3&&(args[1]=="run"||args[1]=="interpret");
     hua::ExecutionOptions execution;
