@@ -8,7 +8,7 @@
 #endif
 namespace hua {namespace {
 template<class T> T scalar(std::string_view op,T a,T b){return op=="add"?a+b:op=="sub"?a-b:a*b;}
-double real(const Value& value,const SourceSpan& span){return std::get<double>(convert_numeric(value,"float",span,true).data);}
+double real(const Value& value,const SourceSpan& span){return hua::get<double>(convert_numeric(value,"float",span,true).data);}
 template<class T> void store(std::string& out,std::size_t index,T value){
     using Bits=std::conditional_t<sizeof(T)==4,std::uint32_t,std::uint64_t>;auto bits=std::bit_cast<Bits>(value);
     for(std::size_t i=0;i<sizeof(T);++i)out[index*sizeof(T)+i]=static_cast<char>((bits>>(8*i))&255);

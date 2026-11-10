@@ -24,5 +24,16 @@ int main(){using namespace hua;ManagedHeap heap;HeapScope scope(heap);
    if(!cycle.expired())throw std::runtime_error("bounded automatic compiler cycle collection");
    compiler.collect();if(compiler.live())throw std::runtime_error("compiler heap finish");
  }
+ {
+   // A slice body shared by a live Value and a Value inside an unreachable cycle: the
+   // collection must not treat the slice storage as unreachable and clear it.
+   ManagedHeap shared_heap;HeapScope shared_scope(shared_heap);
+   auto storage=managed<std::vector<Value>>();storage->emplace_back(std::int64_t{1});storage->emplace_back(std::int64_t{2});
+   Value live(SliceValue{storage,0,2,true,"int"});storage.reset();
+   auto cycle=managed<ListData>();cycle->values.push_back(live);cycle->values.emplace_back(ListValue{cycle,true});cycle.reset();
+   shared_heap.collect();
+   const auto& slice=hua::cget<SliceValue>(live.data);
+   if(!slice.storage||slice.storage->size()!=2||!hua::holds_alternative<std::int64_t>((*slice.storage)[1].data))throw std::runtime_error("shared slice body cleared by collection");
+ }
  std::cout<<"GC roots, stable addresses, immediate release and mixed cycles OK\n";
 }

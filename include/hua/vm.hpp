@@ -198,17 +198,19 @@ private:
     std::size_t steps_{};
     std::string entry_name_{"main"};
     std::optional<Value> completed_;
-    // Typed register execution (R1 prototype, src/register_vm.cpp). A function whose body
-    // translates (scalar int/float/bool locals, arithmetic, branches, int ranges, direct
-    // calls, print statements) runs synchronously on 8-byte registers; anything else keeps
-    // the frame-based path above. A null entry marks a function that does not translate.
+    // Typed register execution (src/register_vm.cpp). A function whose body translates runs
+    // synchronously on registers: 8-byte scalars and Value registers for everything else;
+    // anything else keeps the frame-based path above. A null entry marks a function that
+    // does not translate.
     struct RegisterCode;
     std::unordered_map<const Node*,std::shared_ptr<RegisterCode>> register_codes_;
     std::vector<RegisterValue> register_file_;
-    std::size_t register_user_base_{},register_max_{};
+    std::vector<Value> value_file_; // registers holding non-scalar values, windowed like register_file_
+    std::size_t register_user_base_{},register_max_{},value_max_{};
     RegisterCode* register_code(const Node& function);
     bool register_call(const Callable&,const std::vector<Value>&,const Instruction&,const FunctionLayout&,std::size_t user_calls);
-    std::int64_t run_registers(const RegisterCode&,RegisterValue* registers,std::size_t depth,const SourceSpan& site);
+    std::int64_t run_registers(const RegisterCode&,RegisterValue* registers,Value* values,std::size_t depth,const SourceSpan& site,Value* result);
+    [[gnu::noinline]] void register_value_op(const RegisterCode&,std::size_t at,RegisterValue*,Value*,std::vector<ValueLocation>&);
     Value pop(const SourceSpan& span);
     std::vector<Value> arguments(std::size_t count, const SourceSpan& span);
     // Call argument vectors are recycled through a small pool. A lease (not one

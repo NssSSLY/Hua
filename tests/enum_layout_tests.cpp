@@ -66,7 +66,7 @@ void construction(){
         check(data->fields.size()==2,"inactive fields retained");
         check(show(wrap(data))=="E.A(17)","tag order changed display");
         auto copied=copy_value(read_only(wrap(data)));
-        check(std::get<StructValue>(copied.data).data->enumeration==layout,"copy lost identity");
+        check(hua::get<StructValue>(copied.data).data->enumeration==layout,"copy lost identity");
         check(show(copied)=="E.A(17)","copy changed display");
         rejects([&]{initialize_field(*data,"$A#0#int",Value(I(2)),{});});
         rejects([&]{initialize_field(*data,"$case",Value(std::string("A")),{});});
@@ -105,7 +105,7 @@ void scale_and_views(){
         auto data=object(layout);initialize_field(*data,"$case",Value("V"+std::to_string(active)),{});
         for(unsigned i=0;i<59;++i)initialize_field(*data,keys[i],i==active?Value(I(17)):Value{},{});
         auto copied=copy_value(read_only(wrap(data)));
-        auto copy=std::get<StructValue>(copied.data).data;
+        auto copy=hua::get<StructValue>(copied.data).data;
         check(copy->fields.size()==2,"large enum still expands while copying");
         copy->fields.at(keys[active])=Value(I(99));
         check(show(wrap(data))=="E.V"+std::to_string(active)+"(17)","scalar copy aliases");
@@ -117,17 +117,17 @@ void scale_and_views(){
     auto data=object(types);initialize_field(*data,"$case",Value(std::string("Box")),{});
     initialize_field(*data,"$Box#0#Box",read_only(wrap(box)),{});
     auto copied=copy_value(read_only(wrap(data)));
-    auto child=std::get<StructValue>(std::get<StructValue>(copied.data).data->fields.at("$Box#0#Box").data);
+    auto child=hua::get<StructValue>(hua::get<StructValue>(copied.data).data->fields.at("$Box#0#Box").data);
     child.data->fields.at("value")=Value(I(9));
     check(show(wrap(data))=="E.Box(Box{value: 7})","nested record copy aliases");
     auto list=managed<ListData>();list->element_type="int";list->values.emplace_back(I(7));
     auto shared=object(types);initialize_field(*shared,"$case",Value(std::string("List")),{});
     initialize_field(*shared,"$List#0#List<int>",Value(ListValue{list,true}),{});
     auto snapshot=copy_value(read_only(wrap(shared)));
-    auto item=std::get<ListValue>(std::get<StructValue>(snapshot.data).data->fields.at("$List#0#List<int>").data);
+    auto item=hua::get<ListValue>(hua::get<StructValue>(snapshot.data).data->fields.at("$List#0#List<int>").data);
     check(item.data==list&&!item.writable,"readonly shared child capability");
     auto cloned=copy_value(snapshot,true);
-    auto owned=std::get<ListValue>(std::get<StructValue>(cloned.data).data->fields.at("$List#0#List<int>").data);
+    auto owned=hua::get<ListValue>(hua::get<StructValue>(cloned.data).data->fields.at("$List#0#List<int>").data);
     check(owned.data!=list&&owned.writable,"deep clone lost owned child");
     owned.data->values[0]=Value(I(99));check(as_int(list->values[0],{})==7,"deep clone aliases");
     auto resource=object(types);initialize_field(*resource,"$case",Value(std::string("File")),{});

@@ -37,10 +37,10 @@ int main() {
     auto input = managed<std::vector<Value>>(); input->emplace_back(0.0); input->emplace_back(-0.0);
     auto result = result_payload(call("$std$alg$sorted", {Value(SliceValue{input,0,2,false,"float"})}), true, {});
     auto values = cget<SliceValue>(result.data);
-    check(!std::signbit(std::get<double>(sequence_read(values,0).data)), "unstable positive zero");
-    check(std::signbit(std::get<double>(sequence_read(values,1).data)), "unstable negative zero");
+    check(!std::signbit(hua::get<double>(sequence_read(values,0).data)), "unstable positive zero");
+    check(std::signbit(hua::get<double>(sequence_read(values,1).data)), "unstable negative zero");
     auto rounded = result_payload(call("$std$math$round", {Value(-0.5)}),true,{});
-    check(std::signbit(std::get<double>(rounded.data)), "negative zero round");
+    check(std::signbit(hua::get<double>(rounded.data)), "negative zero round");
     auto bad = call("$std$os$getenv", {Value(std::string(32768,'x'))});
     check(!cget<ResultValue>(bad.data).ok, "environment name bound");
     diagnostic("E4003", [&] { call("$std$math$floor", {convert_numeric(Value(1.0),"f32",{},true)}); });

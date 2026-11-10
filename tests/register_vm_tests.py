@@ -177,4 +177,117 @@ fn main() {
     print(total, label(7))
 }
 ''', fast=False)
+# R2: Value registers. Structs, strings, slices, maps, Result, std calls, loops over
+# collections, map index writes, `mut` handle parameters, and errors inside value
+# operations with their traces.
+case('structs', '''struct In { n int
+    tags []string }
+struct S { a In
+    k int
+    label string }
+fn read(s S) int { return s.k + s.a.n + len(s.a.tags) }
+fn make(n int) S { return S{a: In{n: n, tags: ["x", "y"]}, k: n * 2, label: "s" + str(n)} }
+fn main() {
+    var x = make(3)
+    let y = x
+    x.k = 100
+    print(read(x), read(y), x.label, y.a.tags, x.a.n == y.a.n)
+}
+''', fast=False)
+case('strings_slices', '''import std.strings as strings
+fn words(text string) int {
+    var n = 0
+    for w in strings.split(text, " ") {
+        if strings.starts_with(w, "a") || len(w) > 4 { n += 1 }
+    }
+    return n
+}
+fn total(xs []int) int {
+    var s = 0
+    for i, v in xs { s += v * i }
+    return s + xs[0] + xs[len(xs) - 1]
+}
+fn main() {
+    print(words("an apple and a banana tree"), total([3, 1, 4, 1, 5]))
+    let parts = ["a", "b"]
+    print(parts[1] + parts[0], strings.replace("aXbX", "X", "-"))
+}
+''')
+case('maps', '''fn count(words []string) map[string]int {
+    var m = map[string]int{}
+    for w in words {
+        if has(m, w) { m[w] += 1 } else { m[w] = 1 }
+    }
+    return m
+}
+fn main() {
+    let m = count(["b", "a", "b", "c", "b"])
+    var keys = ""
+    var sum = 0
+    for k, v in m {
+        keys = keys + k
+        sum += v
+    }
+    print(m, keys, sum, m["b"])
+}
+''')
+case('result_propagate', '''fn parse(n int) Result<int> {
+    if n < 0 { return err("negative") }
+    return ok(n * 10)
+}
+fn twice(n int) Result<int> {
+    let a = parse(n)?
+    let b = parse(a - 5)?
+    return ok(a + b)
+}
+fn main() {
+    print(twice(2), twice(-1), twice(0), is_ok(twice(1)), unwrap_or(twice(-3), 7))
+}
+''')
+case('lists_mut', '''import std.list as list
+fn fill(xs mut List<int>, n int) {
+    for i in 0..n { list.append(xs, i * i) }
+}
+fn sum(xs List<int>) int {
+    var s = 0
+    for v in list.snapshot(xs) { s += v }
+    return s
+}
+fn main() {
+    var xs = list.from_slice([1])
+    fill(xs, 5)
+    print(list.len(xs), sum(xs), unwrap(list.get(xs, 2)))
+}
+''')
+case('buffer_mut', '''import std.buffer as buffer
+fn put(mut out Buffer, value int) {
+    buffer.write_int(out, value % 256)
+}
+fn main() {
+    var out = buffer.new()
+    for i in 0..10 { put(out, i * 37) }
+    print(buffer.len(out))
+}
+''')
+case('bool_value_merge', '''import std.strings as strings
+fn check(a int, text string) bool {
+    return a > 0 && strings.contains(text, "x") || a == -1
+}
+fn main() { print(check(1, "xy"), check(1, "y"), check(-1, ""), check(0, "x")) }
+''')
+case('value_errors', '''fn pick(xs []int, i int) int { return xs[i] }
+fn outer(xs []int) int { return pick(xs, 5) + 1 }
+fn main() { print(outer([1, 2, 3])) }
+''')
+case('map_missing', '''fn get(m map[string]int, k string) int { return unwrap(m[k]) + 1 }
+fn main() {
+    let m = map[string]int{"a": 1}
+    print(get(m, "a"))
+    print(get(m, "zz"))
+}
+''')
+case('unwrap_err_trace', '''fn bad() Result<int> { return err("boom") }
+fn use(n int) int { return unwrap(bad()) + n }
+fn main() { print(use(1)) }
+''')
 print(f'register VM differential OK ({checks} programs)')

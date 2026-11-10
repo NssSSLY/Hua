@@ -48,19 +48,19 @@ I imax(unsigned bits) {
                     : static_cast<I>((U{1} << (bits - 1)) - 1);
 }
 NumericValue number(const Value &v, const SourceSpan &s) {
-  if (auto p = std::get_if<NumericValue>(&v.data))
+  if (auto p = hua::get_if<NumericValue>(&v.data))
     return *p;
-  if (auto p = std::get_if<I>(&v.data))
+  if (auto p = hua::get_if<I>(&v.data))
     return {"int", *p};
-  if (auto p = std::get_if<double>(&v.data))
+  if (auto p = hua::get_if<double>(&v.data))
     return {"float", *p};
   runtime_error(s, "expected a numeric value", "E4003");
 }
 Value wrap(std::string_view type, std::variant<I, U, double> value) {
   if (type == "int")
-    return Value(std::get<I>(value));
+    return Value(hua::get<I>(value));
   if (type == "float")
-    return Value(std::get<double>(value));
+    return Value(hua::get<double>(value));
   return Value(NumericValue{std::string(type), value});
 }
 } // namespace
@@ -75,14 +75,14 @@ Value convert_numeric(const Value &value, std::string_view type,
                   "E4003");
   if (spec->category == 'i') {
     I out{};
-    if (auto p = std::get_if<I>(&source.number))
+    if (auto p = hua::get_if<I>(&source.number))
       out = *p;
-    else if (auto p = std::get_if<U>(&source.number)) {
+    else if (auto p = hua::get_if<U>(&source.number)) {
       if (*p > static_cast<U>(imax(spec->bits)))
         runtime_error(s, "integer conversion overflow", "E4002");
       out = static_cast<I>(*p);
     } else {
-      auto x = std::trunc(std::get<double>(source.number));
+      auto x = std::trunc(hua::get<double>(source.number));
       if (!std::isfinite(x) || x < static_cast<double>(imin(spec->bits)) ||
           (spec->bits == 64 ? x >= 9223372036854775808.0
                             : x > static_cast<double>(imax(spec->bits))))
@@ -95,15 +95,15 @@ Value convert_numeric(const Value &value, std::string_view type,
   }
   if (spec->category == 'u') {
     U out{};
-    if (auto p = std::get_if<U>(&source.number))
+    if (auto p = hua::get_if<U>(&source.number))
       out = *p;
-    else if (auto p = std::get_if<I>(&source.number)) {
+    else if (auto p = hua::get_if<I>(&source.number)) {
       if (*p < 0)
         runtime_error(s, "unsigned conversion rejects negative values",
                       "E4002");
       out = static_cast<U>(*p);
     } else {
-      auto x = std::trunc(std::get<double>(source.number));
+      auto x = std::trunc(hua::get<double>(source.number));
       if (!std::isfinite(x) || x < 0 ||
           (spec->bits == 64 ? x >= 18446744073709551616.0
                             : x > static_cast<double>(umax(spec->bits))))
@@ -115,7 +115,7 @@ Value convert_numeric(const Value &value, std::string_view type,
     return wrap(type, out);
   }
   double out =
-      std::visit([](auto x) { return static_cast<double>(x); }, source.number);
+      hua::visit([](auto x) { return static_cast<double>(x); }, source.number);
   if (spec->bits == 32)
     out = static_cast<double>(static_cast<float>(out));
   if (!std::isfinite(out))
@@ -129,15 +129,15 @@ Value unary_numeric(std::string_view op, const Value &value,
   if (op == "+")
     return value;
   if (spec.category == 'u') {
-    auto x = std::get<U>(n.number);
+    auto x = hua::get<U>(n.number);
     if (op == "~")
       return wrap(n.type, (~x) & umax(spec.bits));
     if (op == "-" && x == 0)
       return value;
     runtime_error(s, "unsigned negation is not defined", "E4003");
   }
-  Value scalar = spec.category == 'i' ? Value(std::get<I>(n.number))
-                                      : Value(std::get<double>(n.number));
+  Value scalar = spec.category == 'i' ? Value(hua::get<I>(n.number))
+                                      : Value(hua::get<double>(n.number));
   return convert_numeric(unary_value(op, scalar, s), n.type, s, true);
 }
 Value binary_numeric(std::string_view op, const Value &a, const Value &b,
@@ -169,10 +169,10 @@ Value binary_numeric(std::string_view op, const Value &a, const Value &b,
   }
   auto spec = *numeric_spec(target);
   if (spec.category == 'u') {
-    auto x = std::get<U>(
-        std::get<NumericValue>(convert_numeric(a, target, s, true).data)
+    auto x = hua::get<U>(
+        hua::get<NumericValue>(convert_numeric(a, target, s, true).data)
             .number);
-    auto y = std::visit([](auto v) { return static_cast<U>(v); },
+    auto y = hua::visit([](auto v) { return static_cast<U>(v); },
                         number(b, s).number);
     auto limit = umax(spec.bits);
     U z{};

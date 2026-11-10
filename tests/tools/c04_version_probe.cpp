@@ -26,7 +26,7 @@ struct Observer final:hua::VMCallObserver {
         }
         if(!analyze)throw std::runtime_error("missing C04 identity");
     }
-    static const hua::Value& member(const hua::Value& v,const char* k){return std::get<hua::StructValue>(v.data).data->fields.at(k);}
+    static const hua::Value& member(const hua::Value& v,const char* k){return hua::get<hua::StructValue>(v.data).data->fields.at(k);}
     void enter(const hua::Node* fn,const hua::Node* caller,const std::vector<hua::Value>& args)override{
         auto it=names.find(fn);if(it==names.end())return;
         auto step=metrics.steps.load();stack.push_back({fn,step,0});
@@ -34,7 +34,7 @@ struct Observer final:hua::VMCallObserver {
         if(it->second=="numeric_view"){
             ++numeric_queries;
             const auto& facts=hua::cget<hua::SliceValue>(member(args.at(0),"facts").data);
-            auto id=std::get<std::int64_t>(args.at(1).data);
+            auto id=hua::get<std::int64_t>(args.at(1).data);
             if(id<0||std::size_t(id)>=facts.length||!facts.storage){++numeric_layout_failures;}
             else{
                 const auto& v=facts.storage->at(facts.start+std::size_t(id));
@@ -55,7 +55,7 @@ struct Observer final:hua::VMCallObserver {
         if(fn==analyze){
             c04_steps=metrics.steps.load()-begin;
             const auto& model=*hua::cget<hua::ResultValue>(result->data).payload;
-            work=std::get<std::int64_t>(member(model,"work").data);passes=std::get<std::int64_t>(member(model,"passes").data);
+            work=hua::get<std::int64_t>(member(model,"work").data);passes=hua::get<std::int64_t>(member(model,"passes").data);
         }
     }
     void report(){

@@ -82,7 +82,7 @@ hua_value n_string(hua_env e,const char* p,std::size_t n) {
 }
 hua_value n_error(hua_env e,const char* p){ctx(e).failure=p?p:"native function failed";return nullptr;}
 std::uint32_t n_kind(hua_env e,hua_value h){auto p=ctx(e).get(h);return p?static_cast<std::uint32_t>(p->data.index()):HUA_VOID;}
-template<class T> int get(hua_env e,hua_value h,T* out){auto p=ctx(e).get(h);if(p && out)if(auto v=std::get_if<T>(&p->data)){*out=*v;return 1;}ctx(e).failure="native argument type mismatch";return 0;}
+template<class T> int get(hua_env e,hua_value h,T* out){auto p=ctx(e).get(h);if(p && out)if(auto v=hua::get_if<T>(&p->data)){*out=*v;return 1;}ctx(e).failure="native argument type mismatch";return 0;}
 int n_as_int(hua_env e,hua_value h,std::int64_t* p){return get(e,h,p);}
 int n_as_float(hua_env e,hua_value h,double* p){return get(e,h,p);}
 int n_as_bool(hua_env e,hua_value h,int* out){bool b{};if(!out||!get(e,h,&b))return 0;*out=b?1:0;return 1;}
@@ -200,14 +200,14 @@ Value ExternalRegistry::call(const std::string& name,const std::vector<Value>& v
             auto k=wasm_valtype_kind(ps->data[i]);auto& v=raw[i];
             if(k==WASM_I32){auto x=as_int(args[i],s);if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max())fail(s,"WASM i32 argument out of range","E4002");v.kind=WASMTIME_I32;v.of.i32=static_cast<std::int32_t>(x);}
             else if(k==WASM_I64){v.kind=WASMTIME_I64;v.of.i64=as_int(args[i],s);}
-            else if(k==WASM_F32){v.kind=WASMTIME_F32;v.of.f32=static_cast<float>(std::get<double>(args[i].data));if(!std::isfinite(v.of.f32))fail(s,"WASM f32 argument out of range","E4002");}
-            else{v.kind=WASMTIME_F64;v.of.f64=std::get<double>(args[i].data);}
+            else if(k==WASM_F32){v.kind=WASMTIME_F32;v.of.f32=static_cast<float>(hua::get<double>(args[i].data));if(!std::isfinite(v.of.f32))fail(s,"WASM f32 argument out of range","E4002");}
+            else{v.kind=WASMTIME_F64;v.of.f64=hua::get<double>(args[i].data);}
         }
         wasmtime_val_t returned{};wasm_trap_t* trap=nullptr;
         checked(wasmtime_func_call(context,&exported.of.func,raw.data(),raw.size(),&returned,rs->size,&trap),s);trapped(trap,s);
         if(rs->size){if(returned.kind==WASMTIME_I32)result=Value(static_cast<std::int64_t>(returned.of.i32));else if(returned.kind==WASMTIME_I64)result=Value(returned.of.i64);
             else if(returned.kind==WASMTIME_F32)result=Value(static_cast<double>(returned.of.f32));else result=Value(returned.of.f64);
-            if(auto x=std::get_if<double>(&result.data);x&&!std::isfinite(*x))fail(s,"WASM returned a non-finite float","E4002");}
+            if(auto x=hua::get_if<double>(&result.data);x&&!std::isfinite(*x))fail(s,"WASM returned a non-finite float","E4002");}
     }
     return enforce_type(std::move(result),fn->result,s);
 }

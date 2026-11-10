@@ -300,14 +300,14 @@ Value invoke_process_standard(const StandardFunction& f, const std::vector<Value
         request.argv.push_back(string_value(sequence_read(argv, i).data));
         if (has_nul(request.argv.back())) return started("PROCESS_START: argument contains NUL");
     }
-    request.input = std::get<BytesValue>(args[1].data).data.get();
+    request.input = hua::get<BytesValue>(args[1].data).data.get();
     request.timeout_ms = as_int(args[2], s);
     if (request.timeout_ms < 0) runtime_error(s, "process timeout must not be negative", "E4003");
     if (f.name == "run_with") {
         request.cwd = string_value(args[3].data);
         if (has_nul(request.cwd)) return started("PROCESS_START: cwd contains NUL");
-        for (const auto& [k, v] : std::get<MapValue>(args[4].data).data->entries) {
-            const auto& name = std::get<std::string>(k);
+        for (const auto& [k, v] : hua::get<MapValue>(args[4].data).data->entries) {
+            const auto& name = hua::get<std::string>(k);
             const auto& value = string_value(v.data);
             if (name.empty() || name.find('=') != std::string::npos || has_nul(name) || has_nul(value)) return started("PROCESS_START: invalid environment entry");
             request.env.emplace(name, value);

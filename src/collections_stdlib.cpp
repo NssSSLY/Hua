@@ -18,9 +18,9 @@ struct Work {
         if((before>>10)!=(count>>10))task_checkpoint(context,span);
     }
 };
-const MapValue& map_arg(const Value& v,const SourceSpan& s){auto p=std::get_if<MapValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected map","E4003");return *p;}
+const MapValue& map_arg(const Value& v,const SourceSpan& s){auto p=hua::get_if<MapValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected map","E4003");return *p;}
 void writable(const MapValue& m,const SourceSpan& s){if(!m.writable)runtime_error(s,"cannot mutate a read-only map","E4007");}
-Value key_value(const MapKey& k){return std::visit([](const auto& x){return Value(x);},k);}
+Value key_value(const MapKey& k){return hua::visit([](const auto& x){return Value(x);},k);}
 Value slice(std::shared_ptr<std::vector<Value>> values,const std::string& element){auto n=values->size();return Value(SliceValue{std::move(values),0,n,false,element});}
 // Map reads follow index_value: the stored value, read-only through a read-only map.
 Value read_entry(const MapValue& m,Value& v){retain_record_alias(v);return m.writable?v:read_only(v);}
@@ -76,7 +76,7 @@ Value sets_standard(const StandardFunction& f,const std::vector<Value>& args,con
         Entries seen;std::vector<MapKey> out;
         for(std::size_t i=0;i<input->length;++i){
             work.tick();auto v=sequence_read(*input,i);MapKey k;
-            if(auto p=std::get_if<bool>(&v.data))k=*p;else if(auto p=std::get_if<I>(&v.data))k=*p;else if(auto p=hua::string_data(&v.data))k=std::move(*p);else runtime_error(s,"set element type mismatch","E4003");
+            if(auto p=hua::get_if<bool>(&v.data))k=*p;else if(auto p=hua::get_if<I>(&v.data))k=*p;else if(auto p=hua::string_data(&v.data))k=std::move(*p);else runtime_error(s,"set element type mismatch","E4003");
             if(seen.emplace(k,Value{}).second)add_key(out,k,s);
         }
         return new_set(input->element_type,std::move(out),s);
@@ -109,16 +109,16 @@ Value sets_standard(const StandardFunction& f,const std::vector<Value>& args,con
 }
 
 bool same_scalar(const Value& a,const Value& b,const SourceSpan& s,Work& work){
-    if(auto x=std::get_if<I>(&a.data))if(auto y=std::get_if<I>(&b.data))return *x==*y;
+    if(auto x=hua::get_if<I>(&a.data))if(auto y=hua::get_if<I>(&b.data))return *x==*y;
     if(auto x=hua::string_data(&a.data))if(auto y=hua::string_data(&b.data)){work.tick(x->size()/64);return *x==*y;}
-    if(auto x=std::get_if<double>(&a.data))if(auto y=std::get_if<double>(&b.data))return *x==*y;
-    if(auto x=std::get_if<bool>(&a.data))if(auto y=std::get_if<bool>(&b.data))return *x==*y;
+    if(auto x=hua::get_if<double>(&a.data))if(auto y=hua::get_if<double>(&b.data))return *x==*y;
+    if(auto x=hua::get_if<bool>(&a.data))if(auto y=hua::get_if<bool>(&b.data))return *x==*y;
     return as_bool(binary_value("==",a,b,s),s);
 }
 int compare_sorted(const Value& a,const Value& b,Work& work){
     work.tick();
-    if(auto x=std::get_if<I>(&a.data)){auto y=std::get<I>(b.data);return *x<y?-1:*x>y?1:0;}
-    if(auto x=std::get_if<double>(&a.data)){auto y=std::get<double>(b.data);return *x<y?-1:*x>y?1:0;}
+    if(auto x=hua::get_if<I>(&a.data)){auto y=hua::get<I>(b.data);return *x<y?-1:*x>y?1:0;}
+    if(auto x=hua::get_if<double>(&a.data)){auto y=hua::get<double>(b.data);return *x<y?-1:*x>y?1:0;}
     const auto& x=hua::string_value(a.data);const auto& y=hua::string_value(b.data);
     auto n=std::min(x.size(),y.size());work.tick(n/64);
     if(auto c=n?std::memcmp(x.data(),y.data(),n):0)return c<0?-1:1;
@@ -136,7 +136,7 @@ Value invoke_collection_standard(const StandardFunction& f,const std::vector<Val
 // list P0 (since 10). invoke_standard has already specialized and enforced the
 // List<T> signature and checked the write capability of mutating functions.
 Value invoke_list_extra(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s,RuntimeContext* context){
-    auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
+    auto handle=hua::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
     auto& data=*handle->data;auto& values=data.values;Work work{s,context};const auto& name=f.name;
     auto ok=[&](Value v,const std::string& type){return standard_result(std::move(v),true,type);};
     auto err=[&](const std::string& text,const std::string& type){return standard_result(Value(text),false,type);};
@@ -172,7 +172,7 @@ Value invoke_list_extra(const StandardFunction& f,const std::vector<Value>& args
     if(name=="sort"){
         const auto& type=data.element_type;
         if(type!="int"&&type!="float"&&type!="string")runtime_error(s,"list.sort requires int/float/string elements","E4003");
-        for(const auto& v:values){if(value_type(v)!=type)runtime_error(s,"list element type mismatch","E4003");if(auto d=std::get_if<double>(&v.data);d&&!std::isfinite(*d))runtime_error(s,"list.sort requires finite float values","E4003");}
+        for(const auto& v:values){if(value_type(v)!=type)runtime_error(s,"list element type mismatch","E4003");if(auto d=hua::get_if<double>(&v.data);d&&!std::isfinite(*d))runtime_error(s,"list.sort requires finite float values","E4003");}
         // Sort a permutation, then move once: a work-limit or cancellation error
         // raised by the comparator leaves the List unchanged.
         std::vector<std::size_t> order(values.size());for(std::size_t i=0;i<order.size();++i)order[i]=i;

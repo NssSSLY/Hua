@@ -17,10 +17,10 @@
 #include <windows.h>
 #endif
 using J=hua::JsonData;
-static const J& field(const J& j,const std::string& k){return *std::get<J::Object>(j.data).at(k);}
-static std::string str(const J& j){return std::get<std::string>(j.data);}
-static std::size_t number(const J& j){auto n=std::get<std::int64_t>(j.data);if(n<0)throw std::runtime_error("negative core index");return n;}
-static const J::Array& array(const J& j){return std::get<J::Array>(j.data);}
+static const J& field(const J& j,const std::string& k){return *hua::get<J::Object>(j.data).at(k);}
+static std::string str(const J& j){return hua::get<std::string>(j.data);}
+static std::size_t number(const J& j){auto n=hua::get<std::int64_t>(j.data);if(n<0)throw std::runtime_error("negative core index");return n;}
+static const J::Array& array(const J& j){return hua::get<J::Array>(j.data);}
 static std::filesystem::path path(const std::string& s){return std::filesystem::path(std::u8string(s.begin(),s.end()));}
 static int run(const std::vector<std::string>& args){
     if(args.size()<2)return 2;
@@ -41,7 +41,7 @@ static int run(const std::vector<std::string>& args){
         const auto decoded=hua::json_decode(std::string(std::istreambuf_iterator<char>(stream),{}));
         const auto& result=hua::cget<hua::ResultValue>(decoded.data);
         if(!result.ok)throw std::runtime_error("invalid core JSON");
-        const auto& report=*std::get<hua::JsonValue>(result.payload->data).data;
+        const auto& report=*hua::get<hua::JsonValue>(result.payload->data).data;
         if(str(field(report,"schema"))!="hua.core.lowered.v1"||str(field(report,"profile"))!="C05-L1"||str(field(report,"status"))!="ok")throw std::runtime_error("invalid core envelope");
         const auto& records=array(field(report,"nodes"));
         if(records.size()>262144)throw std::runtime_error("core too large");
@@ -65,7 +65,7 @@ static int run(const std::vector<std::string>& args){
             for(const auto& child:array(field(r,"children"))){auto id=number(*child);if(id>=i||!nodes.at(id))throw std::runtime_error("invalid core tree edge");n->add(std::move(nodes[id]));}
             auto* node=n.get();const auto type=str(field(r,"type_name"));
             if(!type.empty())model.types[node]=type;
-            model.writable[node]=std::get<bool>(field(r,"writable").data);
+            model.writable[node]=hua::get<bool>(field(r,"writable").data);
             if(kind==hua::NodeKind::Function){auto name=hua::declared_name(*node);if(!model.functions.emplace(name,node).second)throw std::runtime_error("duplicate core function");model.return_writable[name]=model.writable[node];model.mutating[name]=false;}
             if(kind==hua::NodeKind::Struct)if(!model.structures.emplace(hua::declared_name(*node),node).second)throw std::runtime_error("duplicate core structure");
             nodes.push_back(std::move(n));raw.push_back(node);

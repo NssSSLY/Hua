@@ -28,7 +28,7 @@ int main(){
     // Call the collection implementation directly, so cancellation must be checked
     // inside the traversal rather than merely at the invoke_builtin boundary.
     fails("E4101",[&]{invoke_collection_standard(*standard_function("$std$sets$symmetric_difference"),{a,empty},{},&context);});
-    check(std::get<MapValue>(a.data).data->entries.size()==1100);
+    check(hua::get<MapValue>(a.data).data->entries.size()==1100);
     fails("E4003",[&]{call("$std$sets$symmetric_difference",{Value(I{1}),empty});});
     auto strings=managed<MapData>();strings->key_type="string";strings->item_type="bool";
     fails("E4003",[&]{call("$std$sets$symmetric_difference",{a,Value(MapValue{strings,false})});});
@@ -36,13 +36,13 @@ int main(){
     // Native setup avoids a million interpreted inserts on every execution path.
     auto even=set(500001,0,2),odd=set(500000,1,2);
     fails("E4099",[&]{call("$std$sets$symmetric_difference",{even,odd});});
-    check(std::get<MapValue>(even.data).data->entries.size()==500001);
-    check(std::get<MapValue>(odd.data).data->entries.size()==500000);
+    check(hua::get<MapValue>(even.data).data->entries.size()==500001);
+    check(hua::get<MapValue>(odd.data).data->entries.size()==500000);
     // The exact limit is valid; only one more key must fail.
-    auto& odd_entries=std::get<MapValue>(odd.data).data->entries;
+    auto& odd_entries=hua::get<MapValue>(odd.data).data->entries;
     odd_entries.erase(std::prev(odd_entries.end()));
     auto exact=call("$std$sets$symmetric_difference",{even,odd});
-    check(std::get<MapValue>(exact.data).data->entries.size()==1000000);
-    check(std::get<MapValue>(exact.data).writable);
+    check(hua::get<MapValue>(exact.data).data->entries.size()==1000000);
+    check(hua::get<MapValue>(exact.data).writable);
     std::cout<<checks<<" Set/bit native type/capacity/cancellation checks passed\n";
 }

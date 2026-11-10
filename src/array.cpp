@@ -70,7 +70,7 @@ void store(std::string &bytes, std::size_t offset, const std::string &type,
   auto width = *packed_width(type);
   std::uint64_t bits{};
   if (type == "bool")
-    bits = std::get<bool>(value.data);
+    bits = hua::get<bool>(value.data);
   else {
     auto spec = *numeric_spec(type);
     auto numeric = convert_numeric(value,
@@ -80,11 +80,11 @@ void store(std::string &bytes, std::size_t offset, const std::string &type,
                                    {}, true);
     if (spec.category == 'u')
       bits =
-          std::get<std::uint64_t>(std::get<NumericValue>(numeric.data).number);
+          hua::get<std::uint64_t>(hua::get<NumericValue>(numeric.data).number);
     else if (spec.category == 'i')
-      bits = std::bit_cast<std::uint64_t>(std::get<std::int64_t>(numeric.data));
+      bits = std::bit_cast<std::uint64_t>(hua::get<std::int64_t>(numeric.data));
     else {
-      auto real = std::get<double>(numeric.data);
+      auto real = hua::get<double>(numeric.data);
       bits = width == 4 ? std::bit_cast<std::uint32_t>(static_cast<float>(real))
                         : std::bit_cast<std::uint64_t>(real);
     }

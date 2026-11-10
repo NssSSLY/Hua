@@ -46,15 +46,15 @@ struct Writer {
     void add(std::string_view s){if(s.size()>max_text-out.size())throw Failure("JSON text exceeds 16 MiB");out+=s;}
     void quote(const std::string& s){auto invalid=text_utf8_error(s);if(!invalid.empty())throw Failure(invalid);add("\"");constexpr char hex[]="0123456789abcdef";for(unsigned char c:s){if(c=='"')add("\\\"");else if(c=='\\')add("\\\\");else if(c<32){char escaped[]={'\\','u','0','0',hex[c>>4],hex[c&15]};add(std::string_view(escaped,6));}else {char ch=static_cast<char>(c);add(std::string_view(&ch,1));}}add("\"");}
     void value(const P& p,std::size_t depth=0){if(!p||depth>max_depth||++nodes>max_nodes)throw Failure("JSON nesting/node limit exceeded");const auto& d=p->data;
-        if(std::holds_alternative<std::monostate>(d))add("null");else if(auto b=std::get_if<bool>(&d))add(*b?"true":"false");else if(auto i=std::get_if<I>(&d))add(std::to_string(*i));
-        else if(auto f=std::get_if<double>(&d)){if(!std::isfinite(*f))throw Failure("non-finite JSON number");char buffer[64];auto [end,ec]=std::to_chars(buffer,buffer+64,*f,std::chars_format::general,std::numeric_limits<double>::max_digits10);if(ec!=std::errc{})throw Failure("JSON number conversion failed");std::string n(buffer,end);if(n.find_first_of(".eE")==std::string::npos)n+=".0";add(n);}
-        else if(auto s=std::get_if<std::string>(&d))quote(*s);
-        else if(auto a=std::get_if<A>(&d)){add("[");for(std::size_t i=0;i<a->size();++i){if(i)add(",");value((*a)[i],depth+1);}add("]");}
-        else {add("{");bool first=true;for(const auto& [k,v]:std::get<O>(d)){if(!first)add(",");first=false;quote(k);add(":");value(v,depth+1);}add("}");}
+        if(hua::holds_alternative<std::monostate>(d))add("null");else if(auto b=hua::get_if<bool>(&d))add(*b?"true":"false");else if(auto i=hua::get_if<I>(&d))add(std::to_string(*i));
+        else if(auto f=hua::get_if<double>(&d)){if(!std::isfinite(*f))throw Failure("non-finite JSON number");char buffer[64];auto [end,ec]=std::to_chars(buffer,buffer+64,*f,std::chars_format::general,std::numeric_limits<double>::max_digits10);if(ec!=std::errc{})throw Failure("JSON number conversion failed");std::string n(buffer,end);if(n.find_first_of(".eE")==std::string::npos)n+=".0";add(n);}
+        else if(auto s=hua::get_if<std::string>(&d))quote(*s);
+        else if(auto a=hua::get_if<A>(&d)){add("[");for(std::size_t i=0;i<a->size();++i){if(i)add(",");value((*a)[i],depth+1);}add("]");}
+        else {add("{");bool first=true;for(const auto& [k,v]:hua::get<O>(d)){if(!first)add(",");first=false;quote(k);add(":");value(v,depth+1);}add("}");}
     }
     void line_break(std::size_t spaces){add("\n");add(std::string(spaces,' '));}
     void pretty(const P& p,std::size_t indent,std::size_t depth=0){
-        const auto* a=p?std::get_if<A>(&p->data):nullptr;const auto* o=p?std::get_if<O>(&p->data):nullptr;
+        const auto* a=p?hua::get_if<A>(&p->data):nullptr;const auto* o=p?hua::get_if<O>(&p->data):nullptr;
         if((!a||a->empty())&&(!o||o->empty())){value(p,depth);return;}
         if(depth>max_depth||++nodes>max_nodes)throw Failure("JSON nesting/node limit exceeded");
         if(a){add("[");for(std::size_t i=0;i<a->size();++i){if(i)add(",");line_break(indent*(depth+1));pretty((*a)[i],indent,depth+1);}line_break(indent*depth);add("]");return;}
@@ -62,13 +62,13 @@ struct Writer {
     }
 };
 P convert(const Value& v,std::size_t depth,std::size_t& nodes){if(depth>max_depth||++nodes>max_nodes)throw Failure("JSON nesting/node limit exceeded");
-    if(auto numeric=std::get_if<NumericValue>(&v.data)){try{auto number=convert_numeric(v,numeric_spec(numeric->type)->category=='f'?"float":"int",{},true);if(auto x=std::get_if<I>(&number.data))return node(*x);return node(std::get<double>(number.data));}catch(const Diagnostic&){throw Failure("JSON numeric value is outside int64/finite float64 range");}}
-    if(auto p=std::get_if<JsonValue>(&v.data))return p->data;
-    if(v.data.index()==0)return node(std::monostate{});if(auto p=std::get_if<bool>(&v.data))return node(*p);if(auto p=std::get_if<I>(&v.data))return node(*p);if(auto p=std::get_if<double>(&v.data))return node(*p);if(auto p=hua::string_data(&v.data))return node(*p);
+    if(auto numeric=hua::get_if<NumericValue>(&v.data)){try{auto number=convert_numeric(v,numeric_spec(numeric->type)->category=='f'?"float":"int",{},true);if(auto x=hua::get_if<I>(&number.data))return node(*x);return node(hua::get<double>(number.data));}catch(const Diagnostic&){throw Failure("JSON numeric value is outside int64/finite float64 range");}}
+    if(auto p=hua::get_if<JsonValue>(&v.data))return p->data;
+    if(v.data.index()==0)return node(std::monostate{});if(auto p=hua::get_if<bool>(&v.data))return node(*p);if(auto p=hua::get_if<I>(&v.data))return node(*p);if(auto p=hua::get_if<double>(&v.data))return node(*p);if(auto p=hua::string_data(&v.data))return node(*p);
     if(auto p=cget_if<SliceValue>(&v.data)){A out;for(std::size_t i=0;i<p->length;++i)out.push_back(convert(sequence_copy_source(*p,i),depth+1,nodes));return node(std::move(out));}
-    if(auto p=std::get_if<MapValue>(&v.data)){if(p->data->key_type!="string")throw Failure("JSON objects require string Map keys");O out;for(const auto& [k,x]:p->data->entries)out.emplace(std::get<std::string>(k),convert(x,depth+1,nodes));return node(std::move(out));}
+    if(auto p=hua::get_if<MapValue>(&v.data)){if(p->data->key_type!="string")throw Failure("JSON objects require string Map keys");O out;for(const auto& [k,x]:p->data->entries)out.emplace(hua::get<std::string>(k),convert(x,depth+1,nodes));return node(std::move(out));}
     if(auto p=cget_if<PlainRecord>(&v.data)){O out;for(const auto& f:p->layout->fields)out.emplace(f.name,convert(*plain_record_field(*p,f.name),depth+1,nodes));return node(std::move(out));}
-    if(auto p=std::get_if<StructValue>(&v.data)){if(p->data->fields.contains("$case"))throw Failure("enum JSON encoding requires an explicit representation");O out;for(const auto& [k,x]:p->data->fields)out.emplace(k,convert(x,depth+1,nodes));return node(std::move(out));}
+    if(auto p=hua::get_if<StructValue>(&v.data)){if(p->data->fields.contains("$case"))throw Failure("enum JSON encoding requires an explicit representation");O out;for(const auto& [k,x]:p->data->fields)out.emplace(k,convert(x,depth+1,nodes));return node(std::move(out));}
     throw Failure("unsupported JSON value type: "+display_type(value_type(v)));
 }
 Value list(const std::vector<std::string>& xs){auto values=managed<std::vector<Value>>();for(const auto& x:xs)values->emplace_back(x);return Value(SliceValue{values,0,values->size(),false,"string"});}
@@ -80,7 +80,7 @@ Value json_construct(const std::string& op,const std::vector<Value>& args,const 
     auto result=[](const char* type,Value v){return standard_result(std::move(v),true,type);};
     auto failed=[](const char* type,std::string e){return standard_result(Value(std::move(e)),false,type);};
     constexpr const char* too_deep="JSON nesting exceeds 64";
-    auto payload=[&](const Value& v)->const P&{auto p=std::get_if<JsonValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected a Json value","E4003");return p->data;};
+    auto payload=[&](const Value& v)->const P&{auto p=hua::get_if<JsonValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected a Json value","E4003");return p->data;};
     auto built=[&](P p){if(p->height>max_depth)return failed("Json",too_deep);return result("Json",Value(JsonValue{std::move(p)}));};
     if(op=="null")return Value(JsonValue{node(std::monostate{})});
     if(op=="from"){try{std::size_t nodes=0;return built(convert(args[0],0,nodes));}catch(const Failure& e){return failed("Json",e.what());}}
@@ -90,19 +90,19 @@ Value json_construct(const std::string& op,const std::vector<Value>& args,const 
         auto p=node(std::move(out));if(p->height>max_depth)runtime_error(s,too_deep,"E4099");return Value(JsonValue{std::move(p)});
     }
     if(op=="object"){
-        const auto& map=std::get<MapValue>(args[0].data);O out;
-        for(const auto& [k,v]:map.data->entries)out.emplace(std::get<std::string>(k),payload(v));
+        const auto& map=hua::get<MapValue>(args[0].data);O out;
+        for(const auto& [k,v]:map.data->entries)out.emplace(hua::get<std::string>(k),payload(v));
         auto p=node(std::move(out));if(p->height>max_depth)runtime_error(s,too_deep,"E4099");return Value(JsonValue{std::move(p)});
     }
     if(op=="set"||op=="remove"){
-        auto object=std::get_if<O>(&payload(args[0])->data);if(!object)return failed("Json","JSON value is not an object");
+        auto object=hua::get_if<O>(&payload(args[0])->data);if(!object)return failed("Json","JSON value is not an object");
         const auto& key=string_value(args[1].data);O out=*object;
         if(op=="set")out.insert_or_assign(key,payload(args[2]));
         else if(!out.erase(key))return failed("Json","JSON object key is missing");
         return built(node(std::move(out)));
     }
     if(op=="append"||op=="set_at"){
-        auto array=std::get_if<A>(&payload(args[0])->data);if(!array)return failed("Json","JSON value is not an array");
+        auto array=hua::get_if<A>(&payload(args[0])->data);if(!array)return failed("Json","JSON value is not an array");
         A out=*array;
         if(op=="append"){if(out.size()>=max_nodes)return failed("Json","JSON node limit exceeded");out.push_back(payload(args[1]));}
         else{const auto at=as_int(args[1],s);if(at<0||static_cast<std::size_t>(at)>=out.size())return failed("Json","JSON array index out of bounds");out[static_cast<std::size_t>(at)]=payload(args[2]);}
@@ -128,19 +128,19 @@ Value json_construct(const std::string& op,const std::vector<Value>& args,const 
     }
     runtime_error(s,"unknown json operation","E4003");
 }
-Value json_access(const std::string& op,const std::vector<Value>& args){const auto& data=std::get<JsonValue>(args[0].data).data->data;
+Value json_access(const std::string& op,const std::vector<Value>& args){const auto& data=hua::get<JsonValue>(args[0].data).data->data;
     std::string type=op=="get"||op=="at"?"Json":op=="as_string"?"string":op=="as_bool"?"bool":op=="as_float"?"float":op=="keys"?"[]string":"int";
     auto ok=[&](Value v){return standard_result(std::move(v),true,type);};auto err=[&](std::string e){return standard_result(Value(std::move(e)),false,type);};
     if(op=="kind"){static const char* kinds[]={"null","bool","number","number","string","array","object"};return Value(std::string(kinds[data.index()]));}
-    if(op=="is_null")return Value(std::holds_alternative<std::monostate>(data));
-    if(op=="get"){auto object=std::get_if<O>(&data);if(!object)return err("JSON value is not an object");auto found=object->find(hua::string_value(args[1].data));if(found==object->end())return err("JSON object key is missing");return ok(Value(JsonValue{found->second}));}
-    if(op=="at"){auto array=std::get_if<A>(&data);if(!array)return err("JSON value is not an array");auto at=std::get<I>(args[1].data);if(at<0||static_cast<std::size_t>(at)>=array->size())return err("JSON array index out of bounds");return ok(Value(JsonValue{(*array)[static_cast<std::size_t>(at)]}));}
-    if(op=="len"){if(auto p=std::get_if<A>(&data))return ok(Value(static_cast<I>(p->size())));if(auto p=std::get_if<O>(&data))return ok(Value(static_cast<I>(p->size())));return err("JSON len requires an array or object");}
-    if(op=="keys"){auto p=std::get_if<O>(&data);if(!p)return err("JSON keys requires an object");std::vector<std::string> out;for(const auto& [k,_]:*p)out.push_back(k);return ok(list(out));}
-    if(op=="as_string"){if(auto p=std::get_if<std::string>(&data))return ok(Value(*p));}
-    if(op=="as_bool"){if(auto p=std::get_if<bool>(&data))return ok(Value(*p));}
-    if(op=="as_int"){if(auto p=std::get_if<I>(&data))return ok(Value(*p));}
-    if(op=="as_float"){if(auto p=std::get_if<double>(&data))return ok(Value(*p));if(auto p=std::get_if<I>(&data)){if(*p>9007199254740992LL||*p< -9007199254740992LL)return err("JSON integer exceeds exact float conversion range");return ok(Value(static_cast<double>(*p)));}}
+    if(op=="is_null")return Value(hua::holds_alternative<std::monostate>(data));
+    if(op=="get"){auto object=hua::get_if<O>(&data);if(!object)return err("JSON value is not an object");auto found=object->find(hua::string_value(args[1].data));if(found==object->end())return err("JSON object key is missing");return ok(Value(JsonValue{found->second}));}
+    if(op=="at"){auto array=hua::get_if<A>(&data);if(!array)return err("JSON value is not an array");auto at=hua::get<I>(args[1].data);if(at<0||static_cast<std::size_t>(at)>=array->size())return err("JSON array index out of bounds");return ok(Value(JsonValue{(*array)[static_cast<std::size_t>(at)]}));}
+    if(op=="len"){if(auto p=hua::get_if<A>(&data))return ok(Value(static_cast<I>(p->size())));if(auto p=hua::get_if<O>(&data))return ok(Value(static_cast<I>(p->size())));return err("JSON len requires an array or object");}
+    if(op=="keys"){auto p=hua::get_if<O>(&data);if(!p)return err("JSON keys requires an object");std::vector<std::string> out;for(const auto& [k,_]:*p)out.push_back(k);return ok(list(out));}
+    if(op=="as_string"){if(auto p=hua::get_if<std::string>(&data))return ok(Value(*p));}
+    if(op=="as_bool"){if(auto p=hua::get_if<bool>(&data))return ok(Value(*p));}
+    if(op=="as_int"){if(auto p=hua::get_if<I>(&data))return ok(Value(*p));}
+    if(op=="as_float"){if(auto p=hua::get_if<double>(&data))return ok(Value(*p));if(auto p=hua::get_if<I>(&data)){if(*p>9007199254740992LL||*p< -9007199254740992LL)return err("JSON integer exceeds exact float conversion range");return ok(Value(static_cast<double>(*p)));}}
     return err("JSON value has the wrong type");
 }
 }

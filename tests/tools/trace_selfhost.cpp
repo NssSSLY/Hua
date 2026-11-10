@@ -38,8 +38,8 @@ struct Trace final:hua::VMCallObserver{
   if(!capability)throw std::runtime_error("not a complete compiler");
   event("begin","execution");
  }
- static const hua::Value& member(const hua::Value& v,const char* k){return std::get<hua::StructValue>(v.data).data->fields.at(k);}
- static std::uint64_t size(const hua::Value& v){return std::get<hua::MapValue>(v.data).data->entries.size();}
+ static const hua::Value& member(const hua::Value& v,const char* k){return hua::get<hua::StructValue>(v.data).data->fields.at(k);}
+ static std::uint64_t size(const hua::Value& v){return hua::get<hua::MapValue>(v.data).data->entries.size();}
  std::string identity(const hua::Node* fn)const{const auto& n=names.at(fn);return n.file+"#"+n.name;}
  double seconds()const{return std::chrono::duration<double>(Clock::now()-start).count();}
  std::string active_target()const{for(auto i=stack.rbegin();i!=stack.rend();++i)if(i->visit!=std::size_t(-1))return visits[i->visit].target;return "";}
@@ -52,8 +52,8 @@ struct Trace final:hua::VMCallObserver{
   Frame f{fn,step};const auto& n=names.at(fn);
   if(n.file=="capabilities.hua"){
    if(n.name=="statement"&&caller==capability){auto target=hua::string_value(member(args.at(1),"function").data);
-    f.visit=visits.size();visits.push_back({target,std::get<bool>(member(args.at(0),"probing").data),step,0,
-     std::uint64_t(std::get<std::int64_t>(member(args.at(0),"work").data)),size(member(args.at(1),"values")),++body_ordinals[target]});}
+    f.visit=visits.size();visits.push_back({target,hua::get<bool>(member(args.at(0),"probing").data),step,0,
+     std::uint64_t(hua::get<std::int64_t>(member(args.at(0),"work").data)),size(member(args.at(1),"values")),++body_ordinals[target]});}
    if(n.name=="instantiate_view"||n.name=="instantiate_view_at"){auto i=n.name=="instantiate_view"?3u:1u;auto v=size(member(args.at(i),"origins"));volumes["instantiate-input-origin-entries"]+=v;last_origin_size=v;max_origin_size=std::max(max_origin_size,v);}
    if(n.name=="instantiate"||n.name=="instantiate_at"){auto i=n.name=="instantiate"?3u:1u;volumes["instantiate-input-field-entries"]+=size(member(args.at(i),"fields"));}
   }

@@ -5,25 +5,25 @@
 namespace hua {
 namespace {
 unsigned scalar_tag(const Value& value){
-    if(std::holds_alternative<bool>(value.data))return 1;
-    if(std::holds_alternative<std::int64_t>(value.data))return 2;
-    if(std::holds_alternative<double>(value.data))return 3;
-    if(auto p=std::get_if<NumericValue>(&value.data);p&&numeric_spec(p->type)&&p->type!="@integer")return 4;
+    if(hua::holds_alternative<bool>(value.data))return 1;
+    if(hua::holds_alternative<std::int64_t>(value.data))return 2;
+    if(hua::holds_alternative<double>(value.data))return 3;
+    if(auto p=hua::get_if<NumericValue>(&value.data);p&&numeric_spec(p->type)&&p->type!="@integer")return 4;
     return 0;
 }
 bool encode(const Value& value,const PlainRecordLayout::Field& field,std::array<std::uint64_t,8>& cells,unsigned depth){
     if(field.child){
         PlainRecord child;
         if(auto p=cget_if<PlainRecord>(&value.data))child=*p;
-        else {auto boxed=std::get_if<StructValue>(&value.data);if(!boxed||!pack_plain_record(*boxed,child,depth))return false;}
+        else {auto boxed=hua::get_if<StructValue>(&value.data);if(!boxed||!pack_plain_record(*boxed,child,depth))return false;}
         if(child.layout!=field.child)return false;
         std::copy_n(child.cells.begin(),child.layout->slots,cells.begin()+field.offset);return true;
     }
     if(scalar_tag(value)!=field.tag||value_type(value)!=field.type)return false;
-    if(field.tag==1)cells[field.offset]=std::get<bool>(value.data);
-    else if(field.tag==2)cells[field.offset]=std::bit_cast<std::uint64_t>(std::get<std::int64_t>(value.data));
-    else if(field.tag==3)cells[field.offset]=std::bit_cast<std::uint64_t>(std::get<double>(value.data));
-    else if(field.tag==4)cells[field.offset]=std::visit([](auto x)->std::uint64_t{return std::bit_cast<std::uint64_t>(x);},std::get<NumericValue>(value.data).number);
+    if(field.tag==1)cells[field.offset]=hua::get<bool>(value.data);
+    else if(field.tag==2)cells[field.offset]=std::bit_cast<std::uint64_t>(hua::get<std::int64_t>(value.data));
+    else if(field.tag==3)cells[field.offset]=std::bit_cast<std::uint64_t>(hua::get<double>(value.data));
+    else if(field.tag==4)cells[field.offset]=hua::visit([](auto x)->std::uint64_t{return std::bit_cast<std::uint64_t>(x);},hua::get<NumericValue>(value.data).number);
     else return false;
     return true;
 }
@@ -52,7 +52,7 @@ bool pack_plain_record(const StructValue& input,PlainRecord& output,unsigned dep
         else{
             PlainRecord child;
             if(auto packed=cget_if<PlainRecord>(&value.data))child=*packed;
-            else{auto record=std::get_if<StructValue>(&value.data);if(!record||!pack_plain_record(*record,child,depth+1)){
+            else{auto record=hua::get_if<StructValue>(&value.data);if(!record||!pack_plain_record(*record,child,depth+1)){
                 shape->plain_rejected.store(true,std::memory_order_relaxed);return false;}}
             field.child=child.layout;layout->slots+=child.layout->slots;layout->depth=std::max(layout->depth,child.layout->depth+1);
         }
@@ -88,7 +88,7 @@ StructValue* materialize_record(Value& value){
         for(const auto& field:input->layout->fields)data->fields.emplace(field.name,*plain_record_field(*input,field.name));
         bool writable=input->writable;value=Value(StructValue{std::move(data),writable});
     }
-    return std::get_if<StructValue>(&value.data);
+    return hua::get_if<StructValue>(&value.data);
 }
 void retain_record_alias(Value& value){
     // Values stored in shared containers may be observed through both readonly

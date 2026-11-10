@@ -23,10 +23,10 @@ void span(const Tables& t,const SourceSpan& s){
 }
 void effects(std::uint32_t e,const SourceSpan& s){need((e&~effect_mask)==0,s,"effect bits");}
 void constant(const ScalarConstant& v,TypeId t,const SourceSpan& s){
-    bool okay=t==void_type?std::holds_alternative<std::monostate>(v.data):
-        t==int_type?std::holds_alternative<std::int64_t>(v.data):
-        t==bool_type?std::holds_alternative<bool>(v.data):
-        t==float_type?std::holds_alternative<double>(v.data)&&std::isfinite(std::get<double>(v.data)):false;
+    bool okay=t==void_type?hua::holds_alternative<std::monostate>(v.data):
+        t==int_type?hua::holds_alternative<std::int64_t>(v.data):
+        t==bool_type?hua::holds_alternative<bool>(v.data):
+        t==float_type?hua::holds_alternative<double>(v.data)&&std::isfinite(hua::get<double>(v.data)):false;
     need(okay,s,"typed scalar constant");
 }
 void unary(const std::string& op,TypeId input,TypeId output,const SourceSpan& s){

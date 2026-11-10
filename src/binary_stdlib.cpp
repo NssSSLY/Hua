@@ -83,7 +83,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
     // List success metadata comes from its checked backing type, without reparsing List<T>.
     const auto& result=type_arguments(f.result,"Result");auto success=result.empty()?"":result[0];
     if(f.module=="list"&&(f.name=="get"||f.name=="pop")){
-        auto list=std::get_if<ListValue>(&args[0].data);
+        auto list=hua::get_if<ListValue>(&args[0].data);
         if(!list||!list->data)runtime_error(s,"expected List<T>","E4003");
         success=list->data->element_type;
     }
@@ -98,7 +98,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
             for(std::size_t i=0;i<source->length;++i)data->values.push_back(copy_value(sequence_read(*source,i),true,0,true));
             return Value(ListValue{data,true});
         }
-        auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");auto& data=*handle->data;
+        auto handle=hua::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");auto& data=*handle->data;
         if(f.name=="len")return Value(static_cast<I>(data.values.size()));
         if(f.name=="snapshot"){auto values=managed<std::vector<Value>>();values->reserve(data.values.size());for(const auto& v:data.values)values->push_back(copy_value(read_only(v)));return Value(SliceValue{values,0,values->size(),false,data.element_type});}
         if(f.name=="get"||f.name=="set"){auto at=integer(1);if(at<0||static_cast<std::size_t>(at)>=data.values.size())return err("list index out of bounds");if(f.name=="get")return ok(copy_value(read_only(data.values[static_cast<std::size_t>(at)])));auto value=copy_value(enforce_type(args[2],data.element_type,s));data.values[static_cast<std::size_t>(at)]=std::move(value);return ok(Value(true));}
@@ -110,7 +110,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
     }
     if(f.module=="buffer"){
         if(f.name=="new")return Value(BufferValue{managed<std::string>(),true});
-        auto handle=std::get_if<BufferValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Buffer","E4003");auto& out=*handle->data;
+        auto handle=hua::get_if<BufferValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Buffer","E4003");auto& out=*handle->data;
         if(f.name=="len")return Value(static_cast<I>(out.size()));
         if(f.name=="bytes")return bytes(out);
         if(f.name=="text"){if(out.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(out);return invalid.empty()?ok(Value(out)):err(invalid);}
@@ -122,7 +122,7 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
         if(f.name=="reserve"){auto n=integer(1);if(n<0)runtime_error(s,"buffer reserve must not be negative","E4003");if(static_cast<std::uint64_t>(n)>max_bytes)runtime_error(s,"buffer exceeds 128 MiB","E4099");out.reserve(static_cast<std::size_t>(n));return {};}
         if(f.name=="take_text"){if(out.size()>max_text)return err("TEXT_SIZE: text exceeds 16 MiB");auto invalid=text_utf8_error(out);if(!invalid.empty())return err("TEXT_UTF8: "+invalid);std::string taken=std::move(out);out.clear();return ok(Value(std::move(taken)));}
         std::string addition;
-        if(f.name=="append")addition=*std::get<BytesValue>(args[1].data).data;
+        if(f.name=="append")addition=*hua::get<BytesValue>(args[1].data).data;
         else if(f.name=="write_text"){addition=hua::string_value(args[1].data);if(addition.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(addition);if(!invalid.empty())return err(invalid);}
         else {auto value=integer(1);if(f.name=="write_u8"){if(value<0||value>255)return err("byte outside 0..255");addition=integer_bytes(static_cast<std::uint64_t>(value),1);}else if(f.name=="write_u32_le"){if(value<0||value>4294967295LL)return err("u32 outside 0..4294967295");addition=integer_bytes(static_cast<std::uint64_t>(value),4);}else addition=integer_bytes(std::bit_cast<std::uint64_t>(value),8);}
         if(addition.size()>max_bytes-out.size())return err("buffer exceeds 128 MiB");out+=addition;return ok(Value(static_cast<I>(out.size())));
@@ -132,11 +132,11 @@ Value invoke_binary_standard(const StandardFunction& f,const std::vector<Value>&
         if(f.name=="from_ints"){const auto& source=cget<SliceValue>(args[0].data);if(source.length>max_items)return err("byte input exceeds 1000000 items");std::string out;out.reserve(source.length);for(std::size_t i=0;i<source.length;++i){auto value=as_int(sequence_read(source,i),s);if(value<0||value>255)return err("byte outside 0..255");out+=static_cast<char>(value);}return ok(bytes(std::move(out)));}
         if(f.name=="u32_le"){auto value=integer(0);if(value<0||value>4294967295LL)return err("u32 outside 0..4294967295");return ok(bytes(integer_bytes(static_cast<std::uint64_t>(value),4)));}
         if(f.name=="i64_le")return bytes(integer_bytes(std::bit_cast<std::uint64_t>(integer(0)),8));
-        auto handle=std::get_if<BytesValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Bytes","E4003");const auto& data=*handle->data;
+        auto handle=hua::get_if<BytesValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected Bytes","E4003");const auto& data=*handle->data;
         if(f.name=="len")return Value(static_cast<I>(data.size()));
         if(f.name=="to_text"){if(data.size()>max_text)return err("text exceeds 16 MiB");auto invalid=text_utf8_error(data);return invalid.empty()?ok(Value(data)):err(invalid);}
         if(f.name=="to_ints"){if(data.size()>max_items)return err("byte output exceeds 1000000 items");auto values=managed<std::vector<Value>>();values->reserve(data.size());for(unsigned char c:data)values->emplace_back(static_cast<I>(c));return ok(Value(SliceValue{values,0,values->size(),false,"int"}));}
-        if(f.name=="concat"){const auto& other=*std::get<BytesValue>(args[1].data).data;if(other.size()>max_bytes-data.size())return err("bytes exceed 128 MiB");return ok(bytes(data+other));}
+        if(f.name=="concat"){const auto& other=*hua::get<BytesValue>(args[1].data).data;if(other.size()>max_bytes-data.size())return err("bytes exceed 128 MiB");return ok(bytes(data+other));}
         if(f.name=="crc32"){std::uint32_t crc=0xffffffffu;for(unsigned char c:data){crc^=c;for(unsigned k=0;k<8;++k)crc=(crc>>1)^(0xedb88320u&static_cast<std::uint32_t>(-static_cast<std::int32_t>(crc&1)));}return Value(static_cast<I>(~crc));}
         auto at=integer(1);auto count=f.name=="read_u32_le"?4u:8u;
         if(f.name=="slice"){auto end=integer(2);if(at<0||end<at||static_cast<std::size_t>(end)>data.size())return err("byte slice bounds invalid");return ok(bytes(data.substr(static_cast<std::size_t>(at),static_cast<std::size_t>(end-at))));}

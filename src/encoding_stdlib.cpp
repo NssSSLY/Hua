@@ -62,7 +62,7 @@ Value invoke_pack(const std::string& name,const std::vector<Value>& args,const S
         return packed(static_cast<std::uint64_t>(v),width,big);
     }
     if(name=="unpack_uint"||name=="unpack_int"){
-        const auto& in=*std::get<BytesValue>(args[0].data).data;const auto offset=as_int(args[1],s);const auto width=pack_width(args[2],s);const auto big=big_endian(args[3],s);
+        const auto& in=*hua::get<BytesValue>(args[0].data).data;const auto offset=as_int(args[1],s);const auto width=pack_width(args[2],s);const auto big=big_endian(args[3],s);
         std::uint64_t bits;
         if(!unpacked(in,offset,width,big,bits))return failed(truncated,"int");
         if(name=="unpack_uint"){
@@ -73,13 +73,13 @@ Value invoke_pack(const std::string& name,const std::vector<Value>& args,const S
         return standard_result(Value(std::bit_cast<std::int64_t>(bits)),true,"int");
     }
     if(name=="pack_f64"||name=="pack_f32"){
-        const auto x=std::get<double>(args[0].data);const auto big=big_endian(args[1],s);
+        const auto x=hua::get<double>(args[0].data);const auto big=big_endian(args[1],s);
         if(name=="pack_f64")return packed(std::bit_cast<std::uint64_t>(x),8,big);
         const auto narrow=static_cast<float>(x);
         if(!std::isfinite(narrow))return failed(range,"Bytes");
         return packed(std::bit_cast<std::uint32_t>(narrow),4,big);
     }
-    const auto& in=*std::get<BytesValue>(args[0].data).data;const auto offset=as_int(args[1],s);const auto big=big_endian(args[2],s);
+    const auto& in=*hua::get<BytesValue>(args[0].data).data;const auto offset=as_int(args[1],s);const auto big=big_endian(args[2],s);
     const auto wide=name=="unpack_f64";std::uint64_t bits;
     if(!unpacked(in,offset,wide?8:4,big,bits))return failed(truncated,"float");
     const double x=wide?std::bit_cast<double>(bits):static_cast<double>(std::bit_cast<float>(static_cast<std::uint32_t>(bits)));
@@ -133,18 +133,18 @@ bool append_utf8(std::string& out,std::int64_t scalar){
 Value invoke_encoding_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& s){
     const auto& name=f.name;
     if(f.since==24)return invoke_pack(name,args,s);
-    if(name=="utf8_valid")return Value(text_utf8_error(*std::get<BytesValue>(args[0].data).data).empty());
+    if(name=="utf8_valid")return Value(text_utf8_error(*hua::get<BytesValue>(args[0].data).data).empty());
     if(name=="utf8_encode"){
         std::string out;
         if(!append_utf8(out,as_int(args[0],s)))return standard_result(Value(std::string("ENC_RANGE: invalid Unicode scalar")),false,"Bytes");
         return bytes_ok(std::move(out));
     }
     if(name=="utf8_decode"){
-        const auto [scalar,size]=utf8_scalar(*std::get<BytesValue>(args[0].data).data,as_int(args[1],s));
+        const auto [scalar,size]=utf8_scalar(*hua::get<BytesValue>(args[0].data).data,as_int(args[1],s));
         return make_multi({Value(scalar),Value(size)});
     }
     if(name=="hex_encode"||name=="base64_encode"||name=="base64url_encode"){
-        const auto& in=*std::get<BytesValue>(args[0].data).data;
+        const auto& in=*hua::get<BytesValue>(args[0].data).data;
         if(name=="hex_encode"){
             text_limit(in.size()*2,s);std::string out(in.size()*2,'\0');
             for(std::size_t i=0;i<in.size();++i){auto b=static_cast<unsigned char>(in[i]);out[2*i]=hex_digits[b>>4];out[2*i+1]=hex_digits[b&15];}

@@ -1,6 +1,7 @@
 #pragma once
 #include "hua/ast.hpp"
 #include "hua/gc.hpp"
+#include "hua/tagged.hpp"
 #include <cstdint>
 #include <atomic>
 #include <mutex>
@@ -150,12 +151,15 @@ public:
     Cow()=default;
     Cow(T value):p_(std::make_shared<T>(std::move(value))){}
     const T& get()const{return p_?*p_:empty();}
+    // A body shared by several Values: one handle reaches the objects it names, so the GC
+    // cannot attribute those references to one owner (see heap_edges).
+    bool shared()const{return p_&&p_.use_count()>1;}
     T& mut(){if(!p_)p_=std::make_shared<T>();else if(p_.use_count()!=1)p_=std::make_shared<T>(*p_);return *p_;}
     const T* operator->()const{return &get();}
     const T& operator*()const{return get();}
 };
 struct Value {
-    using Data = std::variant<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue>;
+    using Data = Tagged<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue>;
     Data data;
     Value() = default;
     explicit Value(const char* text):Value(std::string(text)){}
@@ -168,14 +172,14 @@ struct Value {
 template<class T> struct is_cow_alternative:std::bool_constant<std::is_same_v<T,SliceValue>||std::is_same_v<T,ResultValue>>{};
 template<class T> using data_alternative=std::conditional_t<is_cow_alternative<T>::value,Cow<T>,T>;
 // Read access to any alternative (works for all, boxed or not).
-template<class T> const T* cget_if(const Value::Data* d){if constexpr(is_cow_alternative<T>::value){auto b=std::get_if<Cow<T>>(d);return b?&b->get():nullptr;}else return std::get_if<T>(d);}
-template<class T> const T& cget(const Value::Data& d){if constexpr(is_cow_alternative<T>::value)return std::get<Cow<T>>(d).get();else return std::get<T>(d);}
+template<class T> const T* cget_if(const Value::Data* d){if constexpr(is_cow_alternative<T>::value){auto b=hua::get_if<Cow<T>>(d);return b?&b->get():nullptr;}else return hua::get_if<T>(d);}
+template<class T> const T& cget(const Value::Data& d){if constexpr(is_cow_alternative<T>::value)return hua::get<Cow<T>>(d).get();else return hua::get<T>(d);}
 // Write access: unshares a boxed body first.
-template<class T> T* mget_if(Value::Data* d){if constexpr(is_cow_alternative<T>::value){auto b=std::get_if<Cow<T>>(d);return b?&b->mut():nullptr;}else return std::get_if<T>(d);}
-template<class T> T& mget(Value::Data& d){if constexpr(is_cow_alternative<T>::value)return std::get<Cow<T>>(d).mut();else return std::get<T>(d);}
-template<class T> bool holds(const Value::Data& d){return std::holds_alternative<data_alternative<T>>(d);}
-inline const std::string& string_value(const Value::Data& data){if(auto p=std::get_if<std::string>(&data))return *p;return std::get<StringValue>(data).text();}
-inline const std::string* string_data(const Value::Data* data){if(auto p=std::get_if<std::string>(data))return p;auto p=std::get_if<StringValue>(data);return p?&p->text():nullptr;}
+template<class T> T* mget_if(Value::Data* d){if constexpr(is_cow_alternative<T>::value){auto b=hua::get_if<Cow<T>>(d);return b?&b->mut():nullptr;}else return hua::get_if<T>(d);}
+template<class T> T& mget(Value::Data& d){if constexpr(is_cow_alternative<T>::value)return hua::get<Cow<T>>(d).mut();else return hua::get<T>(d);}
+template<class T> bool holds(const Value::Data& d){return hua::holds_alternative<data_alternative<T>>(d);}
+inline const std::string& string_value(const Value::Data& data){if(auto p=hua::get_if<std::string>(&data))return *p;return hua::get<StringValue>(data).text();}
+inline const std::string* string_data(const Value::Data* data){if(auto p=hua::get_if<std::string>(data))return p;auto p=hua::get_if<StringValue>(data);return p?&p->text():nullptr;}
 inline std::size_t value_kind(const Value& value){auto kind=value.data.index();return kind==24?4:kind;}
 inline bool is_string(const Value::Data& data){return data.index()==4||data.index()==24;}
 // Names and field positions are immutable and own their storage independently of a model.
@@ -217,7 +221,7 @@ class RecordFields {
         friend void heap_edges(const Flat& f,const HeapVisitor& visit){for(const auto& slot:f.slots)if(slot)heap_edges(*slot,visit);}
     };
     mutable std::variant<Tree,Flat,std::shared_ptr<Flat>> storage_;
-    Flat* flat()const{if(auto p=std::get_if<Flat>(&storage_))return p;auto p=std::get_if<std::shared_ptr<Flat>>(&storage_);return p?p->get():nullptr;}
+    Flat* flat()const{if(auto p=hua::get_if<Flat>(&storage_))return p;auto p=hua::get_if<std::shared_ptr<Flat>>(&storage_);return p?p->get():nullptr;}
     void detach();
     void expose(){detach();if(auto f=flat()){f->exposed=true;f->copy_depth=0;}}
 public:
@@ -254,21 +258,21 @@ public:
     RecordFields empty_copy()const{auto* f=flat();return f?RecordFields(f->layout):RecordFields();}
     Value* value_at(std::size_t index){expose();auto* f=flat();return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
     const Value* value_at(std::size_t index)const{auto* f=flat();return f&&index<f->slots.size()&&f->slots[index]?&*f->slots[index]:nullptr;}
-    iterator begin(){detach();if(flat()!=nullptr)return iterator(this,std::size_t{0});return iterator(this,std::get<Tree>(storage_).begin());}
-    iterator end(){detach();if(auto* f=flat())return iterator(this,f->slots.size());return iterator(this,std::get<Tree>(storage_).end());}
-    const_iterator begin()const{if(flat()!=nullptr)return const_iterator(this,std::size_t{0});return const_iterator(this,std::get<Tree>(storage_).begin());}
-    const_iterator end()const{if(auto* f=flat())return const_iterator(this,f->slots.size());return const_iterator(this,std::get<Tree>(storage_).end());}
+    iterator begin(){detach();if(flat()!=nullptr)return iterator(this,std::size_t{0});return iterator(this,hua::get<Tree>(storage_).begin());}
+    iterator end(){detach();if(auto* f=flat())return iterator(this,f->slots.size());return iterator(this,hua::get<Tree>(storage_).end());}
+    const_iterator begin()const{if(flat()!=nullptr)return const_iterator(this,std::size_t{0});return const_iterator(this,hua::get<Tree>(storage_).begin());}
+    const_iterator end()const{if(auto* f=flat())return const_iterator(this,f->slots.size());return const_iterator(this,hua::get<Tree>(storage_).end());}
     iterator find(const std::string& name);
     const_iterator find(const std::string& name)const;
     bool contains(const std::string& name)const{return find(name)!=end();}
     Value& at(const std::string& name);
     const Value& at(const std::string& name)const;
     std::pair<iterator,bool> emplace(const std::string& name,Value value);
-    iterator emplace_hint(iterator,const std::string& name,Value value){detach();if(auto* tree=std::get_if<Tree>(&storage_))return iterator(this,tree->emplace_hint(tree->end(),name,std::move(value)));return emplace(name,std::move(value)).first;}
+    iterator emplace_hint(iterator,const std::string& name,Value value){detach();if(auto* tree=hua::get_if<Tree>(&storage_))return iterator(this,tree->emplace_hint(tree->end(),name,std::move(value)));return emplace(name,std::move(value)).first;}
     iterator erase(iterator where);
-    std::size_t size()const{auto* f=flat();return f?f->count:std::get<Tree>(storage_).size();}
+    std::size_t size()const{auto* f=flat();return f?f->count:hua::get<Tree>(storage_).size();}
     bool empty()const{return size()==0;}
-    void clear(){if(auto* f=flat()){if(auto p=std::get_if<std::shared_ptr<Flat>>(&storage_);p&&p->use_count()!=1)storage_=Flat(f->layout,false);else f->clear();}else std::get<Tree>(storage_).clear();}
+    void clear(){if(auto* f=flat()){if(auto p=hua::get_if<std::shared_ptr<Flat>>(&storage_);p&&p->use_count()!=1)storage_=Flat(f->layout,false);else f->clear();}else hua::get<Tree>(storage_).clear();}
     // Sharing is allowed only until a mutable field reference escapes. Such a
     // reference can outlive a later snapshot, so exposed bodies use eager copies.
     RecordFields snapshot(unsigned depth)const;
@@ -284,8 +288,8 @@ public:
             auto& target=*result.flat();
             for(std::size_t i=0;i<f->slots.size();++i)if(f->slots[i]){target.slots[i].emplace(copy(*f->slots[i]));++target.count;}
         }else{
-            auto& target=std::get<Tree>(result.storage_);
-            for(const auto& [name,value]:std::get<Tree>(storage_))target.emplace_hint(target.end(),name,copy(value));
+            auto& target=hua::get<Tree>(result.storage_);
+            for(const auto& [name,value]:hua::get<Tree>(storage_))target.emplace_hint(target.end(),name,copy(value));
         }
         return result;
     }
@@ -294,11 +298,11 @@ public:
     template<class F> void each_value(F&& visit){
         expose();
         if(auto* f=flat()){for(auto& slot:f->slots)if(slot)visit(*slot);}
-        else for(auto& [_,value]:std::get<Tree>(storage_))visit(value);
+        else for(auto& [_,value]:hua::get<Tree>(storage_))visit(value);
     }
     template<class F> void each_value(F&& visit)const{
         if(auto* f=flat()){for(const auto& slot:f->slots)if(slot)visit(*slot);}
-        else for(const auto& [_,value]:std::get<Tree>(storage_))visit(value);
+        else for(const auto& [_,value]:hua::get<Tree>(storage_))visit(value);
     }
 };
 struct ErrorData {
@@ -325,9 +329,13 @@ struct StructData {
 inline void StructValue::release()noexcept{if(share_ref){if(data&&data->shares)--data->shares;share_ref=false;}}
 inline void StructValue::acquire()noexcept{if(share_ref){if(data)++data->shares;else share_ref=false;}}
 struct PinPath {
-    std::vector<std::shared_ptr<StructData>> bodies;
-    void add(const std::shared_ptr<StructData>& body){++body->pins;bodies.push_back(body);}
-    ~PinPath(){for(auto& body:bodies)--body->pins;}
+    // Write paths are short (x.a.b = v pins three bodies): the first few sit inline, so a
+    // path costs one allocation (itself) instead of two.
+    std::array<std::shared_ptr<StructData>,4> first;std::uint8_t count{};
+    std::vector<std::shared_ptr<StructData>> rest;
+    void add(const std::shared_ptr<StructData>& body){++body->pins;if(count<first.size())first[count++]=body;else rest.push_back(body);}
+    template<class F> void each(F&& f){for(std::uint8_t i=0;i<count;++i)f(first[i]);for(auto& body:rest)f(body);}
+    ~PinPath(){each([](auto& body){--body->pins;});}
 };
 }
 #include "hua/map_entries.hpp"

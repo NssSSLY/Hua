@@ -6,13 +6,13 @@
 #include <unordered_map>
 using namespace hua;
 namespace {
-Value member(const Value& value,const std::string& key){if(auto p=cget_if<PlainRecord>(&value.data))return *plain_record_field(*p,key);return std::get<StructValue>(value.data).data->fields.at(key);}
+Value member(const Value& value,const std::string& key){if(auto p=cget_if<PlainRecord>(&value.data))return *plain_record_field(*p,key);return hua::get<StructValue>(value.data).data->fields.at(key);}
 std::string string(const Value& value){return hua::string_value(value.data);}
-std::int64_t integer(const Value& value){return std::get<std::int64_t>(value.data);}
-const auto& entries(const Value& value){return std::get<MapValue>(value.data).data->entries;}
+std::int64_t integer(const Value& value){return hua::get<std::int64_t>(value.data);}
+const auto& entries(const Value& value){return hua::get<MapValue>(value.data).data->entries;}
 std::string owner(const Value& state,const Value& environment,const Value& id){
- auto pool=member(member(member(environment,"unit"),"tree"),"pool");auto nodes=std::get<ListValue>(member(pool,"nodes").data).data;auto index=integer(member(id,"index"));const auto& node=nodes->values.at(index);
- auto payload=std::get<StructValue>(member(node,"payload").data);auto kind=payload.data->variant->name;
+ auto pool=member(member(member(environment,"unit"),"tree"),"pool");auto nodes=hua::get<ListValue>(member(pool,"nodes").data).data;auto index=integer(member(id,"index"));const auto& node=nodes->values.at(index);
+ auto payload=hua::get<StructValue>(member(node,"payload").data);auto kind=payload.data->variant->name;
  auto refs=member(state,"refs");auto ref=entries(refs).find(string(member(member(environment,"unit"),"id"))+":"+std::to_string(index));
  if(kind=="Name"||(kind=="Member"&&ref!=entries(refs).end()))return ref==entries(refs).end()?"":string(ref->second);
  if(kind!="Member")return "";
@@ -30,7 +30,7 @@ struct Observer:VMCallObserver {
   if(name=="statement"&&caller==s.analyze)last.clear();
   if(name=="parameter_seeded"){
    ++seed_calls;const auto& state=args[0];auto type=string(args[1]),owner=string(args[3]);
-   auto identity=std::to_string(owner.size())+":"+owner+std::to_string(type.size())+":"+type+":"+(std::get<bool>(args[2].data)?"true":"false");
+   auto identity=std::to_string(owner.size())+":"+owner+std::to_string(type.size())+":"+type+":"+(hua::get<bool>(args[2].data)?"true":"false");
    const auto& tables=entries(member(state,"parameter_fields"));if(tables.contains(identity))++seed_hits;
    retained_tables=std::max(retained_tables,std::uint64_t(tables.size()));retained_fields=std::max(retained_fields,std::uint64_t(integer(member(state,"parameter_field_count"))));
   }
@@ -38,7 +38,7 @@ struct Observer:VMCallObserver {
    ++invokes;Call call;auto state=args[0],env=args[1],node=args[2],function=args[3];std::string key=string(member(function,"target"));
    auto versions=member(env,"versions"),values=member(env,"values");auto children=cget<SliceValue>(member(node,"children").data);bool valid=true;
    for(std::size_t i=1;i<children.length;++i){auto source=owner(state,env,sequence_copy_source(children,i));if(source.empty()||!entries(values).contains(source)){valid=false;break;}append(key,source);auto version=entries(versions).find(source);key+=":"+std::to_string(version==entries(versions).end()?0:integer(version->second));}
-   if(valid){for(const auto& [global,unused]:entries(member(state,"global_symbols"))){append(key,std::get<std::string>(global));auto version=entries(versions).find(global);key+=":"+std::to_string(version==entries(versions).end()?0:integer(version->second));}
+   if(valid){for(const auto& [global,unused]:entries(member(state,"global_symbols"))){append(key,hua::get<std::string>(global));auto version=entries(versions).find(global);key+=":"+std::to_string(version==entries(versions).end()?0:integer(version->second));}
     auto site=string(member(member(env,"unit"),"id"))+":"+std::to_string(integer(member(member(node,"id"),"index")));
     call.eligible=true;++eligible;auto previous=last.find(site);call.hit=previous!=last.end()&&previous->second==key;if(call.hit)++hits;last[site]=std::move(key);
    }calls.push_back(std::move(call));
@@ -46,8 +46,8 @@ struct Observer:VMCallObserver {
   if(name=="instantiate")instantiate_stack.emplace_back(fn,s.metrics.steps.load());
   if(name=="instantiate_view"&&!calls.empty()){
    ++views;const auto& source=args[3];std::string view;append(view,string(member(source,"type_name")));
-   for(auto flag:{"writable","readonly_children","deep_owned","record_copy"})view+=std::get<bool>(member(source,flag).data)?'1':'0';
-   for(const auto& [origin,flag]:entries(member(source,"origins"))){++view_terms;auto text=std::get<std::string>(origin);calls.back().terms.insert(text);append(view,text);view+=std::get<bool>(flag.data)?'1':'0';}
+   for(auto flag:{"writable","readonly_children","deep_owned","record_copy"})view+=hua::get<bool>(member(source,flag).data)?'1':'0';
+   for(const auto& [origin,flag]:entries(member(source,"origins"))){++view_terms;auto text=hua::get<std::string>(origin);calls.back().terms.insert(text);append(view,text);view+=hua::get<bool>(flag.data)?'1':'0';}
    calls.back().views.insert(std::move(view));
   }
  }

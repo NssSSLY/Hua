@@ -25,11 +25,11 @@ U bounded(RngState& r,U span){
 }
 // Called before the generic argument checks: validates kinds and write capability itself.
 RngState& state(const Value& v,const SourceSpan& s){
-    auto p=std::get_if<RngValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected std.random.Rng","E4003");
+    auto p=hua::get_if<RngValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected std.random.Rng","E4003");
     if(!p->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
     return *p->data;
 }
-I integer(const Value& v,const SourceSpan& s){auto p=std::get_if<I>(&v.data);if(!p)runtime_error(s,"expected int","E4003");return *p;}
+I integer(const Value& v,const SourceSpan& s){auto p=hua::get_if<I>(&v.data);if(!p)runtime_error(s,"expected int","E4003");return *p;}
 const SliceValue& slice_arg(const Value& v,const SourceSpan& s){auto p=cget_if<SliceValue>(&v.data);if(!p)runtime_error(s,"expected a slice or array","E4003");return *p;}
 }
 
@@ -53,7 +53,7 @@ Value invoke_random_standard(const StandardFunction& f,const std::vector<Value>&
         return Value(BytesValue{managed<const std::string>(std::move(out))});
     }
     if(name=="shuffle"){
-        auto list=std::get_if<ListValue>(&args[1].data);if(!list||!list->data)runtime_error(s,"random.shuffle requires List<T>","E4003");
+        auto list=hua::get_if<ListValue>(&args[1].data);if(!list||!list->data)runtime_error(s,"random.shuffle requires List<T>","E4003");
         if(!list->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
         auto& values=list->data->values;++list->data->revision;
         for(auto i=values.size();i>1;--i)std::swap(values[i-1],values[static_cast<std::size_t>(bounded(r,i))]);

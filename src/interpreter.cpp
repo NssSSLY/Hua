@@ -19,7 +19,7 @@ struct Broken {};struct Continued {};
 template<class T> struct Restore {T& value;T old;Restore(T& v,T next):value(v),old(v){value=next;}~Restore(){value=old;}};
 std::vector<const Node*> params(const Node& n) {std::vector<const Node*>out;for(const auto&c:n.children)if(c->kind==N::Parameter)out.push_back(c.get());return out;}
 bool mutable_param(const Node& p){return p.text.find(" mut")!=std::string::npos || (!p.children.empty()&&p.children[0]->kind==N::MutableType);}
-bool writable_value(const Value& v){if(auto p=cget_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<RngValue>(&v.data))return p->writable;if(auto p=std::get_if<DequeValue>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=cget_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=cget_if<ResultValue>(&v.data))return p->writable;return false;}
+bool writable_value(const Value& v){if(auto p=cget_if<PlainRecord>(&v.data))return p->writable;if(auto p=hua::get_if<RngValue>(&v.data))return p->writable;if(auto p=hua::get_if<DequeValue>(&v.data))return p->writable;if(auto p=hua::get_if<BufferValue>(&v.data))return p->writable;if(auto p=hua::get_if<ListValue>(&v.data))return p->writable;if(auto p=cget_if<SliceValue>(&v.data))return p->writable;if(auto p=hua::get_if<StructValue>(&v.data))return p->writable;if(auto p=hua::get_if<MapValue>(&v.data))return p->writable;if(auto p=cget_if<ResultValue>(&v.data))return p->writable;return false;}
 
 Value read_member(const Value& v,bool writable){return writable ? v : read_only(v);}
 }
@@ -30,7 +30,7 @@ Interpreter::Binding& Interpreter::Environment::lookup(const std::string& name,c
 }
 void Interpreter::tick(const Node& n) {task_checkpoint(context_,n.span);if(context_->execution_metrics)++context_->execution_metrics->steps;if(++steps_>context_->execution_limits.steps)runtime_error(n.span,"execution step limit exceeded ("+std::to_string(context_->execution_limits.steps)+")","E4099");}
 void Interpreter::bind(const std::string& name,Value value,std::string type,bool mutable_binding,const SourceSpan& span) {
-    if(std::holds_alternative<MultiValue>(value.data))runtime_error(span,"multiple values require positional binding","E4003");
+    if(hua::holds_alternative<MultiValue>(value.data))runtime_error(span,"multiple values require positional binding","E4003");
     if(type.empty())type=value_type(value);
     value=copy_value(std::move(value));
     if(!mutable_binding)value=read_only(std::move(value));
@@ -52,7 +52,7 @@ Routine<void> Interpreter::run_body(const Node& program,ExecutionScope& executio
         if(auto found=model_.functions.find("main");found!=model_.functions.end()){
             entry_span=found->second->span;
             returned=(co_await call(Callable{found->second,"",{}},{},*found->second));
-            if(std::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
+            if(hua::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
         }
     }catch(...){error=std::current_exception();}
     try{co_await execution.finish_async(bool(error));}catch(...){if(!error)error=std::current_exception();}
@@ -100,13 +100,13 @@ Routine<void> Interpreter::execute(const Node& n) {
     case N::MultiBinding:case N::MultiAssignment: {
         const auto& list=*n.children[0];std::vector<Location> locations;
         if(n.kind==N::MultiAssignment)for(const auto& t:list.children){if(t->kind==N::Name&&t->text=="_")locations.push_back({});else {auto l=(co_await locate(*t));if(!l.writable)runtime_error(t->span,"cannot mutate a read-only value/view","E4007");locations.push_back(std::move(l));}}
-        auto pack=(co_await evaluate(*n.children[1]));auto values=unpack_multi(pack,list.children.size(),n.span);auto data=std::get<MultiValue>(pack.data).data;
+        auto pack=(co_await evaluate(*n.children[1]));auto values=unpack_multi(pack,list.children.size(),n.span);auto data=hua::get<MultiValue>(pack.data).data;
         for(std::size_t i=0;i<values.size();++i){auto type=n.kind==N::MultiBinding?(list.children[i]->text=="_"?"":model_.types.at(list.children[i].get())):locations[i].type;values[i]=copy_value(enforce_type(std::move(values[i]),type,n.span,i<data->contextual.size()&&data->contextual[i]));}
         if(n.kind==N::MultiBinding){for(std::size_t i=0;i<values.size();++i)if(list.children[i]->text!="_")bind(list.children[i]->text,values[i],model_.types.at(list.children[i].get()),n.text=="var",n.span);}
         else {prepare_map_writes(locations,n.span);for(std::size_t i=0;i<values.size();++i)if(locations[i].value||locations[i].map||locations[i].sequence)location_write(locations[i],values[i],n.span);}break;
     }
     case N::ExpressionStatement:co_await evaluate(*n.children[0]);break;
-    case N::Match:{auto value=(co_await evaluate(*n.children[0]));Value tag=value;auto object=std::get_if<StructValue>(&value.data);if(object&&object->data->fields.contains("$case"))tag=object->data->fields.at("$case");for(std::size_t i=1;i<n.children.size();++i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];bool any=pattern.kind==N::Name&&display_type(pattern.text)=="_";if(!any&&!as_bool(binary_value("==",tag,model_.constants.at(&pattern),pattern.span),pattern.span))continue;Environment local{environment_,{}};Restore guard(environment_,&local);if(!any&&object){auto name=show(tag);for(std::size_t j=0;j<arm.children[1]->children.size();++j){const auto& binding=*arm.children[1]->children[j];if(binding.text=="_")continue;auto field="$"+name+"#"+std::to_string(j)+"#"+model_.types.at(&binding);bind(binding.text,enforce_type(copy_value(object->data->fields.at(field)),model_.types.at(&binding),binding.span),model_.types.at(&binding),false,binding.span);}}(co_await block(*arm.children[2],false));break;}break;}
+    case N::Match:{auto value=(co_await evaluate(*n.children[0]));Value tag=value;auto object=hua::get_if<StructValue>(&value.data);if(object&&object->data->fields.contains("$case"))tag=object->data->fields.at("$case");for(std::size_t i=1;i<n.children.size();++i){const auto& arm=*n.children[i];const auto& pattern=*arm.children[0];bool any=pattern.kind==N::Name&&display_type(pattern.text)=="_";if(!any&&!as_bool(binary_value("==",tag,model_.constants.at(&pattern),pattern.span),pattern.span))continue;Environment local{environment_,{}};Restore guard(environment_,&local);if(!any&&object){auto name=show(tag);for(std::size_t j=0;j<arm.children[1]->children.size();++j){const auto& binding=*arm.children[1]->children[j];if(binding.text=="_")continue;auto field="$"+name+"#"+std::to_string(j)+"#"+model_.types.at(&binding);bind(binding.text,enforce_type(copy_value(object->data->fields.at(field)),model_.types.at(&binding),binding.span),model_.types.at(&binding),false,binding.span);}}(co_await block(*arm.children[2],false));break;}break;}
     case N::If:if(as_bool((co_await evaluate(*n.children[0])),n.span))(co_await execute(*n.children[1]));else if(n.children.size()==3)(co_await execute(*n.children[2]));break;
     case N::While:
         while(as_bool((co_await evaluate(*n.children[0])),n.span)){try{(co_await execute(*n.children[1]));}catch(const Continued&){continue;}catch(const Broken&){break;}}break;
@@ -132,7 +132,7 @@ Routine<void> Interpreter::execute(const Node& n) {
             }
         } else {
             auto value=(co_await evaluate(iterable));
-            if(auto m=std::get_if<MapValue>(&value.data)){std::vector<std::pair<Value,Value>> entries;for(const auto& [k,v]:m->data->entries)entries.emplace_back(std::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v)));for(const auto& [k,v]:entries){tick(n);if(!(co_await iteration(k,count==1?k:v)))break;}break;}
+            if(auto m=hua::get_if<MapValue>(&value.data)){std::vector<std::pair<Value,Value>> entries;for(const auto& [k,v]:m->data->entries)entries.emplace_back(hua::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v)));for(const auto& [k,v]:entries){tick(n);if(!(co_await iteration(k,count==1?k:v)))break;}break;}
             auto slice=cget_if<SliceValue>(&value.data);
             if(!slice)runtime_error(iterable.span,"for requires a slice or range","E4003");
             const auto view=*slice;
@@ -165,7 +165,7 @@ Routine<Interpreter::Location> Interpreter::locate(const Node& n) {
         co_return Location{&field->second,type,object->writable,object->data,{},{}};
     }
     if(n.kind==N::Index) {
-        auto base=(co_await evaluate(*n.children[0]));if(!holds<SliceValue>(base.data)&&!std::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index assignment requires a slice or map","E4003");
+        auto base=(co_await evaluate(*n.children[0]));if(!holds<SliceValue>(base.data)&&!hua::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index assignment requires a slice or map","E4003");
         auto index=(co_await evaluate(*n.children[1]));co_return index_location(std::move(base),std::move(index),n.span);
     }
     runtime_error(n.span,"invalid assignment target","E4003");
@@ -177,7 +177,7 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     case N::Integer:case N::Float:case N::String:case N::Boolean:case N::Nil:co_return literal(n);
     case N::Name:{auto& b=environment_->lookup(n.text,n.span);if(auto p=cget_if<PlainRecord>(&b.value.data);p&&p->writable)materialize_record(b.value);co_return b.value;}
     case N::Pack:{std::vector<Value> values;std::vector<bool> contextual;for(const auto& c:n.children){values.push_back((co_await evaluate(*c)));contextual.push_back(contextual_literal(*c));}for(auto& value:values)value=copy_value(std::move(value));co_return make_multi(std::move(values),std::move(contextual));}
-    case N::MapLiteral:{auto value=make_map(type_name(*n.children[0]),n.span);auto& map=std::get<MapValue>(value.data);for(std::size_t i=1;i<n.children.size();++i){auto key=(co_await evaluate(*n.children[i]->children[0]));auto item=(co_await evaluate(*n.children[i]->children[1]));map_put(map,key,std::move(item),n.children[i]->span,contextual_literal(*n.children[i]->children[1]));}co_return value;}
+    case N::MapLiteral:{auto value=make_map(type_name(*n.children[0]),n.span);auto& map=hua::get<MapValue>(value.data);for(std::size_t i=1;i<n.children.size();++i){auto key=(co_await evaluate(*n.children[i]->children[0]));auto item=(co_await evaluate(*n.children[i]->children[1]));map_put(map,key,std::move(item),n.children[i]->span,contextual_literal(*n.children[i]->children[1]));}co_return value;}
     case N::Propagate:{auto value=(co_await evaluate(*n.children[0]));auto r=cget_if<ResultValue>(&value.data);if(!r)runtime_error(n.span,"expected Result","E4003");if(!r->ok)throw Returned{propagated_error(value,n.span),false};co_return result_payload(value,true,n.span);}
     case N::Unary: {
         if(n.text=="&")runtime_error(n.span,"safe reference execution is not implemented","E4008");
@@ -207,7 +207,7 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
         for(const auto& c:n.children){auto value=copy_value((co_await evaluate(*c)));if(type.empty())type=value_type(value);else value=enforce_type(value,type,c->span,numeric_literal(*c));storage->push_back(std::move(value));}
         SliceValue array{storage,0,storage->size(),true,type};for(const auto& child:n.children)array.contextual.push_back(contextual_literal(*child));co_return Value(array);
     }
-    case N::Index:{auto base=(co_await evaluate(*n.children[0]));if(!holds<SliceValue>(base.data)&&!std::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index/slice requires a slice, array or map","E4003");auto key=(co_await evaluate(*n.children[1]));co_return index_value(base,key,n.span);}
+    case N::Index:{auto base=(co_await evaluate(*n.children[0]));if(!holds<SliceValue>(base.data)&&!hua::holds_alternative<MapValue>(base.data))runtime_error(n.span,"index/slice requires a slice, array or map","E4003");auto key=(co_await evaluate(*n.children[1]));co_return index_value(base,key,n.span);}
     case N::Slice: {
         auto base=(co_await evaluate(*n.children[0]));auto slice=cget_if<SliceValue>(&base.data);
         if(!slice)runtime_error(n.span,"index/slice requires a slice or array","E4003");
@@ -235,12 +235,12 @@ Routine<Value> Interpreter::evaluate(const Node& n) {
     }
     case N::Member: {
         auto base=(co_await evaluate(*n.children[0]));
-        if(n.text=="len" && (holds<SliceValue>(base.data)||std::holds_alternative<MapValue>(base.data)||is_string(base.data)))co_return aggregate_member(base,n.text,n.span);
+        if(n.text=="len" && (holds<SliceValue>(base.data)||hua::holds_alternative<MapValue>(base.data)||is_string(base.data)))co_return aggregate_member(base,n.text,n.span);
         if(auto p=cget_if<PlainRecord>(&base.data))if(auto item=plain_record_field(*p,n.text))co_return std::move(*item);
         auto object=materialize_record(base);if(!object)runtime_error(n.span,"member access requires a struct","E4003");
         if(auto field=std::as_const(object->data->fields).find(n.text);field!=std::as_const(object->data->fields).end()){
             const Value* item=&field->second;
-            if(std::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
+            if(hua::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
                 auto& alias=object->data->fields.at(n.text);retain_record_alias(alias);item=&alias;
             }
             co_return read_member(*item,object->writable);}

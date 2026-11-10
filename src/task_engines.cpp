@@ -8,7 +8,7 @@ namespace hua {namespace {
 using I=std::int64_t;
 Value snapshot(const Value& input,const std::function<Callable(const Callable&,unsigned)>& copy,unsigned depth=0){
     if(depth>64)runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
-    bool file=std::holds_alternative<FileValue>(input.data);
+    bool file=hua::holds_alternative<FileValue>(input.data);
     if(holds<Callable>(input.data))try{file=contains_file(input);}
     catch(const Diagnostic& error){
         if(error.code()=="E4099")runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
@@ -17,27 +17,27 @@ Value snapshot(const Value& input,const std::function<Callable(const Callable&,u
     if(file)runtime_error({},"task snapshots cannot contain File","E4104");
     if(auto f=cget_if<Callable>(&input.data))return Value(copy(*f,depth+1));
     if(auto p=cget_if<PlainRecord>(&input.data)){if(depth+p->layout->depth>64)runtime_error({},"task snapshot contains a cycle or is too deep","E4104");auto out=*p;out.writable=false;return Value(std::move(out));}
-    if(auto p=std::get_if<StructValue>(&input.data)){require_complete_enum(*p->data);auto d=managed<StructData>();d->name=p->data->name;d->enumeration=p->data->enumeration;d->variant=p->data->variant;d->fields=p->data->fields.transform([&](const Value& v){return snapshot(v,copy,depth+1);});return Value(StructValue{d,false});}
-    if(auto p=std::get_if<MapValue>(&input.data)){auto d=managed<MapData>();d->key_type=p->data->key_type;d->item_type=p->data->item_type;for(const auto& [k,v]:p->data->entries)d->entries.emplace(k,snapshot(v,copy,depth+1));return Value(MapValue{d,false});}
-    if(auto p=std::get_if<DequeValue>(&input.data)){auto d=managed<DequeData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(DequeValue{d,false});}
-    if(auto p=std::get_if<ListValue>(&input.data)){auto d=managed<ListData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(ListValue{d,false});}
+    if(auto p=hua::get_if<StructValue>(&input.data)){require_complete_enum(*p->data);auto d=managed<StructData>();d->name=p->data->name;d->enumeration=p->data->enumeration;d->variant=p->data->variant;d->fields=p->data->fields.transform([&](const Value& v){return snapshot(v,copy,depth+1);});return Value(StructValue{d,false});}
+    if(auto p=hua::get_if<MapValue>(&input.data)){auto d=managed<MapData>();d->key_type=p->data->key_type;d->item_type=p->data->item_type;for(const auto& [k,v]:p->data->entries)d->entries.emplace(k,snapshot(v,copy,depth+1));return Value(MapValue{d,false});}
+    if(auto p=hua::get_if<DequeValue>(&input.data)){auto d=managed<DequeData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(DequeValue{d,false});}
+    if(auto p=hua::get_if<ListValue>(&input.data)){auto d=managed<ListData>();d->element_type=p->data->element_type;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(ListValue{d,false});}
     if(auto p=cget_if<ResultValue>(&input.data)){auto r=*p;if(p->payload)r.payload=managed<Value>(snapshot(*p->payload,copy,depth+1));r.writable=false;return Value(r);}
-    if(auto p=std::get_if<MultiValue>(&input.data)){auto d=managed<MultiData>();d->contextual=p->data->contextual;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(MultiValue{d});}
+    if(auto p=hua::get_if<MultiValue>(&input.data)){auto d=managed<MultiData>();d->contextual=p->data->contextual;for(const auto& v:p->data->values)d->values.push_back(snapshot(v,copy,depth+1));return Value(MultiValue{d});}
     if(auto p=cget_if<SliceValue>(&input.data);p&&!p->packed){auto d=managed<std::vector<Value>>();for(std::size_t i=0;i<p->length;++i)d->push_back(snapshot(sequence_copy_source(*p,i),copy,depth+1));auto s=*p;s.storage=d;s.start=0;s.writable=false;return Value(s);}
     return read_only(copy_value(input,true));
 }
 void transferable(const Value& v,unsigned depth=0){
-    if(std::holds_alternative<FileValue>(v.data))runtime_error({},"task results cannot contain File","E4104");
+    if(hua::holds_alternative<FileValue>(v.data))runtime_error({},"task results cannot contain File","E4104");
     if(depth>64)runtime_error({},"task result is cyclic or too deep","E4104");
     if(holds<Callable>(v.data))runtime_error({},"task results cannot contain closures","E4104");
     if(auto p=cget_if<PlainRecord>(&v.data);p&&depth+p->layout->depth>64)runtime_error({},"task result is cyclic or too deep","E4104");
-    if(auto p=std::get_if<StructValue>(&v.data))for(const auto& [_,x]:p->data->fields)transferable(x,depth+1);
-    if(auto p=std::get_if<MapValue>(&v.data))for(const auto& [_,x]:p->data->entries)transferable(x,depth+1);
-    if(auto p=std::get_if<ListValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
-    if(auto p=std::get_if<DequeValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
+    if(auto p=hua::get_if<StructValue>(&v.data))for(const auto& [_,x]:p->data->fields)transferable(x,depth+1);
+    if(auto p=hua::get_if<MapValue>(&v.data))for(const auto& [_,x]:p->data->entries)transferable(x,depth+1);
+    if(auto p=hua::get_if<ListValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
+    if(auto p=hua::get_if<DequeValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
     if(auto p=cget_if<SliceValue>(&v.data))for(std::size_t i=0;i<p->length;++i)transferable(sequence_copy_source(*p,i),depth+1);
     if(auto p=cget_if<ResultValue>(&v.data);p&&p->payload)transferable(*p->payload,depth+1);
-    if(auto p=std::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
+    if(auto p=hua::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)transferable(x,depth+1);
 }
 std::vector<I> indices(const std::vector<Value>& args,const SourceSpan& span){
     if(args.size()!=7)runtime_error(span,"invalid parallel kernel metadata","E4104");
@@ -57,7 +57,7 @@ void validate_callable(const Callable& f,const SourceSpan& span){
 }
 }
 Value Interpreter::isolated(const Value& value,unsigned depth){
-    return snapshot(value,[&](const Callable& f,unsigned d){auto out=f;if(out.receiver())out.set_receiver(std::get<StructValue>(isolated(Value(*out.receiver()),depth+d).data));
+    return snapshot(value,[&](const Callable& f,unsigned d){auto out=f;if(out.receiver())out.set_receiver(hua::get<StructValue>(isolated(Value(*out.receiver()),depth+d).data));
         if(out.closure()){auto env=managed<Environment>();auto old=std::static_pointer_cast<Environment>(out.closure());for(const auto& [name,b]:old->bindings)env->bindings.emplace(name,Binding{isolated(b.value,depth+d),b.type,false});out.set_closure(env);std::weak_ptr<Environment> weak=env;out.set_resource_guard([weak](unsigned d){if(auto e=weak.lock())for(const auto& [_,b]:e->bindings)if(contains_file(b.value,d+1))return true;return false;});}return out;},depth);
 }
 Routine<Value> Interpreter::launch(const Callable& callable,const std::vector<Value>& args,const Node& site,std::vector<I> batch,std::string element,bool contextual){
@@ -98,7 +98,7 @@ Routine<Value> Interpreter::parallel(const std::vector<Value>& args,const Node& 
     co_return Value(SliceValue{storage,0,storage->size(),true,element});
 }
 Value VirtualMachine::isolated(const Value& value,unsigned depth){
-    return snapshot(value,[&](const Callable& f,unsigned d){auto out=f;if(out.receiver())out.set_receiver(std::get<StructValue>(isolated(Value(*out.receiver()),depth+d).data));
+    return snapshot(value,[&](const Callable& f,unsigned d){auto out=f;if(out.receiver())out.set_receiver(hua::get<StructValue>(isolated(Value(*out.receiver()),depth+d).data));
         if(out.closure()){auto env=managed<Environment>();auto old=std::static_pointer_cast<Environment>(out.closure());for(const auto& [name,b]:old->bindings)env->bindings.emplace(name,Binding{isolated(b.value,depth+d),b.type,false});out.set_closure(env);std::weak_ptr<Environment> weak=env;out.set_resource_guard([weak](unsigned d){if(auto e=weak.lock())for(const auto& [_,b]:e->bindings)if(contains_file(b.value,d+1))return true;return false;});}return out;},depth);
 }
 Routine<Value> VirtualMachine::launch(const Callable& callable,const std::vector<Value>& args,const Instruction& site,std::vector<I> batch,std::string element,bool contextual){

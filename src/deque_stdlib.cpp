@@ -9,16 +9,16 @@ constexpr std::size_t max_items=1000000;
 // argument checks (one-element operations): they validate kinds, element types
 // and write capability themselves.
 DequeData& deque_arg(const Value& v,const SourceSpan& s,bool write){
-    auto p=std::get_if<DequeValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected Deque<T>","E4003");
+    auto p=hua::get_if<DequeValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected Deque<T>","E4003");
     if(write&&!p->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
     return *p->data;
 }
 ListData& list_arg(const Value& v,const SourceSpan& s,bool write){
-    auto p=std::get_if<ListValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected List<T>","E4003");
+    auto p=hua::get_if<ListValue>(&v.data);if(!p||!p->data)runtime_error(s,"expected List<T>","E4003");
     if(write&&!p->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
     return *p->data;
 }
-I integer(const Value& v,const SourceSpan& s){auto p=std::get_if<I>(&v.data);if(!p)runtime_error(s,"expected int","E4003");return *p;}
+I integer(const Value& v,const SourceSpan& s){auto p=hua::get_if<I>(&v.data);if(!p)runtime_error(s,"expected int","E4003");return *p;}
 Value result(Value v,bool ok,const std::string& type){return standard_result(std::move(v),ok,type);}
 Value read_item(const Value& v){return copy_value(read_only(v));}
 
@@ -29,8 +29,8 @@ Kind kind_of(const std::string& type,const SourceSpan& s){
     runtime_error(s,"heap requires int/float/string elements","E4003");
 }
 bool less(const Value& a,const Value& b,Kind k){
-    if(k==Kind::integer)return std::get<I>(a.data)<std::get<I>(b.data);
-    if(k==Kind::real)return std::get<double>(a.data)<std::get<double>(b.data);
+    if(k==Kind::integer)return hua::get<I>(a.data)<hua::get<I>(b.data);
+    if(k==Kind::real)return hua::get<double>(a.data)<hua::get<double>(b.data);
     const auto& x=hua::string_value(a.data);const auto& y=hua::string_value(b.data);
     auto n=std::min(x.size(),y.size());auto c=n?std::memcmp(x.data(),y.data(),n):0;
     return c<0||(c==0&&x.size()<y.size());

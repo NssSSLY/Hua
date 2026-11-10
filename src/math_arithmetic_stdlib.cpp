@@ -56,13 +56,13 @@ Value integer_operation(const StandardFunction& f, const std::vector<Value>& arg
     const auto operation = name.substr(split + 1);
     const Mode mode = name.starts_with("checked_") ? Mode::checked
                     : name.starts_with("wrapping_") ? Mode::wrapping : Mode::saturating;
-    const I a = std::get<I>(args[0].data);
-    if (operation == "pow") return integer_power(mode, a, std::get<I>(args[1].data), f, span);
+    const I a = hua::get<I>(args[0].data);
+    if (operation == "pow") return integer_power(mode, a, hua::get<I>(args[1].data), f, span);
     Wide result;
     if (operation == "neg") result = -static_cast<Wide>(a);
     else if (operation == "abs") result = a < 0 ? -static_cast<Wide>(a) : static_cast<Wide>(a);
     else {
-        const I b = std::get<I>(args[1].data);
+        const I b = hua::get<I>(args[1].data);
         if (operation == "add") result = static_cast<Wide>(a) + b;
         else if (operation == "sub") result = static_cast<Wide>(a) - b;
         else if (operation == "mul") result = static_cast<Wide>(a) * b;
@@ -78,7 +78,7 @@ Value integer_operation(const StandardFunction& f, const std::vector<Value>& arg
 Value invoke_math_arithmetic(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
     if (f.name.starts_with("checked_") || f.name.starts_with("wrapping_") || f.name.starts_with("saturating_"))
         return integer_operation(f, args, span);
-    const double x = std::get<double>(args[0].data);
+    const double x = hua::get<double>(args[0].data);
     auto failure = [](std::string text) { return standard_result(Value(std::move(text)), false, "float"); };
     if (!std::isfinite(x)) return failure("MATH_DOMAIN: finite input required");
     if (f.name == "acosh" && x < 1.0) return failure("MATH_DOMAIN: acosh requires x >= 1");

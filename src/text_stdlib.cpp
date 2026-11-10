@@ -146,7 +146,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
     }
     if (n == "format_int_grouped") return Value(grouped(std::to_string(integer(args[0], s)), text(1), s));
     if (n == "format_float" || n == "format_float_grouped") {
-        auto value = std::get<double>(args[0].data);
+        auto value = hua::get<double>(args[0].data);
         auto decimals = integer(args[1], s);
         if (decimals < 0 || decimals > 17) runtime_error(s, "format_float decimals must be 0..17", "E4003");
         // Fixed notation of the exact binary value, ties to even (as printf/round).
@@ -393,7 +393,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
         return ok(Value(std::move(out)));
     }
     if (n == "template") {
-        const auto& values = std::get<MapValue>(args[1].data);
+        const auto& values = hua::get<MapValue>(args[1].data);
         std::string out, problem;
         auto resolve = [&](std::string_view key) -> const std::string* {
             auto found = values.data->entries.find(map_key(values, Value(std::string(key)), s));

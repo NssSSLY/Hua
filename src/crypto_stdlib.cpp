@@ -55,7 +55,7 @@ std::string sha256(std::initializer_list<std::string_view> parts,RuntimeContext*
     return out;
 }
 Value bytes(std::string data){return Value(BytesValue{managed<const std::string>(std::move(data))});}
-const std::string& bytes_arg(const Value& v){return *std::get<BytesValue>(v.data).data;}
+const std::string& bytes_arg(const Value& v){return *hua::get<BytesValue>(v.data).data;}
 // Operating-system CSPRNG; an empty string with `error` set when unavailable.
 std::string os_random(std::size_t n,std::string& error){
     std::string out(n,'\0');if(!n)return out;
@@ -90,7 +90,7 @@ Value invoke_crypto_standard(const StandardFunction& f,const std::vector<Value>&
     }
     if(name=="random_bytes"||name=="uuid4"){
         std::size_t n=16;
-        if(name=="random_bytes"){auto count=std::get<I>(args[0].data);if(count<0)runtime_error(s,"crypto.random_bytes requires n >= 0","E4003");if(static_cast<std::uint64_t>(count)>max_random)runtime_error(s,"crypto.random_bytes exceeds 1 MiB per call","E4099");n=static_cast<std::size_t>(count);}
+        if(name=="random_bytes"){auto count=hua::get<I>(args[0].data);if(count<0)runtime_error(s,"crypto.random_bytes requires n >= 0","E4003");if(static_cast<std::uint64_t>(count)>max_random)runtime_error(s,"crypto.random_bytes exceeds 1 MiB per call","E4099");n=static_cast<std::size_t>(count);}
         std::string error;auto data=os_random(n,error);
         const std::string success=name=="uuid4"?"string":"Bytes";
         if(!error.empty())return standard_result(Value("CRYPTO_UNAVAILABLE: "+error),false,success);

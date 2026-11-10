@@ -233,7 +233,7 @@ public:
 }
 
 ScalarConstant unbox_constant(const Value& value,const SourceSpan& s){
-    return std::visit([&](const auto& x)->ScalarConstant{
+    return hua::visit([&](const auto& x)->ScalarConstant{
         using V=std::decay_t<decltype(x)>;
         if constexpr(std::same_as<V,std::monostate>)return {};
         else if constexpr(std::same_as<V,bool>||std::same_as<V,std::int64_t>||std::same_as<V,double>)return ScalarConstant(x);
@@ -241,7 +241,7 @@ ScalarConstant unbox_constant(const Value& value,const SourceSpan& s){
     },value.data);
 }
 Value box_constant(const ScalarConstant& value){
-    return std::visit([](const auto& x)->Value{
+    return hua::visit([](const auto& x)->Value{
         if constexpr(std::same_as<std::decay_t<decltype(x)>,std::monostate>)return {};
         else return Value(x);
     },value.data);

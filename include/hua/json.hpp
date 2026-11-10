@@ -10,8 +10,8 @@ struct JsonData {
     // the recursion of releasing a tree that was constructed one level at a time.
     std::size_t height{};
     template<class T> explicit JsonData(T value): data(std::move(value)) {
-        if(auto a=std::get_if<Array>(&data)){for(const auto& p:*a)height=std::max(height,p->height+1);}
-        else if(auto o=std::get_if<Object>(&data)){for(const auto& [_,p]:*o)height=std::max(height,p->height+1);}
+        if(auto a=hua::get_if<Array>(&data)){for(const auto& p:*a)height=std::max(height,p->height+1);}
+        else if(auto o=hua::get_if<Object>(&data)){for(const auto& [_,p]:*o)height=std::max(height,p->height+1);}
     }
 };
 Value json_decode(const std::string& text);

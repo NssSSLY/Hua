@@ -36,13 +36,13 @@ std::string format_error(const ErrorValue& value){
 }
 Value invoke_error_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span){
     auto text=[&](std::size_t i)->const std::string&{return hua::string_value(args[i].data);};
-    auto node=[&](std::size_t i)->const ErrorData&{auto p=std::get_if<ErrorValue>(&args[i].data);if(!p||!p->data)runtime_error(span,"expected std.error.Value","E4003");return *p->data;};
+    auto node=[&](std::size_t i)->const ErrorData&{auto p=hua::get_if<ErrorValue>(&args[i].data);if(!p||!p->data)runtime_error(span,"expected std.error.Value","E4003");return *p->data;};
     for(const auto& value:args)if(auto text=hua::string_data(&value.data);text&&!text_utf8_error(*text).empty()){if(f.name=="make"||f.name=="wrap")return standard_result(Value(std::string("ERROR_TEXT: valid UTF-8 required")),false,"std.error.Value");runtime_error(span,"error text requires valid UTF-8","E4003");}
     if(f.name=="make"||f.name=="wrap"){
         if(!identity(text(0))||!identity(text(1)))return standard_result(Value(std::string("ERROR_IDENTITY: domain/code require 1..128 lowercase ASCII identifier bytes")),false,"std.error.Value");
         ErrorData data;data.domain=text(0);data.code=text(1);
         data.message=clipped(text(2),max_message,data.truncated);
-        if(f.name=="wrap"){node(3);data.cause=shortened(std::get<ErrorValue>(args[3].data).data,max_depth-1,data.truncated);}
+        if(f.name=="wrap"){node(3);data.cause=shortened(hua::get<ErrorValue>(args[3].data).data,max_depth-1,data.truncated);}
         return standard_result(error(std::move(data)),true,"std.error.Value");
     }
     if(f.name=="from_string"){
@@ -66,7 +66,7 @@ Value invoke_error_standard(const StandardFunction& f,const std::vector<Value>& 
         else{copy.native_domain=clipped(text(1),128,copy.truncated);copy.native_code=as_int(args[2],span);}
         return error(std::move(copy));
     }
-    if(f.name=="format")return Value(format_error(std::get<ErrorValue>(args[0].data)));
+    if(f.name=="format")return Value(format_error(hua::get<ErrorValue>(args[0].data)));
     runtime_error(span,"unknown error operation","E4003");
 }
 }

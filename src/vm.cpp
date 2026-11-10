@@ -15,7 +15,7 @@ static_assert(performance::op_count==static_cast<std::size_t>(Op::Defer)+1,"perf
 namespace {
 using N=NodeKind;using I=std::int64_t;
 [[noreturn]] void invalid(const SourceSpan& s){runtime_error(s,"invalid VM instruction/stack state","E6001");}
-bool writable(const Value& v){if(auto p=cget_if<PlainRecord>(&v.data))return p->writable;if(auto p=std::get_if<RngValue>(&v.data))return p->writable;if(auto p=std::get_if<DequeValue>(&v.data))return p->writable;if(auto p=std::get_if<BufferValue>(&v.data))return p->writable;if(auto p=std::get_if<ListValue>(&v.data))return p->writable;if(auto p=cget_if<SliceValue>(&v.data))return p->writable;if(auto p=std::get_if<StructValue>(&v.data))return p->writable;if(auto p=std::get_if<MapValue>(&v.data))return p->writable;if(auto p=cget_if<ResultValue>(&v.data))return p->writable;return false;}
+bool writable(const Value& v){if(auto p=cget_if<PlainRecord>(&v.data))return p->writable;if(auto p=hua::get_if<RngValue>(&v.data))return p->writable;if(auto p=hua::get_if<DequeValue>(&v.data))return p->writable;if(auto p=hua::get_if<BufferValue>(&v.data))return p->writable;if(auto p=hua::get_if<ListValue>(&v.data))return p->writable;if(auto p=cget_if<SliceValue>(&v.data))return p->writable;if(auto p=hua::get_if<StructValue>(&v.data))return p->writable;if(auto p=hua::get_if<MapValue>(&v.data))return p->writable;if(auto p=cget_if<ResultValue>(&v.data))return p->writable;return false;}
 
 }
 const VirtualMachine::FunctionLayout& VirtualMachine::function_layout(const Node& fn) {
@@ -61,7 +61,7 @@ std::optional<Value> fast_binary(std::string_view op,const Value& left,const Val
     const auto index=value_kind(left);if(index!=value_kind(right)||op.empty()||op.size()>2)return std::nullopt;
     const char c0=op[0],c1=op.size()==2?op[1]:'\0';
     const bool eq=c0=='='&&c1=='=',ne=c0=='!'&&c1=='=',lt=c0=='<'&&!c1,le=c0=='<'&&c1=='=',gt=c0=='>'&&!c1,ge=c0=='>'&&c1=='=';
-    if(index==2){auto x=std::get<std::int64_t>(left.data),y=std::get<std::int64_t>(right.data);
+    if(index==2){auto x=hua::get<std::int64_t>(left.data),y=hua::get<std::int64_t>(right.data);
         if(eq)return Value(x==y);if(ne)return Value(x!=y);if(lt)return Value(x<y);if(le)return Value(x<=y);if(gt)return Value(x>y);if(ge)return Value(x>=y);
         std::int64_t out;
         if(c0=='+'&&!c1&&!__builtin_add_overflow(x,y,&out))return Value(out);
@@ -71,7 +71,7 @@ std::optional<Value> fast_binary(std::string_view op,const Value& left,const Val
         if(((c0=='%'&&!c1)||(c0=='/'&&c1=='/'))&&y!=0&&!(x==std::numeric_limits<std::int64_t>::min()&&y==-1)){
             std::int64_t q=x/y,r=x%y;if(r&&((r<0)!=(y<0))){--q;r+=y;}return Value(c0=='%'?r:q);}
         return std::nullopt;}
-    if(index==1){auto x=std::get<bool>(left.data),y=std::get<bool>(right.data);if(eq)return Value(x==y);if(ne)return Value(x!=y);return std::nullopt;}
+    if(index==1){auto x=hua::get<bool>(left.data),y=hua::get<bool>(right.data);if(eq)return Value(x==y);if(ne)return Value(x!=y);return std::nullopt;}
     if(index==4){const auto& x=hua::string_value(left.data);const auto& y=hua::string_value(right.data);
         if(eq)return Value(x==y);if(ne)return Value(x!=y);if(lt)return Value(x<y);if(le)return Value(x<=y);if(gt)return Value(x>y);if(ge)return Value(x>=y);}
     return std::nullopt;
@@ -79,7 +79,7 @@ std::optional<Value> fast_binary(std::string_view op,const Value& left,const Val
 // In-place form of fast_binary's int/int cases: writes the same result into `left`
 // without building a temporary optional<Value>; false leaves `left` untouched.
 inline bool int_binary_into(std::string_view op,Value& left,const Value& right){
-    auto* xp=std::get_if<std::int64_t>(&left.data);auto* yp=std::get_if<std::int64_t>(&right.data);
+    auto* xp=hua::get_if<std::int64_t>(&left.data);auto* yp=hua::get_if<std::int64_t>(&right.data);
     if(!xp||!yp||op.empty()||op.size()>2)return false;
     const auto x=*xp,y=*yp;const char c0=op[0],c1=op.size()==2?op[1]:'\0';std::int64_t out;
     switch(c0){
@@ -99,9 +99,9 @@ inline bool int_binary_into(std::string_view op,Value& left,const Value& right){
 // Scalar constants/loads build the stack entry directly instead of a generic Value copy.
 template<class Stack> inline bool push_scalar(Stack& stack,const Value& value){
     switch(value.data.index()){
-    case 1:stack.emplace_back(std::in_place_type<Value>,std::get<bool>(value.data));return true;
-    case 2:stack.emplace_back(std::in_place_type<Value>,std::get<std::int64_t>(value.data));return true;
-    case 3:stack.emplace_back(std::in_place_type<Value>,std::get<double>(value.data));return true;
+    case 1:stack.emplace_back(std::in_place_type<Value>,hua::get<bool>(value.data));return true;
+    case 2:stack.emplace_back(std::in_place_type<Value>,hua::get<std::int64_t>(value.data));return true;
+    case 3:stack.emplace_back(std::in_place_type<Value>,hua::get<double>(value.data));return true;
     default:return false;
     }
 }
@@ -323,11 +323,11 @@ void VirtualMachine::classify_writes(const Code& code,CodeLayout& layout){
 }
 namespace {
 [[noreturn]] void unprepared_write(const SourceSpan& span){runtime_error(span,"internal: write to a shared struct body outside a write path","E6001");}
-inline bool shared_unpinned(const Value& value){auto p=std::get_if<StructValue>(&value.data);return p&&p->data&&p->data->shares&&!p->data->pins;}
+inline bool shared_unpinned(const Value& value){auto p=hua::get_if<StructValue>(&value.data);return p&&p->data&&p->data->shares&&!p->data->pins;}
 }
 Value VirtualMachine::prepare_write(Value& slot,std::shared_ptr<PinPath> path){
     if(auto p=cget_if<PlainRecord>(&slot.data);p&&p->writable)materialize_record(slot);
-    auto h=std::get_if<StructValue>(&slot.data);
+    auto h=hua::get_if<StructValue>(&slot.data);
     if(!h||!h->writable||!h->data)return slot;
     auto& body=h->data;
     if(!body->pins&&(h->fields_readonly||(body->shares&&body.use_count()>1))){
@@ -345,19 +345,19 @@ Value VirtualMachine::prepare_write(Value& slot,std::shared_ptr<PinPath> path){
 }
 // Out of line so the dispatch loop stays compact; each returns true when it pushed.
 bool VirtualMachine::load_for_write(Value& value){
-    if(!std::holds_alternative<StructValue>(value.data)&&!holds<PlainRecord>(value.data))return false;
+    if(!hua::holds_alternative<StructValue>(value.data)&&!holds<PlainRecord>(value.data))return false;
     stack_.emplace_back(prepare_write(value,nullptr));return true;
 }
 bool VirtualMachine::member_for_write(FieldAccess& cache,const StructValue& object,const std::string& name){
     auto* slot=field(cache,object,name);if(!slot)return false;
-    if(std::holds_alternative<StructValue>(slot->data)||holds<PlainRecord>(slot->data)){stack_.emplace_back(prepare_write(*slot,object.path));return true;}
+    if(hua::holds_alternative<StructValue>(slot->data)||holds<PlainRecord>(slot->data)){stack_.emplace_back(prepare_write(*slot,object.path));return true;}
     // A fixed array is stored inline in the body: an alias into it (index/slice writes,
     // views) must never be shared with a copy, so this body stays eagerly copied.
-    if(auto sl=cget_if<SliceValue>(&slot->data);sl&&sl->fixed){object.data->no_share=true;if(object.path)for(auto& b:object.path->bodies)b->no_share=true;}
+    if(auto sl=cget_if<SliceValue>(&slot->data);sl&&sl->fixed){object.data->no_share=true;if(object.path)object.path->each([](auto& b){b->no_share=true;});}
     stack_.emplace_back(*slot);return true;
 }
 bool VirtualMachine::index_for_write(const Value& value,const Value& index,const SourceSpan& s){
-    if(auto m=std::get_if<MapValue>(&value.data);m&&m->writable){auto found=map_find(*m,index,s);if(found==m->data->entries.end())stack_.emplace_back(Value{});else stack_.emplace_back(prepare_write(found->second,nullptr));return true;}
+    if(auto m=hua::get_if<MapValue>(&value.data);m&&m->writable){auto found=map_find(*m,index,s);if(found==m->data->entries.end())stack_.emplace_back(Value{});else stack_.emplace_back(prepare_write(found->second,nullptr));return true;}
     if(auto sl=cget_if<SliceValue>(&value.data);sl&&sl->writable&&!sl->packed){auto i=as_int(index,s);if(i<0||static_cast<std::size_t>(i)>=sl->length)runtime_error(s,"index out of bounds","E4006");stack_.emplace_back(prepare_write(sl->storage->at(sl->start+static_cast<std::size_t>(i)),nullptr));return true;}
     return false;
 }
@@ -365,7 +365,7 @@ inline void VirtualMachine::branch_on_bool(Frame& f){
     if(f.pc>=f.code->instructions.size())return;
     const auto& jump=f.code->instructions[f.pc];
     if(jump.op!=Op::JumpFalse&&jump.op!=Op::JumpTrue)return;
-    auto* b=std::get_if<bool>(&std::get<Value>(stack_.back()).data);if(!b)return;
+    auto* b=hua::get_if<bool>(&hua::get<Value>(stack_.back()).data);if(!b)return;
     HUA_PROFILE_OP(jump.op);HUA_PROFILE_ADD(fused_steps,1);
     const bool condition=*b;stack_.pop_back();++f.pc;
     if(condition==(jump.op==Op::JumpTrue)){if(jump.target>=f.code->instructions.size())invalid(jump.span);f.pc=jump.target;}
@@ -435,9 +435,9 @@ const std::string& VirtualMachine::field_type(FieldAccess& cache,const std::stri
     cache.type=&field_type(owner,name,span);cache.type_owner=owner;return *cache.type;
 }
 Value VirtualMachine::pop(const SourceSpan& span) {
-    if(stack_.empty() || (!frames_.empty() && stack_.size()<=frames_.back().base) || !std::holds_alternative<Value>(stack_.back()))invalid(span);
-    auto value=std::move(std::get<Value>(stack_.back()));stack_.pop_back();
-    if(auto object=std::get_if<StructValue>(&value.data))require_complete_enum(*object->data,span);
+    if(stack_.empty() || (!frames_.empty() && stack_.size()<=frames_.back().base) || !hua::holds_alternative<Value>(stack_.back()))invalid(span);
+    auto value=std::move(hua::get<Value>(stack_.back()));stack_.pop_back();
+    if(auto object=hua::get_if<StructValue>(&value.data))require_complete_enum(*object->data,span);
     return value;
 }
 std::vector<Value> VirtualMachine::arguments(std::size_t count,const SourceSpan& span) {
@@ -456,7 +456,7 @@ void VirtualMachine::materialize_scope() {
 }
 void VirtualMachine::bind_named(const std::string& name,const std::string& declared,bool mutable_binding,const SourceSpan& span,Value value,std::optional<Binding>* slot) {
     materialize_scope();
-    if(std::holds_alternative<MultiValue>(value.data))runtime_error(span,"multiple values require positional binding","E4003");
+    if(hua::holds_alternative<MultiValue>(value.data))runtime_error(span,"multiple values require positional binding","E4003");
     auto type=declared.empty()?value_type(value):declared;value=copy_value(std::move(value));
     if(!mutable_binding)value=read_only(std::move(value));
     if(slot){slot->emplace(Binding{std::move(value),std::move(type),mutable_binding});return;}
@@ -487,7 +487,7 @@ EntryResult VirtualMachine::run(const Bytecode& bytecode){
 }
 Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& execution){
     if(model_.external)model_.external->reset();
-    bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();function_layouts_.clear();field_types_.clear();enum_layouts_.clear();record_layouts_.clear();code_layouts_.clear();builtin_layout_={};
+    bytecode_=&bytecode;steps_=0;frames_.clear();stack_.clear();function_layouts_.clear();field_types_.clear();enum_layouts_.clear();record_layouts_.clear();code_layouts_.clear();builtin_layout_={};register_codes_.clear();register_max_=value_max_=0;register_user_base_=0;
     frame_arena_=std::make_shared<FrameArena>();
     auto& initial_layout=code_layout(bytecode.initializer);
     for(const auto& name:builtin_names()){builtin_layout_.add(name);builtin_layout_.add(std::string("$core$")+name);}
@@ -505,7 +505,7 @@ Routine<void> VirtualMachine::run_body(const Bytecode& bytecode,ExecutionScope& 
             entry_span=main->second->span;completed_.reset();
             Instruction site{};site.span=entry_span;(co_await call(Callable{main->second,"",{}},{},site));if(frames_.empty())stack_.clear();else (co_await dispatch());
             if(completed_)returned=std::move(*completed_);
-            if(std::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
+            if(hua::holds_alternative<TaskValue>(returned.data))returned=co_await context_->tasks->await_async(returned,entry_span);
         }
     }catch(...){error=std::current_exception();}
     if(is_program_exit(error))error=co_await cleanup_exit(error);
@@ -567,7 +567,7 @@ void VirtualMachine::enter_function(const Callable& callable,const std::vector<V
         // A borrowed argument that is itself a shared copy (deferred calls copy their
         // arguments) is owned by this argument list: make it private before lending it.
         // An argument read pinned only until the call (write_mode 3) is copied unpinned.
-        if(auto h=std::get_if<StructValue>(&args[i].data))[[unlikely]]{
+        if(auto h=hua::get_if<StructValue>(&args[i].data))[[unlikely]]{
             if(!mut&&h->path)const_cast<StructValue*>(h)->path.reset();
             else if(mut&&shared_unpinned(args[i]))const_cast<Value&>(args[i])=prepare_write(const_cast<Value&>(args[i]),nullptr);
         }
@@ -607,7 +607,7 @@ void VirtualMachine::complete_return(Value value,const Instruction& op,bool earl
     frames_.pop_back();stack_.resize(base);// enforce_return already makes the language value copy at the function boundary.
     if(!function)value=copy_value(value);
     if(!frames_.empty())stack_.emplace_back(std::move(value));else completed_=std::move(value);
-    if(observer_){flush_metrics();observer_->leave(function,frames_.empty()?(completed_?&*completed_:nullptr):std::get_if<Value>(&stack_.back()));}
+    if(observer_){flush_metrics();observer_->leave(function,frames_.empty()?(completed_?&*completed_:nullptr):hua::get_if<Value>(&stack_.back()));}
     recycle_scope(std::move(environment));
 }
 Routine<void> VirtualMachine::drain(const std::shared_ptr<Environment>& env){
@@ -663,7 +663,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             // Anything else (overflow, other types) takes the ordinary steps.
             if(op.constant.data.index()==2&&f.pc<f.code->instructions.size()&&stack_.size()>f.base){
                 const auto& next=f.code->instructions[f.pc];
-                if(next.op==Op::Binary)if(auto* l=std::get_if<Value>(&stack_.back());l&&int_binary_into(next.text,*l,op.constant)){
+                if(next.op==Op::Binary)if(auto* l=hua::get_if<Value>(&stack_.back());l&&int_binary_into(next.text,*l,op.constant)){
                     HUA_PROFILE_OP(Op::Binary);HUA_PROFILE_ADD(fused_steps,1);++f.pc;branch_on_bool(f);break;}
             }
             if(!push_scalar(stack_,op.constant))stack_.emplace_back(op.constant);break;
@@ -674,10 +674,10 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             if(value.data.index()==6&&f.pc<f.code->instructions.size()){
                 const auto& next=f.code->instructions[f.pc];
                 if(next.op==Op::Member&&!f.layout->write_mode[f.pc-1]&&!f.layout->write_mode[f.pc]&&next.text!="len"){
-                    auto& object=std::get<StructValue>(value.data);++f.pc;
+                    auto& object=hua::get<StructValue>(value.data);++f.pc;
                     if(auto* item=read_field(access(f).field,object,next.text)){
                         HUA_PROFILE_OP(Op::Member);HUA_PROFILE_ADD(fused_steps,1);
-                        if(std::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
+                        if(hua::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
                             auto* alias=field(access(f).field,object,next.text);retain_record_alias(*alias);item=alias;}
                         if(object.writable&&object.fields_readonly)[[unlikely]]{stack_.emplace_back(copy_value(read_only(*item)));break;}
                         stack_.emplace_back(object.writable?*item:read_only(*item));break;}
@@ -688,11 +688,11 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         case Op::Bind:{HUA_PROFILE_CONSTRAINT_SOURCE(binding);auto v=enforce_type(pop(s),op.type,s,!op.contextual.empty()&&op.contextual[0]);const auto& where=f.layout->bind_slots[f.pc-1];bind_slot(where.scope,where.slot,op.text,op.type,op.flag,s,std::move(v));break;}
         case Op::Pop:
             // Only struct values need pop()'s enum completeness check.
-            if(stack_.size()>f.base)if(auto* v=std::get_if<Value>(&stack_.back());v&&!std::holds_alternative<StructValue>(v->data)){stack_.pop_back();break;}
+            if(stack_.size()>f.base)if(auto* v=hua::get_if<Value>(&stack_.back());v&&!hua::holds_alternative<StructValue>(v->data)){stack_.pop_back();break;}
             pop(s);break;
         case Op::Unary:{
             // `!` on a bool is the hottest unary form; anything else takes the general path.
-            if(op.text=="!"&&stack_.size()>f.base)if(auto* v=std::get_if<Value>(&stack_.back()))if(auto* b=std::get_if<bool>(&v->data)){
+            if(op.text=="!"&&stack_.size()>f.base)if(auto* v=hua::get_if<Value>(&stack_.back()))if(auto* b=hua::get_if<bool>(&v->data)){
                 // Fused `!` + conditional jump. The jump is still one counted step; fuse only
                 // when that step could not yield, pump files or exceed the step limit.
                 if(f.layout&&f.layout->negated_jump[f.pc-1]&&poll_countdown_>1&&!pump_pending(context_)&&steps_<context_->execution_limits.steps){
@@ -706,14 +706,14 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
                 *b=!*b;break;}
             stack_.emplace_back(unary_value(op.text,pop(s),s));break;}
         case Op::Binary:{
-            if(stack_.size()>=f.base+2)if(auto* r=std::get_if<Value>(&stack_.back()))if(auto* l=std::get_if<Value>(&stack_[stack_.size()-2])){
+            if(stack_.size()>=f.base+2)if(auto* r=hua::get_if<Value>(&stack_.back()))if(auto* l=hua::get_if<Value>(&stack_[stack_.size()-2])){
                 if(int_binary_into(op.text,*l,*r)){stack_.pop_back();branch_on_bool(f);break;}
-                if(auto fast=fast_binary(op.text,*l,*r)){stack_.pop_back();std::get<Value>(stack_.back())=std::move(*fast);break;}}
+                if(auto fast=fast_binary(op.text,*l,*r)){stack_.pop_back();hua::get<Value>(stack_.back())=std::move(*fast);break;}}
             auto right=pop(s),left=pop(s);stack_.emplace_back(binary_value(op.text,left,right,s,op.flag));break;}
         case Op::Jump:if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;break;
         case Op::JumpFalse:case Op::JumpTrue: {
             bool condition;
-            if(auto* v=stack_.size()>f.base?std::get_if<Value>(&stack_.back()):nullptr;v&&std::holds_alternative<bool>(v->data)){condition=std::get<bool>(v->data);stack_.pop_back();}
+            if(auto* v=stack_.size()>f.base?hua::get_if<Value>(&stack_.back()):nullptr;v&&hua::holds_alternative<bool>(v->data)){condition=hua::get<bool>(v->data);stack_.pop_back();}
             else condition=as_bool(pop(s),s);
             if(condition==(op.op==Op::JumpTrue)){if(op.target>=f.code->instructions.size())invalid(s);f.pc=op.target;}break;
         }
@@ -752,50 +752,50 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         }
         case Op::Store: {
             auto value=pop(s);if(stack_.size()<=f.base)invalid(s);
-            if(auto* local=std::get_if<LocalRef>(&stack_.back())){
+            if(auto* local=hua::get_if<LocalRef>(&stack_.back())){
                 // Same steps as the Location path below, without building a ValueLocation.
                 auto& b=*local->binding;
                 // int op= int on an `int` binding: enforce_type/copy_value are identities there.
                 const bool compound=op.text.size()>1;
                 const std::string_view name=!compound?std::string_view{}:std::string_view(op.text).substr(0,op.text.size()-1);
-                if(compound&&std::holds_alternative<std::int64_t>(b.value.data)&&b.type=="int"){
-                    Value result=b.value;if(int_binary_into(name,result,value)&&std::holds_alternative<std::int64_t>(result.data)){
+                if(compound&&hua::holds_alternative<std::int64_t>(b.value.data)&&b.type=="int"){
+                    Value result=b.value;if(int_binary_into(name,result,value)&&hua::holds_alternative<std::int64_t>(result.data)){
                         b.value=result;stack_.back()=std::move(result);break;}}
                 if(compound){if(auto fast=fast_binary(name,b.value,value))value=std::move(*fast);else value=binary_value(name,b.value,value,s,op.flag);}
                 value=enforce_type(std::move(value),b.type,s,op.flag||compound);b.value=copy_value(value);
                 stack_.back()=std::move(value);break;
             }
-            if(!std::holds_alternative<Location>(stack_.back()))invalid(s);
-            auto where=std::move(std::get<Location>(stack_.back()));stack_.pop_back();
+            if(!hua::holds_alternative<Location>(stack_.back()))invalid(s);
+            auto where=std::move(hua::get<Location>(stack_.back()));stack_.pop_back();
             if(op.text!="=")value=binary_value(std::string_view(op.text).substr(0,op.text.size()-1),location_read(where,s),value,s,op.flag);
             value=enforce_type(std::move(value),where.type,s,op.flag||op.text!="=");location_write(where,value,s);stack_.emplace_back(std::move(value));break;
         }
         case Op::MakeMulti:{auto values=arguments(op.argument,s);for(auto& v:values)v=copy_value(v);stack_.emplace_back(make_multi(std::move(values),op.contextual));break;}
-        case Op::BindMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto& cached=access(f).multi_types;if(!cached)cached=type_arguments(op.type,"multi");else HUA_PROFILE_COUNT(vm_multi_type_hits);const auto& types=*cached;if(types.size()!=values.size()||op.names.size()!=values.size())invalid(s);materialize_scope();auto data=std::get<MultiValue>(pack.data).data;
+        case Op::BindMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto& cached=access(f).multi_types;if(!cached)cached=type_arguments(op.type,"multi");else HUA_PROFILE_COUNT(vm_multi_type_hits);const auto& types=*cached;if(types.size()!=values.size()||op.names.size()!=values.size())invalid(s);materialize_scope();auto data=hua::get<MultiValue>(pack.data).data;
             for(std::size_t i=0;i<values.size();++i){values[i]=enforce_type(std::move(values[i]),types[i],s,i<data->contextual.size()&&data->contextual[i]);if(op.names[i]!="_"&&f.environment->own(op.names[i]))runtime_error(s,"duplicate runtime binding","E4001");}
             for(std::size_t i=0;i<values.size();++i)if(op.names[i]!="_"){auto item=op;item.text=op.names[i];item.type=types[i];bind(item,values[i]);}break;}
-        case Op::StoreMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto data=std::get<MultiValue>(pack.data).data;std::vector<Location> ls(op.argument);
+        case Op::StoreMulti:{auto pack=pop(s);auto values=unpack_multi(pack,op.argument,s);auto data=hua::get<MultiValue>(pack.data).data;std::vector<Location> ls(op.argument);
             for(std::size_t i=op.argument;i>0;--i){if(stack_.size()<=f.base)invalid(s);
-                if(auto* local=std::get_if<LocalRef>(&stack_.back()))ls[i-1]=Location{&local->binding->value,local->binding->type,true,f.environment,{},{}};
-                else if(auto* where=std::get_if<Location>(&stack_.back()))ls[i-1]=std::move(*where);else invalid(s);stack_.pop_back();}
+                if(auto* local=hua::get_if<LocalRef>(&stack_.back()))ls[i-1]=Location{&local->binding->value,local->binding->type,true,f.environment,{},{}};
+                else if(auto* where=hua::get_if<Location>(&stack_.back()))ls[i-1]=std::move(*where);else invalid(s);stack_.pop_back();}
             for(std::size_t i=0;i<values.size();++i)values[i]=copy_value(enforce_type(std::move(values[i]),ls[i].type,s,i<data->contextual.size()&&data->contextual[i]));
             prepare_map_writes(ls,s);for(std::size_t i=0;i<values.size();++i)if(ls[i].value||ls[i].map||ls[i].sequence)location_write(ls[i],values[i],s);break;}
         case Op::MakeMap:stack_.emplace_back(make_map(op.type,s));break;
-        case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);auto m=std::get_if<MapValue>(&std::get<Value>(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
+        case Op::MapInsert:{auto item=pop(s),key=pop(s);if(stack_.empty()||!hua::holds_alternative<Value>(stack_.back()))invalid(s);auto m=hua::get_if<MapValue>(&hua::get<Value>(stack_.back()).data);if(!m)invalid(s);map_put(*m,key,std::move(item),s,op.flag);break;}
         case Op::Propagate:{auto value=pop(s);auto r=cget_if<ResultValue>(&value.data);if(!r)runtime_error(s,"expected Result","E4003");if(r->ok)stack_.emplace_back(result_payload(value,true,s));else (co_await finish_return(propagated_error(value,s),op,true));break;}
         case Op::CheckIndex:
-            if(stack_.empty()||!std::holds_alternative<Value>(stack_.back()))invalid(s);
-            if(!holds<SliceValue>(std::get<Value>(stack_.back()).data)&&!std::holds_alternative<MapValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice, array or map","E4003");break;
+            if(stack_.empty()||!hua::holds_alternative<Value>(stack_.back()))invalid(s);
+            if(!holds<SliceValue>(hua::get<Value>(stack_.back()).data)&&!hua::holds_alternative<MapValue>(hua::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice, array or map","E4003");break;
         case Op::CheckSlice:
-            if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
-            if(!holds<SliceValue>(std::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice or array","E4003");break;
+            if(stack_.empty() || !hua::holds_alternative<Value>(stack_.back()))invalid(s);
+            if(!holds<SliceValue>(hua::get<Value>(stack_.back()).data))runtime_error(s,"index/slice requires a slice or array","E4003");break;
         case Op::MakeArray: {
             auto storage=managed<std::vector<Value>>();stack_.emplace_back(Value(SliceValue{storage,0,0,true,""}));break;
         }
         case Op::ArrayAppend: {
             auto item=copy_value(pop(s));
-            if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
-            auto slice=mget_if<SliceValue>(&std::get<Value>(stack_.back()).data);if(!slice)invalid(s);
+            if(stack_.empty() || !hua::holds_alternative<Value>(stack_.back()))invalid(s);
+            auto slice=mget_if<SliceValue>(&hua::get<Value>(stack_.back()).data);if(!slice)invalid(s);
             if(slice->element_type.empty())slice->element_type=value_type(item);else item=enforce_type(item,slice->element_type,s,op.flag);
             slice->storage->push_back(std::move(item));slice->contextual.push_back(op.flag);++slice->length;break;
         }
@@ -817,14 +817,14 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             stack_.emplace_back(Value(StructValue{object,true}));break;
         }
         case Op::InitField: {
-            auto item=pop(s);if(stack_.empty() || !std::holds_alternative<Value>(stack_.back()))invalid(s);
-            auto object=std::get_if<StructValue>(&std::get<Value>(stack_.back()).data);if(!object)invalid(s);
+            auto item=pop(s);if(stack_.empty() || !hua::holds_alternative<Value>(stack_.back()))invalid(s);
+            auto object=hua::get_if<StructValue>(&hua::get<Value>(stack_.back()).data);if(!object)invalid(s);
             auto value=enforce_type(std::move(item),field_type(access(f).field,object->data->name,op.text,s),s,op.flag);
             initialize_field(*object->data,op.text,std::move(value),s);break;
         }
         case Op::Member: {
             auto value=pop(s);
-            if(op.text=="len"&&(holds<SliceValue>(value.data)||std::holds_alternative<MapValue>(value.data)||is_string(value.data))){stack_.emplace_back(aggregate_member(value,op.text,s));break;}
+            if(op.text=="len"&&(holds<SliceValue>(value.data)||hua::holds_alternative<MapValue>(value.data)||is_string(value.data))){stack_.emplace_back(aggregate_member(value,op.text,s));break;}
             if(auto p=cget_if<PlainRecord>(&value.data)){if(auto item=plain_record_field(*p,op.text)){stack_.emplace_back(std::move(*item));break;}}
             auto object=materialize_record(value);if(!object)runtime_error(s,"member access requires a struct","E4003");
             const auto mode=f.layout->write_mode[f.pc-1];
@@ -832,7 +832,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
             if(auto* item=read_field(access(f).field,*object,op.text)){
                 // A record member is a live alias. Detach its containing field body
                 // before publishing it; immutable scalars/reference handles only read.
-                if(std::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
+                if(hua::holds_alternative<StructValue>(item->data)||holds<PlainRecord>(item->data)){
                     auto* alias=field(access(f).field,*object,op.text);retain_record_alias(*alias);item=alias;
                 }
                 if(object->writable&&object->fields_readonly)[[unlikely]]{stack_.emplace_back(copy_value(read_only(*item)));break;}
@@ -847,7 +847,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
                 route.owner=object->data->name;route.method=method->second;route.mutating=m!=model_.mutating.end()&&m->second;
             }
             // A method value that outlives this instruction keeps a live receiver alias.
-            if(mode!=2&&route.mutating){object->data->no_share=true;if(object->path)for(auto& b:object->path->bodies)b->no_share=true;}
+            if(mode!=2&&route.mutating){object->data->no_share=true;if(object->path)object->path->each([](auto& b){b->no_share=true;});}
             stack_.emplace_back(Value(Callable{route.method,"",*object}));break;
         }
         case Op::Call: {
@@ -872,7 +872,7 @@ Routine<void> VirtualMachine::dispatch(std::size_t stop_depth) {
         }
         case Op::SliceInit: {
             auto value=pop(s);
-            if(auto m=std::get_if<MapValue>(&value.data)){auto entries=managed<std::vector<Value>>();for(const auto& [k,v]:m->data->entries)entries->push_back(make_multi({std::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v))}));Iterator it{};it.map=true;it.slice={entries,0,entries->size(),false,""};f.iterators.push_back(std::move(it));break;}
+            if(auto m=hua::get_if<MapValue>(&value.data)){auto entries=managed<std::vector<Value>>();for(const auto& [k,v]:m->data->entries)entries->push_back(make_multi({hua::visit([](const auto& x){return Value(x);},k),copy_value(m->writable?v:read_only(v))}));Iterator it{};it.map=true;it.slice={entries,0,entries->size(),false,""};f.iterators.push_back(std::move(it));break;}
             auto p=cget_if<SliceValue>(&value.data);
             if(!p)runtime_error(s,"for requires a slice or range","E4003");Iterator it{};it.slice=*p;f.iterators.push_back(std::move(it));break;
         }

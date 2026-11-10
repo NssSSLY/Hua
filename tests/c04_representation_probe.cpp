@@ -4,10 +4,10 @@
 #include <set>
 using namespace hua;
 namespace {
-Value field(const Value& v,const char* key){if(auto p=cget_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
-const auto& map(const Value& v){return std::get<MapValue>(v.data).data->entries;}
+Value field(const Value& v,const char* key){if(auto p=cget_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return hua::get<StructValue>(v.data).data->fields.at(key);}
+const auto& map(const Value& v){return hua::get<MapValue>(v.data).data->entries;}
 std::size_t slots(const Value& v){return map(field(v,"fields")).size();}
-std::size_t slice(const Value& v){if(auto n=std::get_if<std::int64_t>(&v.data))return *n!=0;return cget<SliceValue>(v.data).length;}
+std::size_t slice(const Value& v){if(auto n=hua::get_if<std::int64_t>(&v.data))return *n!=0;return cget<SliceValue>(v.data).length;}
 struct Observer final:VMCallObserver{
  bootstrap_phase::Session& session;bool lazy{};std::map<std::string,std::uint64_t> counts;
  explicit Observer(bootstrap_phase::Session& s):session(s){for(auto& [fn,n]:s.helpers)if(n=="instantiate_flat")lazy=true;}
@@ -17,12 +17,12 @@ struct Observer final:VMCallObserver{
   if(n==(lazy?"flat_instantiate_view":"instantiate_view_at")){++counts["view_substitutions"];counts["substitution_origin_visits"]+=map(field(args[1],"origins")).size();}
   if(n=="raw_field"){++counts["queried_fields"];if(slice(field(args[offset],"plan")))++counts["queried_deferred_fields"];}
   if(n=="materialized"){
-   auto v=args[offset];bool flatten=!hua::string_value(field(v,"prefix").data).empty()||std::get<bool>(field(v,"readonly_fields").data)||(lazy&&slice(field(v,"plan")));
+   auto v=args[offset];bool flatten=!hua::string_value(field(v,"prefix").data).empty()||hua::get<bool>(field(v,"readonly_fields").data)||(lazy&&slice(field(v,"plan")));
    if(flatten){++counts["materializations"];counts["materialization_backing_slots"]+=slots(v);}
   }
   if(n=="join")counts["join_candidate_bindings"]+=map(args[1+offset]).size();
   if(n=="join_branches"){
-   std::set<std::string> keys;for(int p:{1,2})for(auto& [k,v]:map(field(args[p+offset],"touched")))keys.insert(std::get<std::string>(k));counts["join_candidate_bindings"]+=keys.size();
+   std::set<std::string> keys;for(int p:{1,2})for(auto& [k,v]:map(field(args[p+offset],"touched")))keys.insert(hua::get<std::string>(k));counts["join_candidate_bindings"]+=keys.size();
   }
   if(n=="commit"&&lazy){auto journals=field(args[0],"journals");auto key=hua::string_value(args[1].data);for(auto& [id,j]:map(journals))if(!map(field(j,"touched")).contains(key))++counts["journal_first_writes"];}
  }

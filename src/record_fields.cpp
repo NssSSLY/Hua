@@ -24,11 +24,11 @@ RecordFields::iterator RecordFields::find(const std::string& name){
     detach();
     if(auto* f=flat()){
         f->copy_depth=0;auto i=f->layout->index(name);return value_at(i)?iterator(this,i):end();}
-    return iterator(this,std::get<Tree>(storage_).find(name));
+    return iterator(this,hua::get<Tree>(storage_).find(name));
 }
 RecordFields::const_iterator RecordFields::find(const std::string& name)const{
     if(auto* f=flat()){auto i=f->layout->index(name);return value_at(i)?const_iterator(this,i):end();}
-    return const_iterator(this,std::get<Tree>(storage_).find(name));
+    return const_iterator(this,hua::get<Tree>(storage_).find(name));
 }
 Value& RecordFields::at(const std::string& name){auto item=find(name);if(item==end())throw std::out_of_range("unknown record field");return item->second;}
 const Value& RecordFields::at(const std::string& name)const{auto item=find(name);if(item==end())throw std::out_of_range("unknown record field");return item->second;}
@@ -41,16 +41,16 @@ std::pair<RecordFields::iterator,bool> RecordFields::emplace(const std::string& 
         if(f->slots[i])return {iterator(this,i),false};
         f->slots[i].emplace(std::move(value));++f->count;return {iterator(this,i),true};
     }
-    auto [item,inserted]=std::get<Tree>(storage_).emplace(name,std::move(value));return {iterator(this,item),inserted};
+    auto [item,inserted]=hua::get<Tree>(storage_).emplace(name,std::move(value));return {iterator(this,item),inserted};
 }
 RecordFields::iterator RecordFields::erase(iterator where){
     detach();
     if(auto* f=flat()){
         f->copy_depth=0;auto i=where.position_;f->slots.at(i).reset();--f->count;return iterator(this,i+1);}
-    return iterator(this,std::get<Tree>(storage_).erase(where.tree_));
+    return iterator(this,hua::get<Tree>(storage_).erase(where.tree_));
 }
 void RecordFields::detach(){
-    auto p=std::get_if<std::shared_ptr<Flat>>(&storage_);
+    auto p=hua::get_if<std::shared_ptr<Flat>>(&storage_);
     if(!p||p->use_count()==1){if(auto f=flat())f->cycle_free=false;return;}
     auto result=transform([](const Value& v){return copy_value(v);});
     storage_=std::move(result.storage_);
@@ -59,28 +59,28 @@ void RecordFields::normalize_owned(bool readonly,unsigned depth,bool resource_al
     detach();
     auto normalize=[&](Value& value){if(readonly)value=read_only(std::move(value));value=copy_value(std::move(value),false,depth+1,resource_alias);};
     if(auto f=flat()){for(auto& slot:f->slots)if(slot)normalize(*slot);f->copy_depth=0;}
-    else for(auto& [_,value]:std::get<Tree>(storage_))normalize(value);
+    else for(auto& [_,value]:hua::get<Tree>(storage_))normalize(value);
 }
 namespace {
 bool scalar_type(const std::string& type){return type=="int"||type=="float"||type=="bool"||type=="string"||numeric_spec(type).has_value();}
 bool acyclic_field(const Value& value){
-    if(value_kind(value)<=4||std::holds_alternative<NumericValue>(value.data)||std::holds_alternative<BytesValue>(value.data)||std::holds_alternative<BufferValue>(value.data)||std::holds_alternative<RngValue>(value.data))return true;
-    if(auto p=std::get_if<MapValue>(&value.data))return scalar_type(p->data->item_type);
-    if(auto p=std::get_if<ListValue>(&value.data))return scalar_type(p->data->element_type);
-    if(auto p=std::get_if<DequeValue>(&value.data))return scalar_type(p->data->element_type);
+    if(value_kind(value)<=4||hua::holds_alternative<NumericValue>(value.data)||hua::holds_alternative<BytesValue>(value.data)||hua::holds_alternative<BufferValue>(value.data)||hua::holds_alternative<RngValue>(value.data))return true;
+    if(auto p=hua::get_if<MapValue>(&value.data))return scalar_type(p->data->item_type);
+    if(auto p=hua::get_if<ListValue>(&value.data))return scalar_type(p->data->element_type);
+    if(auto p=hua::get_if<DequeValue>(&value.data))return scalar_type(p->data->element_type);
     if(auto p=cget_if<SliceValue>(&value.data))return !p->fixed&&scalar_type(p->element_type);
     return false;
 }
 unsigned copy_depth(const Value& v,unsigned depth){
     if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
-    if(std::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
+    if(hua::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no copyable value","E4003");
     unsigned result=0;
     if(auto p=cget_if<PlainRecord>(&v.data))result=p->layout->depth;
-    else if(auto p=std::get_if<StructValue>(&v.data)){
+    else if(auto p=hua::get_if<StructValue>(&v.data)){
         require_complete_enum(*p->data);
         std::as_const(p->data->fields).each_value([&](const Value& x){result=std::max(result,1+copy_depth(x,depth+1));});
     }else if(auto p=cget_if<ResultValue>(&v.data);p&&p->payload)result=1+copy_depth(*p->payload,depth+1);
-    else if(auto p=std::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)result=std::max(result,1+copy_depth(x,depth+1));
+    else if(auto p=hua::get_if<MultiValue>(&v.data))for(const auto& x:p->data->values)result=std::max(result,1+copy_depth(x,depth+1));
     else if(auto p=cget_if<SliceValue>(&v.data);p&&p->fixed)for(std::size_t i=0;i<p->length;++i)result=std::max(result,1+copy_depth(sequence_copy_source(*p,i),depth+1));
     if(depth+result>128)runtime_error({},"value nesting limit exceeded","E4099");
     return result;
@@ -101,7 +101,7 @@ RecordFields RecordFields::snapshot(unsigned depth)const{
     // outgoing shared_ptr edges would be counted once per wrapper).
     // Ordinary records keep their field body inline. Promote only when an
     // actual snapshot first shares it; no mutable field reference has escaped.
-    if(auto inline_body=std::get_if<Flat>(&storage_)){
+    if(auto inline_body=hua::get_if<Flat>(&storage_)){
         auto body=std::make_shared<Flat>(std::move(*inline_body));
         storage_=std::move(body);f=flat();
     }
@@ -113,10 +113,10 @@ RecordFields RecordFields::snapshot(unsigned depth)const{
         f->cycle_free=safe;
     }
     if(!f->cycle_free&&!f->tracked.load(std::memory_order_relaxed)){
-        managed_heap().track(std::get<std::shared_ptr<Flat>>(storage_),true);
+        managed_heap().track(hua::get<std::shared_ptr<Flat>>(storage_),true);
         f->tracked.store(true,std::memory_order_release);
     }
-    RecordFields result;result.storage_=std::get<std::shared_ptr<Flat>>(storage_);return result;
+    RecordFields result;result.storage_=hua::get<std::shared_ptr<Flat>>(storage_);return result;
 }
 
 }

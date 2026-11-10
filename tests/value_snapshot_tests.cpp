@@ -16,8 +16,8 @@ Value record(std::string text){
  data->fields.emplace("name",Value(std::move(text)));data->fields.emplace("n",Value(std::int64_t(1)));
  return Value(StructValue{std::move(data),true});
 }
-RecordFields& fields(Value& v){return std::get<StructValue>(v.data).data->fields;}
-const Value& read(const Value& v,const std::string& name){return std::as_const(std::get<StructValue>(v.data).data->fields).at(name);}
+RecordFields& fields(Value& v){return hua::get<StructValue>(v.data).data->fields;}
+const Value& read(const Value& v,const std::string& name){return std::as_const(hua::get<StructValue>(v.data).data->fields).at(name);}
 void snapshots(){
  auto source=record(std::string(256,'x'));auto a=copy_value(source),b=copy_value(source);
  check(fields(source).backing_identity()==fields(a).backing_identity(),"snapshot rebuilt field table");
@@ -68,7 +68,7 @@ void result_and_strings(){
 }
 void revoked_proof(){
  std::weak_ptr<StructData> weak;
- {auto source=record("before");auto snapshot=copy_value(source);weak=std::get<StructValue>(source.data).data;
+ {auto source=record("before");auto snapshot=copy_value(source);weak=hua::get<StructValue>(source.data).data;
   auto list=managed<ListData>();list->element_type="Text";list->values.push_back(source);
   // Deliberately bypass the language field type to exercise the raw write barrier.
   fields(source).at("name")=Value(ListValue{list,true});
@@ -78,12 +78,12 @@ void revoked_proof(){
 }
 void cycles(){
  std::weak_ptr<StructData> wa,wb;
- {auto a=record("cycle");auto& ad=std::get<StructValue>(a.data).data;wa=ad;
+ {auto a=record("cycle");auto& ad=hua::get<StructValue>(a.data).data;wa=ad;
   auto list=managed<ListData>();list->element_type="Text";list->values.push_back(a);
   // A shared body whose field points back through a shared container.
   auto layout=std::make_shared<RecordLayout>(std::vector<std::string>{"items"},"Cycle",std::map<std::string,std::string>{{"items","List<Text>"}});
   ad->fields=RecordFields(layout);ad->fields.emplace("items",Value(ListValue{list,true}));
-  auto b=copy_value(a);wb=std::get<StructValue>(b.data).data;list->values.push_back(b);
+  auto b=copy_value(a);wb=hua::get<StructValue>(b.data).data;list->values.push_back(b);
   managed_heap().collect();check(!wa.expired()&&!wb.expired(),"live shared cycle reclaimed");
  }
  managed_heap().collect();check(wa.expired()&&wb.expired(),"shared body cycle leaked");

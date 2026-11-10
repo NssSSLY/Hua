@@ -51,7 +51,7 @@ void log_line(int level,const std::string& message,const MapValue* fields,const 
     append_value(line,message);
     // Map iteration is ascending, which is the with_fields key byte order.
     if(fields)for(const auto& [key,value]:fields->data->entries){
-        const auto& k=std::get<std::string>(key);valid_key(k,s);
+        const auto& k=hua::get<std::string>(key);valid_key(k,s);
         line+=' ';line+=k;line+='=';append_value(line,text(value,s));
     }
     line+='\n';
@@ -75,7 +75,7 @@ Value invoke_report_standard(const StandardFunction& f,const std::vector<Value>&
         return standard_result(Value(static_cast<I>(t.size())),true,"int");
     }
     if(f.module=="test"){
-        if(name=="assert"){auto c=std::get_if<bool>(&args[0].data);if(!c)runtime_error(s,"expected bool","E4003");if(!*c)assertion(s,text(args[1],s));return {};}
+        if(name=="assert"){auto c=hua::get_if<bool>(&args[0].data);if(!c)runtime_error(s,"expected bool","E4003");if(!*c)assertion(s,text(args[1],s));return {};}
         if(name=="fail")assertion(s,text(args[0],s));
         const bool same=as_bool(binary_value("==",args[0],args[1],s),s);
         if(name=="equal"&&!same)assertion(s,"expected "+shown(args[1])+", got "+shown(args[0]));
@@ -84,7 +84,7 @@ Value invoke_report_standard(const StandardFunction& f,const std::vector<Value>&
     }
     if(name=="set_level"){minimum_level.store(level_of(text(args[0],s),s));return {};}
     if(name=="with_fields"){
-        auto m=std::get_if<MapValue>(&args[2].data);if(!m||!m->data||m->data->key_type!="string"||m->data->item_type!="string")runtime_error(s,"log fields must be map[string]string","E4003");
+        auto m=hua::get_if<MapValue>(&args[2].data);if(!m||!m->data||m->data->key_type!="string"||m->data->item_type!="string")runtime_error(s,"log fields must be map[string]string","E4003");
         log_line(level_of(text(args[0],s),s),text(args[1],s),m,s);return {};
     }
     log_line(level_of(name,s),text(args[0],s),nullptr,s);

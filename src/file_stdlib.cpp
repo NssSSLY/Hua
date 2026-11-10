@@ -282,7 +282,7 @@ Value bulk_operation(const std::string& name,FileData& file,FileNativeState& nat
     if(name=="write_all"){
         if(!native.mode.write)return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
         if(auto e=settle_read_ahead(native))return io_failed(e,name,I{0});
-        auto data=std::get<BytesValue>(args[1].data).data;I total=0;
+        auto data=hua::get<BytesValue>(args[1].data).data;I total=0;
         for(std::size_t at=0;at<data->size();){
             if(at)task_checkpoint(c,span);
             const auto n=std::min(data->size()-at,max_io);
@@ -353,7 +353,7 @@ Value FileScope::adopt(std::unique_ptr<FileBackend> backend,std::string_view tex
 }
 Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* c){
     if(f.name=="error"||f.name=="transferred"||f.name=="partial"){
-        auto io=std::get_if<IOFailureValue>(&args[0].data);if(!io||!io->data)runtime_error(span,"expected std.file.IOFailure","E4003");
+        auto io=hua::get_if<IOFailureValue>(&args[0].data);if(!io||!io->data)runtime_error(span,"expected std.file.IOFailure","E4003");
         if(f.name=="error")return Value(io->data->error);
         if(f.name=="transferred")return io->data->transferred?Value(*io->data->transferred):Value{};
         return io->data->partial?Value(*io->data->partial):Value{};
@@ -378,7 +378,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
             return publish(c->files,*h.value,std::move(native));
         }catch(...){c->files->protocol.close(*h.value,c->task_id);c->files->pump();throw;}
     }
-    auto val=std::get_if<FileValue>(&args[0].data);auto file=val?val->data:nullptr;
+    auto val=hua::get_if<FileValue>(&args[0].data);auto file=val?val->data:nullptr;
     const bool bulk=f.since==29;
     bool io=f.name=="read"||f.name=="write"||bulk;
     auto bad=[&](FileHostFailure e){return io?io_failed(e,f.name,I{0}):failed(e,f.name,type_arguments(f.result,"Result")[0]);};
@@ -403,7 +403,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
     if(f.name=="close_error")return result(native.first_close_error?Value(error(native.first_close_error,"close")):Value{},true,"std.error.Value?");
     if(bulk)return bulk_operation(f.name,*file,native,args,span,c);
     if(io){
-        I n=f.name=="read"?as_int(args[1],span):static_cast<I>(std::get<BytesValue>(args[1].data).data->size());
+        I n=f.name=="read"?as_int(args[1],span):static_cast<I>(hua::get<BytesValue>(args[1].data).data->size());
         if(n<0||n>static_cast<I>(max_io))return bad(failure("limit","one File operation requires 0..1048576 bytes"));
         if(f.name=="read"?!native.mode.read:!native.mode.write)return bad(failure("permission_denied","File mode does not permit this operation"));
         if(!n)return result(f.name=="read"?Value(BytesValue{managed<const std::string>()}):Value(I{0}),true,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
@@ -421,7 +421,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
             try{storage=std::make_shared<QuotaBytes>(std::move(*permit.value),static_cast<std::size_t>(n));}
             catch(const std::bad_alloc&){return bad(failure("allocation","read allocation failed before native admission"));}
             keepalive=storage;
-        }else keepalive=std::const_pointer_cast<std::string>(std::get<BytesValue>(args[1].data).data);
+        }else keepalive=std::const_pointer_cast<std::string>(hua::get<BytesValue>(args[1].data).data);
         auto admitted=file->scope->protocol.reserve(file->handle,c->task_id,{},R::Access::read,0,static_cast<std::size_t>(n),keepalive);
         if(!admitted)return bad(resource_failure(admitted.error));
         OperationGuard operation{file->scope->protocol,*admitted.value};
@@ -438,7 +438,7 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         if(storage){std::shared_ptr<const std::string> alias(storage,&storage->data);managed_heap().track(alias);bytes=BytesValue{std::move(alias)};}
         operation.submitted=true;FileHostIO observed;
         try{observed=f.name=="read"?native.backend->read(std::span<char>(storage->data.data(),static_cast<std::size_t>(n))):
-            native.backend->write(std::span<const char>(*std::get<BytesValue>(args[1].data).data));}
+            native.backend->write(std::span<const char>(*hua::get<BytesValue>(args[1].data).data));}
         catch(...){observed={{},failure("io","host operation threw; progress unknown")};}
         if((observed.transferred&&(*observed.transferred<0||*observed.transferred>n))||(!observed.error&&!observed.transferred))
             observed={{},failure("io","invalid host progress; progress unknown")};

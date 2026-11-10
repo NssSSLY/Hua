@@ -83,7 +83,7 @@ void blocking_file_and_timeout(){
     auto begin=Clock::now();auto timed=runtime.await(task,{},1ms);
     check(show(timed)=="err(timeout)"&&Clock::now()-begin>=60ms,"soft timeout waits native retirement");
     check(stats->reads==1&&stats->closes==1,"no replay and exactly one physical close");
-    check(std::get<FileValue>(retained.data).data->handle.snapshot().state==resources::Lifecycle::closed,"terminal after File close");
+    check(hua::get<FileValue>(retained.data).data->handle.snapshot().state==resources::Lifecycle::closed,"terminal after File close");
     auto usage=scope->usage();for(auto n:usage.used)check(n==0,"resource quota returned after cancel");
     runtime.finish();
 }

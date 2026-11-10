@@ -12,7 +12,7 @@ void check(bool ok,const char* message){++checks;if(!ok)throw std::runtime_error
 std::shared_ptr<StructData> record(std::shared_ptr<const RecordLayout> shape={}){
     auto data=managed<StructData>();data->name="Record";if(shape)data->fields=RecordFields(std::move(shape));return data;
 }
-std::int64_t integer(const Value& v){return std::get<std::int64_t>(v.data);}
+std::int64_t integer(const Value& v){return hua::get<std::int64_t>(v.data);}
 void positions_and_order(){
     // Independent ordered-tree oracle, all 120 insertion orders, and initialized nil.
     auto shape=std::make_shared<const RecordLayout>(std::vector<std::string>{"z","b","n","a","m"});
@@ -32,7 +32,7 @@ void positions_and_order(){
         auto result=flat->fields.emplace("a",Value(std::int64_t(999)));
         check(!result.second&&integer(result.first->second)==97,"duplicate ordinary initializer changed first value");
         check(flat->fields.contains("n")&&!flat->fields.contains("unknown"),"nil/absent distinction lost");
-        auto copy=std::get<StructValue>(copy_value(Value(StructValue{flat,true})).data);
+        auto copy=hua::get<StructValue>(copy_value(Value(StructValue{flat,true})).data);
         check(copy.data->fields.layout()==shape.get(),"copy lost shared layout");
         copy.data->fields.at("a")=Value(std::int64_t(17));check(integer(flat->fields.at("a"))==97,"scalar alias leaked");
         flat->fields.clear();check(flat->fields.empty(),"clear retained fields");
@@ -48,12 +48,12 @@ void copies_and_lifetime(){
     auto child=record(std::make_shared<const RecordLayout>(std::vector<std::string>{"n"}));child->fields.emplace("n",Value(std::int64_t(3)));
     auto list=managed<ListData>();list->element_type="int";list->values.emplace_back(std::int64_t(5));
     parent->fields.emplace("child",Value(StructValue{child,true}));parent->fields.emplace("items",Value(ListValue{list,true}));
-    auto copied=std::get<StructValue>(copy_value(Value(StructValue{parent,false})).data);
-    auto nested=std::get<StructValue>(copied.data->fields.at("child").data);nested.data->fields.at("n")=Value(std::int64_t(8));
+    auto copied=hua::get<StructValue>(copy_value(Value(StructValue{parent,false})).data);
+    auto nested=hua::get<StructValue>(copied.data->fields.at("child").data);nested.data->fields.at("n")=Value(std::int64_t(8));
     check(integer(child->fields.at("n"))==3,"nested record alias leaked");
-    auto view=std::get<ListValue>(copied.data->fields.at("items").data);check(view.data==list&&!view.writable,"readonly container was upgraded");
-    auto cloned=std::get<StructValue>(copy_value(Value(StructValue{parent,false}),true).data);
-    auto owned=std::get<ListValue>(cloned.data->fields.at("items").data);check(owned.data!=list&&owned.writable,"deep clone container contract");
+    auto view=hua::get<ListValue>(copied.data->fields.at("items").data);check(view.data==list&&!view.writable,"readonly container was upgraded");
+    auto cloned=hua::get<StructValue>(copy_value(Value(StructValue{parent,false}),true).data);
+    auto owned=hua::get<ListValue>(cloned.data->fields.at("items").data);check(owned.data!=list&&owned.writable,"deep clone container contract");
     parent.reset();check(!weak.expired(),"layout died with source owner");copied.data.reset();cloned.data.reset();check(weak.expired(),"layout outlived final record");
 }
 void edges_and_cycles(){

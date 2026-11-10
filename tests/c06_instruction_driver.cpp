@@ -15,11 +15,11 @@
 #include <windows.h>
 #endif
 using J=hua::JsonData;
-static const J& field(const J& j,const std::string& k){return *std::get<J::Object>(j.data).at(k);}
-static std::string str(const J& j){return std::get<std::string>(j.data);}
-static std::size_t number(const J& j){auto n=std::get<std::int64_t>(j.data);if(n<0)throw std::runtime_error("negative image index");return n;}
-static bool boolean(const J& j){return std::get<bool>(j.data);}
-static const J::Array& array(const J& j){return std::get<J::Array>(j.data);}
+static const J& field(const J& j,const std::string& k){return *hua::get<J::Object>(j.data).at(k);}
+static std::string str(const J& j){return hua::get<std::string>(j.data);}
+static std::size_t number(const J& j){auto n=hua::get<std::int64_t>(j.data);if(n<0)throw std::runtime_error("negative image index");return n;}
+static bool boolean(const J& j){return hua::get<bool>(j.data);}
+static const J::Array& array(const J& j){return hua::get<J::Array>(j.data);}
 static std::filesystem::path path(const std::string& s){return std::filesystem::path(std::u8string(s.begin(),s.end()));}
 static hua::Value scalar(std::size_t kind,const std::string& text){
     if(kind==0&&text.empty())return {};
@@ -31,11 +31,11 @@ static hua::Value scalar(std::size_t kind,const std::string& text){
 }
 static hua::Value scalar(const J& j){return scalar(number(field(j,"kind")),str(field(j,"text")));}
 static void row(const J& j,std::initializer_list<std::string> keys,std::size_t numbers,std::size_t strings){
-    const auto& o=std::get<J::Object>(j.data);
+    const auto& o=hua::get<J::Object>(j.data);
     if(o.size()!=keys.size())throw std::runtime_error("invalid packed row fields");
     for(const auto& k:keys)if(!o.contains(k))throw std::runtime_error("missing packed row field");
     if(array(field(j,"n")).size()!=numbers||array(field(j,"s")).size()!=strings)throw std::runtime_error("invalid packed row size");
-    for(const auto& n:array(field(j,"n")))(void)std::get<std::int64_t>(n->data);
+    for(const auto& n:array(field(j,"n")))(void)hua::get<std::int64_t>(n->data);
     for(const auto& t:array(field(j,"s")))str(*t);
 }
 template<class F>static std::size_t blocks(const J& j,std::size_t maximum,F consume){
@@ -44,13 +44,13 @@ template<class F>static std::size_t blocks(const J& j,std::size_t maximum,F cons
     for(const auto& b:bs){
         auto decoded=hua::json_decode(str(*b));const auto& r=hua::cget<hua::ResultValue>(decoded.data);
         if(!r.ok)throw std::runtime_error("invalid block JSON");
-        const auto& value=*std::get<hua::JsonValue>(r.payload->data).data;const auto& rows=array(value);
+        const auto& value=*hua::get<hua::JsonValue>(r.payload->data).data;const auto& rows=array(value);
         if(rows.empty()||rows.size()>1024||rows.size()>maximum-total)throw std::runtime_error("block record budget");
         std::vector<const J*> pending{&value};std::size_t nodes=0;
         while(!pending.empty()){
             const auto* v=pending.back();pending.pop_back();if(++nodes>65536)throw std::runtime_error("block node budget");
-            if(auto a=std::get_if<J::Array>(&v->data))for(const auto& x:*a)pending.push_back(x.get());
-            if(auto o=std::get_if<J::Object>(&v->data))for(const auto& [_,x]:*o)pending.push_back(x.get());
+            if(auto a=hua::get_if<J::Array>(&v->data))for(const auto& x:*a)pending.push_back(x.get());
+            if(auto o=hua::get_if<J::Object>(&v->data))for(const auto& [_,x]:*o)pending.push_back(x.get());
         }
         total+=rows.size();for(const auto& item:rows)consume(*item);
     }return total;
@@ -69,7 +69,7 @@ static int run(const std::vector<std::string>& args){
         stream.seekg(0);hua::ManagedHeap heap{65536};hua::HeapScope scope{heap};
         auto decoded=hua::json_decode(std::string(std::istreambuf_iterator<char>(stream),{}));
         const auto& r=hua::cget<hua::ResultValue>(decoded.data);if(!r.ok)throw std::runtime_error("invalid image JSON");
-        const auto& j=*std::get<hua::JsonValue>(r.payload->data).data;
+        const auto& j=*hua::get<hua::JsonValue>(r.payload->data).data;
         const bool packed=str(field(j,"schema"))=="hua.bytecode.image.v2";
         if((!packed&&str(field(j,"schema"))!="hua.bytecode.image.v1")||str(field(j,"profile"))!="C06-BC1"||str(field(j,"status"))!="ok")throw std::runtime_error("invalid image envelope");
         std::map<std::string,std::unique_ptr<hua::Source>> sources;
@@ -77,11 +77,11 @@ static int run(const std::vector<std::string>& args){
         if(!sources.contains(str(field(j,"entry"))))throw std::runtime_error("missing entry");
         std::vector<hua::SourceSpan> sites;
         if(packed){
-            if(std::get<J::Object>(j.data).contains("sites"))throw std::runtime_error("mixed sites transport");
+            if(hua::get<J::Object>(j.data).contains("sites"))throw std::runtime_error("mixed sites transport");
             std::set<std::int64_t> ids;
             blocks(field(j,"site_blocks"),262145,[&](const J& r){
                 row(r,{"n","s"},6,2);const auto& n=array(field(r,"n"));const auto& s=array(field(r,"s"));
-                const auto id=std::get<std::int64_t>(n[0]->data),origin=std::get<std::int64_t>(n[1]->data);const auto module=str(*s[0]),role=str(*s[1]);
+                const auto id=hua::get<std::int64_t>(n[0]->data),origin=hua::get<std::int64_t>(n[1]->data);const auto module=str(*s[0]),role=str(*s[1]);
                 if(!ids.insert(id).second)throw std::runtime_error("duplicate site identity");
                 if(id==-1){if(origin!=-1||role!="initializer"||module!=str(field(j,"entry"))||number(*n[2])||number(*n[3]))throw std::runtime_error("invalid initializer site");}
                 else if(id<0||id>=262144||origin<0||origin>=32768||(role!="source"&&role!="enum-layout"&&role!="enum-constructor"))throw std::runtime_error("invalid site origin");
@@ -106,7 +106,7 @@ static int run(const std::vector<std::string>& args){
         auto read_code=[&](const J& j){
             hua::Code code;code.name=str(field(j,"name"));
             if(packed){
-                const auto& object=std::get<J::Object>(j.data);if(object.size()!=3||!object.contains("blocks")||!object.contains("count"))throw std::runtime_error("invalid packed code");
+                const auto& object=hua::get<J::Object>(j.data);if(object.size()!=3||!object.contains("blocks")||!object.contains("count"))throw std::runtime_error("invalid packed code");
                 const auto expected=number(field(j,"count"));if(!expected||expected>250000||expected>1000000-count)throw std::runtime_error("packed instruction budget");
                 const auto actual=blocks(field(j,"blocks"),expected,[&](const J& r){
                     row(r,{"n","s","a","c"},6,3);const auto& n=array(field(r,"n"));const auto& s=array(field(r,"s"));

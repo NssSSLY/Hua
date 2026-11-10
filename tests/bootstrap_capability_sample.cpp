@@ -3,21 +3,21 @@
 struct Observer final:hua::VMCallObserver {
  hua::bootstrap_phase::Session& s;explicit Observer(hua::bootstrap_phase::Session& p):s(p){}
  static std::uint64_t fields(const hua::Value& v){
-  const auto& record=std::get<hua::StructValue>(v.data).data->fields;const auto& raw=std::get<hua::MapValue>(record.at("fields").data).data->entries;
+  const auto& record=hua::get<hua::StructValue>(v.data).data->fields;const auto& raw=hua::get<hua::MapValue>(record.at("fields").data).data->entries;
   auto cursor=record.find("prefix");if(cursor==record.end())return raw.size();const auto& prefix=hua::string_value(cursor->second.data);if(prefix.empty())return raw.size();
-  const auto& index=std::get<hua::MapValue>(record.at("prefixes").data).data->entries;auto i=index.find(prefix);if(i==index.end())return 0;
-  std::uint64_t count=0;for(const auto& [path,unused]:std::get<hua::MapValue>(i->second.data).data->entries)if(raw.contains(path))++count;return count;
+  const auto& index=hua::get<hua::MapValue>(record.at("prefixes").data).data->entries;auto i=index.find(prefix);if(i==index.end())return 0;
+  std::uint64_t count=0;for(const auto& [path,unused]:hua::get<hua::MapValue>(i->second.data).data->entries)if(raw.contains(path))++count;return count;
  }
  void enter(const hua::Node* n,const hua::Node* caller,const std::vector<hua::Value>& args)override{
   s.enter(n,caller,args);auto h=s.helpers.find(n);if(h==s.helpers.end())return;
   if(h->second=="select"){auto fields=Observer::fields(args.at(0));s.volume["select-input-fields"]+=fields;s.volume["select-max-input-fields"]=std::max(s.volume["select-max-input-fields"],fields);}
   if(h->second=="storage_aliases"){
    if(s.size(s.member(args.at(1),"origins"))==0)++s.volume["empty-origin-alias-calls"];
-   for(const auto& [_,v]:std::get<hua::MapValue>(s.member(args.at(0),"values").data).data->entries)s.volume["alias-fields"]-=s.size(s.member(v,"fields"))-Observer::fields(v);
+   for(const auto& [_,v]:hua::get<hua::MapValue>(s.member(args.at(0),"values").data).data->entries)s.volume["alias-fields"]-=s.size(s.member(v,"fields"))-Observer::fields(v);
   }
-  if(h->second=="snapshot")for(const auto& [_,v]:std::get<hua::MapValue>(args.at(0).data).data->entries)s.volume["snapshot-fields"]-=s.size(s.member(v,"fields"))-Observer::fields(v);
+  if(h->second=="snapshot")for(const auto& [_,v]:hua::get<hua::MapValue>(args.at(0).data).data->entries)s.volume["snapshot-fields"]-=s.size(s.member(v,"fields"))-Observer::fields(v);
   if(h->second=="editable")s.volume["editable-fields"]-=s.size(s.member(args.at(1),"fields"))-Observer::fields(args.at(1));
-  if(h->second=="statement"&&caller==s.analyze){s.volume["work-at-last-body-entry"]=std::get<std::int64_t>(s.member(args.at(0),"work").data);s.volume["summaries-at-last-body-entry"]=s.size(s.member(args.at(0),"summaries"));}
+  if(h->second=="statement"&&caller==s.analyze){s.volume["work-at-last-body-entry"]=hua::get<std::int64_t>(s.member(args.at(0),"work").data);s.volume["summaries-at-last-body-entry"]=s.size(s.member(args.at(0),"summaries"));}
   if(h->second=="instantiate_view"||h->second=="merge_view"){auto fields=s.size(s.member(args.at(h->second=="instantiate_view"?3:0),"origins"));s.volume["view-origin-entries"]+=fields;s.volume["view-max-origins"]=std::max(s.volume["view-max-origins"],fields);}
  }
  void leave(const hua::Node* n,const hua::Value* v)override{

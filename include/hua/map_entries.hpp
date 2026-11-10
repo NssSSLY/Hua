@@ -30,9 +30,9 @@ private:
     static std::uint64_t mix(std::uint64_t x){x^=x>>33;x*=0xff51afd7ed558ccdULL;x^=x>>33;x*=0xc4ceb9fe1a85ec53ULL;x^=x>>33;return x;}
     static std::uint64_t hash_of(const MapKey& k){
         switch(k.index()){
-        case 0:return mix(std::get<0>(k)?0x9e3779b97f4a7c15ULL:0x6a09e667f3bcc909ULL);
-        case 1:return mix(static_cast<std::uint64_t>(std::get<1>(k))+0x243f6a8885a308d3ULL);
-        default:{const auto& s=std::get<2>(k);std::uint64_t h=0xcbf29ce484222325ULL^s.size();
+        case 0:return mix(hua::get<0>(k)?0x9e3779b97f4a7c15ULL:0x6a09e667f3bcc909ULL);
+        case 1:return mix(static_cast<std::uint64_t>(hua::get<1>(k))+0x243f6a8885a308d3ULL);
+        default:{const auto& s=hua::get<2>(k);std::uint64_t h=0xcbf29ce484222325ULL^s.size();
             const auto* p=reinterpret_cast<const unsigned char*>(s.data());std::size_t n=s.size();
             while(n>=8){std::uint64_t w;std::memcpy(&w,p,8);h=(h^mix(w))*0x100000001b3ULL;p+=8;n-=8;}
             std::uint64_t w=0;std::memcpy(&w,p,n);return mix(h^w^(static_cast<std::uint64_t>(n)<<56));}

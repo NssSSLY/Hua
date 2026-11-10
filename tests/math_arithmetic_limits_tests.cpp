@@ -31,9 +31,9 @@ int main(){
     }
     for(const char* name:{"sinh","tanh","asinh","atanh"}){
         auto v=call(*standard_function(std::string("$std$math$")+name),{Value(-0.0)});
-        const auto& result=cget<ResultValue>(v.data);check(result.ok&&std::signbit(std::get<double>(result.payload->data)));
+        const auto& result=cget<ResultValue>(v.data);check(result.ok&&std::signbit(hua::get<double>(result.payload->data)));
     }
     auto v=call(*standard_function("$std$math$acosh"),{Value(1.0)});
-    const auto& result=cget<ResultValue>(v.data);check(result.ok&&std::get<double>(result.payload->data)==0.0&&!std::signbit(std::get<double>(result.payload->data)));
+    const auto& result=cget<ResultValue>(v.data);check(result.ok&&hua::get<double>(result.payload->data)==0.0&&!std::signbit(hua::get<double>(result.payload->data)));
     std::cout<<checks<<" math arithmetic native type/arity/cancellation/finite/zero checks passed\n";
 }

@@ -11,7 +11,7 @@ template<class F> void limited(F&& action,const char* message){
 int main(){
     using namespace hua;using I=std::int64_t;
     SourceSpan site{"limits.hua",1,1,0,1};
-    auto value=make_map("map<int,int>",site);auto& map=std::get<MapValue>(value.data);
+    auto value=make_map("map<int,int>",site);auto& map=hua::get<MapValue>(value.data);
     constexpr I limit=1000000;
     for(I i=0;i<limit;++i)map.data->entries.emplace_hint(map.data->entries.end(),MapKey{i},Value(i));
     check(map.data->entries.size()==limit,"filled exact public map limit");

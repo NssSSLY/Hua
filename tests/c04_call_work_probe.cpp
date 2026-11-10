@@ -5,13 +5,13 @@
 #include <set>
 using namespace hua;
 namespace {
-Value member(const Value& v,const std::string& key){if(auto p=cget_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return std::get<StructValue>(v.data).data->fields.at(key);}
+Value member(const Value& v,const std::string& key){if(auto p=cget_if<PlainRecord>(&v.data))return *plain_record_field(*p,key);return hua::get<StructValue>(v.data).data->fields.at(key);}
 std::string str(const Value& v){return hua::string_value(v.data);}
-bool flag(const Value& v){return std::get<bool>(v.data);}
-const auto& entries(const Value& v){return std::get<MapValue>(v.data).data->entries;}
+bool flag(const Value& v){return hua::get<bool>(v.data);}
+const auto& entries(const Value& v){return hua::get<MapValue>(v.data).data->entries;}
 void append(std::string& out,const std::string& s){out+=std::to_string(s.size())+":"+s;}
-std::string view_key(const Value& v,bool readonly){std::string out;append(out,str(member(v,"type_name")));out+=readonly?'0':flag(member(v,"writable"))?'1':'0';out+=readonly?'1':flag(member(v,"readonly_children"))?'1':'0';for(auto n:{"deep_owned","record_copy"})out+=flag(member(v,n))?'1':'0';for(const auto& [k,b]:entries(member(v,"origins"))){append(out,std::get<std::string>(k));out+=flag(b)?'1':'0';}return out;}
-std::map<std::string,std::string> fields(const Value& v){std::map<std::string,std::string> out;auto prefix=str(member(v,"prefix"));auto readonly=flag(member(v,"readonly_fields"));auto fs=member(v,"fields");if(prefix.empty()){for(const auto& [key,item]:entries(fs))out[std::get<std::string>(key)]=view_key(item,readonly);}else{auto ps=member(v,"prefixes");auto found=entries(ps).find(prefix);if(found!=entries(ps).end())for(const auto& [key,unused]:entries(found->second)){auto item=entries(fs).find(key);if(item!=entries(fs).end())out[std::get<std::string>(key).substr(prefix.size())]=view_key(item->second,readonly);}}return out;}
+std::string view_key(const Value& v,bool readonly){std::string out;append(out,str(member(v,"type_name")));out+=readonly?'0':flag(member(v,"writable"))?'1':'0';out+=readonly?'1':flag(member(v,"readonly_children"))?'1':'0';for(auto n:{"deep_owned","record_copy"})out+=flag(member(v,n))?'1':'0';for(const auto& [k,b]:entries(member(v,"origins"))){append(out,hua::get<std::string>(k));out+=flag(b)?'1':'0';}return out;}
+std::map<std::string,std::string> fields(const Value& v){std::map<std::string,std::string> out;auto prefix=str(member(v,"prefix"));auto readonly=flag(member(v,"readonly_fields"));auto fs=member(v,"fields");if(prefix.empty()){for(const auto& [key,item]:entries(fs))out[hua::get<std::string>(key)]=view_key(item,readonly);}else{auto ps=member(v,"prefixes");auto found=entries(ps).find(prefix);if(found!=entries(ps).end())for(const auto& [key,unused]:entries(found->second)){auto item=entries(fs).find(key);if(item!=entries(fs).end())out[hua::get<std::string>(key).substr(prefix.size())]=view_key(item->second,readonly);}}return out;}
 struct Observer final:VMCallObserver {
  bootstrap_phase::Session& session;
  std::map<std::string,std::uint64_t> count;
@@ -28,12 +28,12 @@ struct Observer final:VMCallObserver {
    }
    auto summaries=member(state,"summaries");auto summary=entries(summaries).find(target);if(summary!=entries(summaries).end()){
     auto ws=member(summary->second,"writes");std::set<std::string> owners;
-    for(const auto& [k,v]:entries(ws)){auto origin=std::get<std::string>(k);owners.insert(origin.substr(0,origin.find('|')));}
+    for(const auto& [k,v]:entries(ws)){auto origin=hua::get<std::string>(k);owners.insert(origin.substr(0,origin.find('|')));}
     count["candidate_write_entries"]+=entries(ws).size();count["candidate_write_owners"]+=owners.size();auto params=cget<SliceValue>(member(function,"parameters").data);count["candidate_parameter_scan_iterations"]+=params.length*entries(ws).size();count["candidate_unique_owner_scan_iterations"]+=params.length*owners.size();
    }
   }
   if(name=="projection"&&!projections.empty()&&session.helpers.contains(caller)&&session.helpers.at(caller)=="invoke"){
-   ++count["direct_argument_projections"];auto id=member(args[3],"id");auto key=str(args[1])+":"+std::to_string(std::get<std::int64_t>(member(id,"index").data));if(!projections.back().insert(key).second)++count["repeat_argument_projections"];
+   ++count["direct_argument_projections"];auto id=member(args[3],"id");auto key=str(args[1])+":"+std::to_string(hua::get<std::int64_t>(member(id,"index").data));if(!projections.back().insert(key).second)++count["repeat_argument_projections"];
   }
   if(name=="record_dependencies")count["global_dependency_queries"]+=entries(member(args[1],"callees")).size();
   if(name=="instantiate"||name=="instantiate_at"){
@@ -41,7 +41,7 @@ struct Observer final:VMCallObserver {
   }
   if(name=="instantiate_view"||name=="instantiate_view_at"){
    count["instantiation_argument_values"]+=args.size();++count["instantiated_views"];auto source=args[name=="instantiate_view"?3:1];auto actual=args[name=="instantiate_view"?4:2];auto origins=member(source,"origins");if(entries(origins).empty())++count["origin_free_views"];
-   for(const auto& [key,v]:entries(origins)){auto origin=std::get<std::string>(key);auto owner=origin.substr(0,origin.find('|'));if(!entries(actual).contains(owner)&&owner.find('!')!=std::string::npos)++count["renamed_local_origins"];}
+   for(const auto& [key,v]:entries(origins)){auto origin=hua::get<std::string>(key);auto owner=origin.substr(0,origin.find('|'));if(!entries(actual).contains(owner)&&owner.find('!')!=std::string::npos)++count["renamed_local_origins"];}
   }
   if(name=="merge"){
    ++count["merge_values"];auto a=fields(args[0]),b=fields(args[1]);count["merge_left_fields"]+=a.size();count["merge_right_fields"]+=b.size();if(a.size()>8&&a==b){++count["large_equal_merges"];count["large_equal_field_visits"]+=a.size()+b.size();}bool covered=true;for(const auto& [key,v]:a)if(!b.contains(key)){covered=false;break;}if(covered){++count["left_tables_covered"];count["covered_left_fields"]+=a.size();}

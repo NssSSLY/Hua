@@ -55,8 +55,8 @@ void views_and_aliases(){
     auto cloned=copy_value(safe,true);check(as_int(sequence_read(cget<SliceValue>(cloned.data),0),{})==3,"safe view clone");
     auto child=managed<ListData>();child->values.emplace_back(std::int64_t{9});
     auto parent=managed<ListData>();parent->values={Value(ListValue{child,false}),Value(ListValue{child,false})};
-    auto copied=std::get<ListValue>(copy_value(Value(ListValue{parent,false}),true).data);
-    auto left=std::get<ListValue>(copied.data->values[0].data),right=std::get<ListValue>(copied.data->values[1].data);
+    auto copied=hua::get<ListValue>(copy_value(Value(ListValue{parent,false}),true).data);
+    auto left=hua::get<ListValue>(copied.data->values[0].data),right=hua::get<ListValue>(copied.data->values[1].data);
     check(left.writable&&right.writable&&copied.writable,"clone restores writable containers");
     check(left.data!=child&&right.data!=child&&left.data!=right.data,"repeated child clone semantics");
     left.data->values[0]=Value(std::int64_t{11});check(as_int(right.data->values[0],{})==9&&as_int(child->values[0],{})==9,"clone isolation");

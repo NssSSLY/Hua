@@ -15,8 +15,8 @@ Value integer(I n){return Value(n);}Value text(const char* s){return Value(std::
 Value bytes(const char* s){return Value(BytesValue{managed<const std::string>(s)});}
 const ResultValue& outcome(const Value& v){return cget<ResultValue>(v.data);}
 Value unwrap(const Value& v){check(outcome(v).ok,"expected success");return outcome(v).payload?*outcome(v).payload:Value{};}
-ErrorValue err(const Value& v){check(!outcome(v).ok,"expected error");return std::get<ErrorValue>(outcome(v).payload->data);}
-IOFailureValue ioerr(const Value& v){check(!outcome(v).ok,"expected IOFailure");return std::get<IOFailureValue>(outcome(v).payload->data);}
+ErrorValue err(const Value& v){check(!outcome(v).ok,"expected error");return hua::get<ErrorValue>(outcome(v).payload->data);}
+IOFailureValue ioerr(const Value& v){check(!outcome(v).ok,"expected IOFailure");return hua::get<IOFailureValue>(outcome(v).payload->data);}
 Value call(RuntimeContext& c,const char* n,std::vector<Value> a){return invoke_file_standard(*standard_function("$std$file$"+std::string(n)),a,{},&c);}
 struct Stats {
     std::atomic<unsigned> reads{},writes{},closes{},destroyed{};
@@ -59,7 +59,7 @@ void clean(RuntimeContext& c,bool storage=true){
 R::Cost caps(){R::Cost c{};c.fill(1<<24);return c;}
 void read_progress(){
     ++cases;Fixture f;auto r=unwrap(call(f.context,"read",{f.file,integer(5)}));
-    check(*std::get<BytesValue>(r.data).data=="ab","short read bytes");
+    check(*hua::get<BytesValue>(r.data).data=="ab","short read bytes");
     check(used(f.context,R::Metric::storage_bytes)==5,"requested capacity retained");
     clean(f.context,false);call(f.context,"close",{f.file});check(f.stats->closes==1,"one close");
     check(used(f.context,R::Metric::storage_bytes)==5,"close cannot refund retained Bytes");
@@ -83,7 +83,7 @@ void write_progress(){
 }
 void zero_and_modes(){
     ++cases;Fixture f;auto zero=unwrap(call(f.context,"read",{f.file,integer(0)}));
-    check(std::get<BytesValue>(zero.data).data->empty()&&f.stats->reads==0,"zero read does not prove EOF");
+    check(hua::get<BytesValue>(zero.data).data->empty()&&f.stats->reads==0,"zero read does not prove EOF");
     check(as_int(unwrap(call(f.context,"write",{f.file,bytes("")})),{})==0&&f.stats->writes==0,"zero write skips OS");
     call(f.context,"close",{f.file});check(ioerr(call(f.context,"read",{f.file,integer(0)})).data->error.data->code=="closed","zero read validates state");
     Fixture readonly({},"r");check(ioerr(call(readonly.context,"write",{readonly.file,bytes("")})).data->error.data->code=="permission_denied","zero write validates mode");
@@ -102,7 +102,7 @@ void known_close_failure(){
     check(err(call(f.context,"close",{alias})).data->native_code==9,"first close failure surfaced");
     check(show(unwrap(call(f.context,"state",{f.file})))=="closed","aliases see closed");
     check(outcome(call(f.context,"close",{f.file})).ok&&f.stats->closes==1,"idempotent known release");
-    check(std::get<ErrorValue>(unwrap(call(f.context,"close_error",{f.file})).data).data->native_code==9,"first failure retained");
+    check(hua::get<ErrorValue>(unwrap(call(f.context,"close_error",{f.file})).data).data->native_code==9,"first failure retained");
     check(used(f.context,R::Metric::handles)==0,"known release refunds handle");
 }
 void uncertain_close(){
@@ -142,7 +142,7 @@ void clone_boundaries(){
 void host_exception(){
     ++cases;Fixture f;f.stats->throws=true;auto issue=ioerr(call(f.context,"read",{f.file,integer(4)}));
     check(!issue.data->transferred&&!issue.data->partial,"exception progress unknown");clean(f.context);
-    check(std::get<FileValue>(f.file.data).data->handle.snapshot().active==0,"exception retires host operation");
+    check(hua::get<FileValue>(f.file.data).data->handle.snapshot().active==0,"exception retires host operation");
 }
 void seek_validation(){
     ++cases;Fixture f;check(as_int(unwrap(call(f.context,"seek",{f.file,integer(4),text("start")})),{})==4,"seek start");
@@ -157,7 +157,7 @@ void close_inflight(){
     while(!f.stats->entered&&std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
     check(f.stats->entered,"blocking host entered");
     // Protocol close revokes admission while the synchronous host still owns its buffer.
-    auto file=std::get<FileValue>(f.file.data).data;
+    auto file=hua::get<FileValue>(f.file.data).data;
     auto ticket=f.context.files->protocol.close(file->handle,f.context.task_id);check(bool(ticket),"close admitted");
     f.context.files->pump();check(f.stats->closes==0,"cannot release an active native call");
     check(file->handle.snapshot().state==R::Lifecycle::closing&&used(f.context,R::Metric::storage_bytes)==4,"in-flight storage retained");
@@ -173,7 +173,7 @@ void task_cleanup(){
     },"int",{});
     check(as_int(runtime.await(t,{}),{})==7,"task result");
     check(child_id!=c.task_id&&stats->closes==1,"child cleanup precedes terminal publication");
-    check(std::get<FileValue>(retained.data).data->handle.snapshot().state==R::Lifecycle::closed,"retained wrapper closed");
+    check(hua::get<FileValue>(retained.data).data->handle.snapshot().state==R::Lifecycle::closed,"retained wrapper closed");
     runtime.finish();
     auto bad=runtime.start([&](RuntimeContext& child,std::ostream&)->Value{
         retained=unwrap(child.files->adopt(std::make_unique<Fake>(stats),"w"));return retained;

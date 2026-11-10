@@ -12,12 +12,12 @@ void check(bool ok,const char* text){++checks;if(!ok)throw std::runtime_error(te
 void scalars(){
  Stack s;Value zero(std::int64_t(0));s.emplace_back(zero);s.clear();
  auto before=native_allocation::snapshot();
- for(std::int64_t i=0;i<10000;++i){s.emplace_back(std::in_place_type<Value>,i);auto v=s.take_value();if(std::get<std::int64_t>(v.data)!=i)throw std::runtime_error("scalar changed");}
+ for(std::int64_t i=0;i<10000;++i){s.emplace_back(std::in_place_type<Value>,i);auto v=s.take_value();if(hua::get<std::int64_t>(v.data)!=i)throw std::runtime_error("scalar changed");}
  auto after=native_allocation::snapshot();
  check(before.calls==after.calls,"scalar push/pop allocated after warmup");
  check(s.location_capacity()==0,"scalar path created complex storage");
- s.emplace_back(Value(true));check(std::get<bool>(s.take_value().data),"bool changed");
- s.emplace_back(Value(1.25));check(std::get<double>(s.take_value().data)==1.25,"float changed");
+ s.emplace_back(Value(true));check(hua::get<bool>(s.take_value().data),"bool changed");
+ s.emplace_back(Value(1.25));check(hua::get<double>(s.take_value().data)==1.25,"float changed");
  s.emplace_back(Value{});check(s.take_value().data.index()==0,"nil changed");
 }
 void stable(){
@@ -37,7 +37,7 @@ void stable(){
  auto before=native_allocation::snapshot();
  for(int i=0;i<10000;++i){s.emplace_back(text);s.emplace_back(ValueLocation{&target,"int",true});s.clear();}
  auto after=native_allocation::snapshot();check(before.calls==after.calls,"complex operands allocate after warmup");
- s.emplace_back(text);s.replace_back(Value(false));check(s.value_live()==0&&!std::get<bool>(s.take_value().data),"replace retained complex value");
+ s.emplace_back(text);s.replace_back(Value(false));check(s.value_live()==0&&!hua::get<bool>(s.take_value().data),"replace retained complex value");
 }
 void roots(){
  ManagedHeap heap(256);HeapScope scope(heap);Stack s;

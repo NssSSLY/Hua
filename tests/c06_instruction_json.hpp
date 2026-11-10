@@ -13,9 +13,9 @@ static std::string quoted(const std::string& s) {
 }
 static std::string scalar_text(const hua::Value& v) {
     switch(hua::value_kind(v)){
-    case 0:return "";case 1:return std::get<bool>(v.data)?"true":"false";
-    case 2:return std::to_string(std::get<std::int64_t>(v.data));
-    case 3:{char b[64];auto [end,e]=std::to_chars(b,b+64,std::get<double>(v.data),std::chars_format::general,17);if(e!=std::errc{})throw std::runtime_error("float projection");return {b,end};}
+    case 0:return "";case 1:return hua::get<bool>(v.data)?"true":"false";
+    case 2:return std::to_string(hua::get<std::int64_t>(v.data));
+    case 3:{char b[64];auto [end,e]=std::to_chars(b,b+64,hua::get<double>(v.data),std::chars_format::general,17);if(e!=std::errc{})throw std::runtime_error("float projection");return {b,end};}
     case 4:return hua::string_value(v.data);
     default:throw std::runtime_error("unexpected reference constant");
     }

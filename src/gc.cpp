@@ -9,7 +9,7 @@
 #endif
 namespace hua {
 #ifdef HUA_GC_COST_PROFILE
-static_assert(std::variant_size_v<Value::Data> == 25,"Update GC cost Value kind schema");
+static_assert(Value::Data::alternatives == 25,"Update GC cost Value kind schema");
 #endif
 namespace {
 thread_local ManagedHeap fallback;thread_local ManagedHeap* active=nullptr;
@@ -188,10 +188,14 @@ void heap_edges(const Value& v,const HeapVisitor& visit){
 #ifdef HUA_GC_COST_PROFILE
     if(gc_cost::current){++gc_cost::current->value_kinds[value_kind(v)];++gc_cost::current->value_sources[gc_cost::current->source][value_kind(v)];}
 #endif
-    std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
+    hua::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
         if constexpr(requires{x.data.get();})visit(x.data.get());
-        else if constexpr(std::is_same_v<T,Cow<SliceValue>>){visit(x->storage.get());visit(x->packed.get());}
-        else if constexpr(std::is_same_v<T,Cow<ResultValue>>)visit(x->payload.get());
+        // A copy-on-write body shared by several Values holds one reference to its objects
+        // however many Values name it; counting the edge from one container would let that
+        // object look unreachable while another Value still uses it. No edge is reported
+        // then, so the object stays a root (conservative: such a cycle is kept, not cleared).
+        else if constexpr(std::is_same_v<T,Cow<SliceValue>>){if(!x.shared()){visit(x->storage.get());visit(x->packed.get());}}
+        else if constexpr(std::is_same_v<T,Cow<ResultValue>>){if(!x.shared())visit(x->payload.get());}
         else if constexpr(std::is_same_v<T,Callable>){visit(x.closure().get());if(x.receiver())visit(x.receiver()->data.get());}
     },v.data);
 }

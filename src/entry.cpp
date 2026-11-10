@@ -10,7 +10,7 @@ EntryResult entry_result(const Value& value,const SourceSpan& span) {
     EntryResult out{1,"main returned Err: ",span};
     if(result->failure_source)out.failure_source=*result->failure_source;
     if(auto text=hua::string_data(&result->payload->data))out.message+=*text;
-    else if(auto error=std::get_if<ErrorValue>(&result->payload->data)) {
+    else if(auto error=hua::get_if<ErrorValue>(&result->payload->data)) {
         if(!error->data)throw std::logic_error("entry Error has no data");
         const auto& data=*error->data;
         if(data.domain=="hua.cli") {

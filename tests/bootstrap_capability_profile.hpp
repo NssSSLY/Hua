@@ -52,8 +52,8 @@ struct Session {
   auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-start).count();
   output<<"{\"event\":"<<std::quoted(kind)<<",\"phase\":"<<std::quoted(phase)<<",\"ns\":"<<ns<<",\"cpu_ns\":"<<cpu_ns()-cpu_start<<",\"counters\":{\"vm_steps\":"<<metrics.steps.load()<<"}}\n";output.flush();if(!output)throw std::runtime_error("phase trace write failed");
  }
- static const Value& member(const Value& v,const char* key){auto* p=std::get_if<StructValue>(&v.data);if(!p)throw std::runtime_error("expected record in capability diagnostic");return p->data->fields.at(key);}
- static std::uint64_t size(const Value& v){auto* m=std::get_if<MapValue>(&v.data);if(!m)throw std::runtime_error("expected map in capability diagnostic");return m->data->entries.size();}
+ static const Value& member(const Value& v,const char* key){auto* p=hua::get_if<StructValue>(&v.data);if(!p)throw std::runtime_error("expected record in capability diagnostic");return p->data->fields.at(key);}
+ static std::uint64_t size(const Value& v){auto* m=hua::get_if<MapValue>(&v.data);if(!m)throw std::runtime_error("expected map in capability diagnostic");return m->data->entries.size();}
  static std::string string(const Value& v){return hua::string_value(v.data);}
  void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){
   if(auto h=helpers.find(fn);h!=helpers.end()){
@@ -61,15 +61,15 @@ struct Session {
    if(f.name=="statement"&&caller==analyze){
     f.body=string(member(args.at(1),"function"));Visit visit;
     visit.target=f.body;visit.module=string(member(member(args.at(1),"unit"),"id"));
-    visit.probing=std::get<bool>(member(args.at(0),"probing").data);
+    visit.probing=hua::get<bool>(member(args.at(0),"probing").data);
     visit.ordinal=bodies[f.body]+1;visit.values=size(member(args.at(1),"values"));
-    visit.work_at_entry=std::get<std::int64_t>(member(args.at(0),"work").data);
+    visit.work_at_entry=hua::get<std::int64_t>(member(args.at(0),"work").data);
     visit.before=work;visit.volume_before=volume;f.visit=visits.size();visits.push_back(std::move(visit));
    }
    if(f.name=="field_defaults"){f.type=string(member(args.at(1),"type_name"));volume["seed-root-origins"]+=size(member(args.at(1),"origins"));}
-   if(f.name=="snapshot"){volume["snapshot-bindings"]+=size(args.at(0));for(const auto& [_,v]:std::get<MapValue>(args[0].data).data->entries)volume["snapshot-fields"]+=size(member(v,"fields"));}
+   if(f.name=="snapshot"){volume["snapshot-bindings"]+=size(args.at(0));for(const auto& [_,v]:hua::get<MapValue>(args[0].data).data->entries)volume["snapshot-fields"]+=size(member(v,"fields"));}
    if(f.name=="editable")volume["editable-fields"]+=size(member(args.at(pooled?2:1),"fields"));
-   if(f.name=="storage_aliases"){const auto& values=member(args.at(pooled?1:0),"values");volume["alias-bindings"]+=size(values);for(const auto& [_,v]:std::get<MapValue>(values.data).data->entries)volume["alias-fields"]+=size(member(v,"fields"));}
+   if(f.name=="storage_aliases"){const auto& values=member(args.at(pooled?1:0),"values");volume["alias-bindings"]+=size(values);for(const auto& [_,v]:hua::get<MapValue>(values.data).data->entries)volume["alias-fields"]+=size(member(v,"fields"));}
    if(f.name=="copy_view")volume["copy-view-origins"]+=size(member(args.at(0),"origins"));
    work_stack.push_back(std::move(f));
   }
@@ -94,8 +94,8 @@ struct Session {
      if(count!=old)v.volumes.emplace(name,count-old);}
     v.before.clear();v.volume_before.clear();
    }
-   if(f.name=="field_defaults"&&result){auto count=size(*result);++volume["shape-calls:"+f.type];volume["shape-steps:"+f.type]+=delta;volume["shape-fields:"+f.type]+=count;volume["default-instantiated-fields"]+=count;volume["shape-max:"+f.type]=std::max(volume["shape-max:"+f.type],count);for(const auto& [_,v]:std::get<MapValue>(result->data).data->entries)volume["default-instantiated-origins"]+=size(member(v,"origins"));}
-   if(f.name=="analyze"&&result){const auto& model=*cget<ResultValue>(result->data).payload;volume["actual-passes"]=std::get<std::int64_t>(member(model,"passes").data);volume["logical-work"]=std::get<std::int64_t>(member(model,"work").data);}
+   if(f.name=="field_defaults"&&result){auto count=size(*result);++volume["shape-calls:"+f.type];volume["shape-steps:"+f.type]+=delta;volume["shape-fields:"+f.type]+=count;volume["default-instantiated-fields"]+=count;volume["shape-max:"+f.type]=std::max(volume["shape-max:"+f.type],count);for(const auto& [_,v]:hua::get<MapValue>(result->data).data->entries)volume["default-instantiated-origins"]+=size(member(v,"origins"));}
+   if(f.name=="analyze"&&result){const auto& model=*cget<ResultValue>(result->data).payload;volume["actual-passes"]=hua::get<std::int64_t>(member(model,"passes").data);volume["logical-work"]=hua::get<std::int64_t>(member(model,"work").data);}
   }
   auto found=routes.find(fn);if(found==routes.end()||!found->second.phase)return;
   if(stack.empty()||stack.back().first!=fn)throw std::runtime_error("unbalanced VM phase return");event("end",stack.back().second);stack.pop_back();

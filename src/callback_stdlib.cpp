@@ -20,12 +20,12 @@ struct Work {
 };
 void require_result(const CallbackShape& shape,std::string_view expected,const SourceSpan& s){if(shape.result!=expected)runtime_error(s,"callback must return "+std::string(expected),"E4003");}
 void require_key(const CallbackShape& shape,const SourceSpan& s){if(shape.result!="int"&&shape.result!="float"&&shape.result!="string")runtime_error(s,"key callback must return int/float/string","E4003");}
-Value checked_key(Value key,const SourceSpan& s){if(auto d=std::get_if<double>(&key.data);d&&!std::isfinite(*d))runtime_error(s,"sort keys require finite float values","E4003");return key;}
+Value checked_key(Value key,const SourceSpan& s){if(auto d=hua::get_if<double>(&key.data);d&&!std::isfinite(*d))runtime_error(s,"sort keys require finite float values","E4003");return key;}
 // Total order of int/float/string keys (finite floats), as std.alg/list.sort.
 int compare_keys(const Value& a,const Value& b,Work& work){
     work.tick();
-    if(auto x=std::get_if<I>(&a.data)){auto y=std::get<I>(b.data);return *x<y?-1:*x>y?1:0;}
-    if(auto x=std::get_if<double>(&a.data)){auto y=std::get<double>(b.data);return *x<y?-1:*x>y?1:0;}
+    if(auto x=hua::get_if<I>(&a.data)){auto y=hua::get<I>(b.data);return *x<y?-1:*x>y?1:0;}
+    if(auto x=hua::get_if<double>(&a.data)){auto y=hua::get<double>(b.data);return *x<y?-1:*x>y?1:0;}
     const auto& x=hua::string_value(a.data);const auto& y=hua::string_value(b.data);
     auto n=std::min(x.size(),y.size());work.tick(n/64);
     if(auto c=n?std::memcmp(x.data(),y.data(),n):0)return c<0?-1:1;
@@ -121,7 +121,7 @@ Routine<Value> alg_callback(const StandardFunction& f,std::vector<Value> args,co
 // heap.push_by_key/pop_by_key on List<T>: the sift path is found with key
 // callbacks first (each followed by the List revision check), then applied once.
 Routine<Value> heap_callback(const StandardFunction& f,std::vector<Value> args,const SourceSpan& s,CallbackHost& host,Work& work){
-    auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
+    auto handle=hua::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
     if(!handle->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
     auto data=handle->data;auto& values=data->values;const auto& element=data->element_type;const bool push=f.name=="push_by_key";
     const auto& fn=callable_arg(args[push?2:1],s);auto shape=callback_shape(fn,1,s);require_key(shape,s);
@@ -162,7 +162,7 @@ Routine<Value> heap_callback(const StandardFunction& f,std::vector<Value> args,c
 }
 
 Routine<Value> list_callback(const StandardFunction& f,std::vector<Value> args,const SourceSpan& s,CallbackHost& host,Work& work){
-    auto handle=std::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
+    auto handle=hua::get_if<ListValue>(&args[0].data);if(!handle||!handle->data)runtime_error(s,"expected List<T>","E4003");
     if(!handle->writable)runtime_error(s,"standard mutation requires a writable argument","E4007");
     auto data=handle->data;const auto& name=f.name;const auto& fn=callable_arg(args[1],s);
     auto shape=callback_shape(fn,name=="sort_by"?2:1,s);
@@ -215,7 +215,7 @@ Routine<Value> invoke_callback_standard(const StandardFunction& f,std::vector<Va
     if(f.module=="maps"&&f.name=="update"){
         // Inline (one call per element in counting loops): read, call, then write;
         // a callback that changes this map meanwhile is overwritten for `key`.
-        auto m=std::get_if<MapValue>(&args[0].data);if(!m||!m->data)runtime_error(s,"expected map","E4003");
+        auto m=hua::get_if<MapValue>(&args[0].data);if(!m||!m->data)runtime_error(s,"expected map","E4003");
         if(!m->writable)runtime_error(s,"cannot mutate a read-only map","E4007");
         const auto& fn=callable_arg(args[3],s);callback_shape(fn,1,s);
         auto data=m->data;auto key=map_key(*m,args[1],s);Value current;

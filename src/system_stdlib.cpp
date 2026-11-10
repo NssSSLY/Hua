@@ -30,7 +30,7 @@ Value read_environment() {
     const std::string type = "map<string,string>";
     auto failed = [&](std::string why) { return standard_result(Value("ENV_ERROR: " + why), false, type); };
     auto out = string_map("string");
-    auto& entries = std::get<MapValue>(out.data).data->entries;
+    auto& entries = hua::get<MapValue>(out.data).data->entries;
     auto add = [&](std::string entry) {
         const auto at = entry.find('=', 1);
         if (at != std::string::npos) entries.insert_or_assign(MapKey(entry.substr(0, at)), Value(entry.substr(at + 1)));
@@ -95,7 +95,7 @@ Value parse_arguments(const std::vector<Value>& args, const SourceSpan& span) {
         } else return failed("ARGS_UNKNOWN: unknown argument " + token);
     }
     auto out = string_map("[]string");
-    auto& entries = std::get<MapValue>(out.data).data->entries;
+    auto& entries = hua::get<MapValue>(out.data).data->entries;
     for (auto& [name, values] : found) {
         auto storage = managed<std::vector<Value>>();
         storage->reserve(values.size());
@@ -170,7 +170,7 @@ Value invoke_os_standard(const StandardFunction& f, const std::vector<Value>& ar
     if (name == "environ") return read_environment();
     if (name == "parse_args") return parse_arguments(args, span);
     if (name == "exit") {
-        auto code = std::get_if<std::int64_t>(&args[0].data);
+        auto code = hua::get_if<std::int64_t>(&args[0].data);
         if (!code) runtime_error(span, "expected int", "E4003");
         if (*code < 0 || *code > 125) runtime_error(span, "os.exit code must be 0..125", "E4003");
         if (context && context->in_task) runtime_error(span, "os.exit is only allowed in the main execution", "E4104");

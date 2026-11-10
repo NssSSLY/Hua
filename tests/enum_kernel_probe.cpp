@@ -28,9 +28,9 @@ hua::Value make_value(const Layout& layout,int active,hua::Value payload,bool sp
  return hua::Value(hua::StructValue{std::move(data),true});
 }
 I read_value(const Layout& layout,const hua::Value& value){
- const auto& fields=std::get<hua::StructValue>(value.data).data->fields;
+ const auto& fields=hua::get<hua::StructValue>(value.data).data->fields;
  const auto& tag=hua::string_value(fields.at("$case").data);
- for(int i=0;i<layout.count;++i)if(tag==layout.names[i])return std::get<I>(fields.at(layout.fields[i]).data)+i;
+ for(int i=0;i<layout.count;++i)if(tag==layout.names[i])return hua::get<I>(fields.at(layout.fields[i]).data)+i;
  return -1;
 }
 I next(I state){return state*48271%2147483647;}
@@ -59,10 +59,10 @@ template<std::size_t N> Sample variant_batch(const std::string& op,int rounds){
  for(int i=0;i<rounds;++i){
   if(op=="construct"){state=next(state);V made(std::in_place_index<N-1>,state);opaque(made);held=made;opaque(held);}
   else if(op=="copy"){V snapshot=source;opaque(snapshot);held=snapshot;opaque(held);}
-  else{V argument=source;opaque(argument);V subject=argument;opaque(subject);checksum+=std::visit([](const auto& x){return x.value+std::decay_t<decltype(x)>::index;},subject);}
+  else{V argument=source;opaque(argument);V subject=argument;opaque(subject);checksum+=hua::visit([](const auto& x){return x.value+std::decay_t<decltype(x)>::index;},subject);}
  }
  auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-start).count();
- if(op=="construct"||op=="copy")checksum=std::visit([](const auto& x){return x.value+std::decay_t<decltype(x)>::index;},held);
+ if(op=="construct"||op=="copy")checksum=hua::visit([](const auto& x){return x.value+std::decay_t<decltype(x)>::index;},held);
  return {static_cast<std::uint64_t>(ns),0,static_cast<std::uint64_t>(rounds),checksum,state};
 }
 template<class F>void measure(const std::string& representation,int variants,const std::string& op,int rounds,std::size_t object_bytes,F batch){
@@ -81,20 +81,20 @@ int preflight(){
  std::vector<std::pair<hua::Value,std::string>> values={{hua::Value(I(42)),"int"},{hua::Value(1.25),"float"},{hua::Value(true),"bool"},{hua::Value(std::string("text\r\nUTF-8:\xc3\xa9")),"string"},{hua::Value{},"int?"},{hua::Value{},"void"}};
  for(const auto& [payload,type]:values){
   auto full=make_value(layout,58,payload,false,type),sparse=make_value(layout,58,payload,true,type);
-  require(std::get<hua::StructValue>(full.data).data->fields.size()==60);
-  require(std::get<hua::StructValue>(sparse.data).data->fields.size()==2);
+  require(hua::get<hua::StructValue>(full.data).data->fields.size()==60);
+  require(hua::get<hua::StructValue>(sparse.data).data->fields.size()==2);
   require(hua::show(full)==hua::show(sparse));
   require(!hua::cget<hua::ResultValue>(hua::json_encode(full).data).ok&&!hua::cget<hua::ResultValue>(hua::json_encode(sparse).data).ok);
   auto copied=hua::copy_value(hua::read_only(sparse));require(hua::show(copied)==hua::show(sparse));
   const auto key="$V58#0#"+type;
   if(type=="void")require(hua::show(copied)=="Item.V58()");
-  else{std::get<hua::StructValue>(copied.data).data->fields.at(key)=hua::Value(I(99));require(hua::show(copied)!=hua::show(sparse));}
+  else{hua::get<hua::StructValue>(copied.data).data->fields.at(key)=hua::Value(I(99));require(hua::show(copied)!=hua::show(sparse));}
  }
  auto data=hua::managed<hua::ListData>();data->element_type="int";data->values.emplace_back(I(1));
  for(bool sparse:{false,true}){
   auto source=make_value(layout,0,hua::Value(hua::ListValue{data,true}),sparse,"List<int>");
-  auto copy=hua::copy_value(hua::read_only(source));const auto& item=std::get<hua::StructValue>(copy.data).data->fields.at("$V0#0#List<int>");
-  require(!std::get<hua::ListValue>(item.data).writable);require(std::get<hua::ListValue>(item.data).data==data);
+  auto copy=hua::copy_value(hua::read_only(source));const auto& item=hua::get<hua::StructValue>(copy.data).data->fields.at("$V0#0#List<int>");
+  require(!hua::get<hua::ListValue>(item.data).writable);require(hua::get<hua::ListValue>(item.data).data==data);
  }
  std::cout<<"{\"status\":\"passed\",\"checks\":"<<checks<<"}\n";return 0;
 }

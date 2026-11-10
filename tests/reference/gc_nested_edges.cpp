@@ -31,7 +31,7 @@ std::size_t ManagedHeap::collect(){
     objects.clear();std::erase_if(records_,[](const auto& x){return x.pointer.expired();});collected_+=count;return count;
 }
 void heap_edges(const Value& v,const HeapVisitor& visit){
-    std::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
+    hua::visit([&](const auto& x){using T=std::decay_t<decltype(x)>;
         if constexpr(requires{x.data.get();})visit(x.data.get());
         else if constexpr(std::is_same_v<T,Cow<SliceValue>>){visit(x->storage.get());visit(x->packed.get());}
         else if constexpr(std::is_same_v<T,Cow<ResultValue>>)visit(x->payload.get());

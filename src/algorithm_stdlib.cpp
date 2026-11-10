@@ -51,11 +51,11 @@ std::uint64_t binary_gcd(std::uint64_t a, std::uint64_t b) {
 // P1 bit tools (since 21): reinterpret the complete two's-complement bit pattern.
 // Unsigned operations avoid checked signed shifts and implementation-defined casts.
 Value math_bits(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
-    const auto bits = std::bit_cast<std::uint64_t>(std::get<I>(args[0].data));
+    const auto bits = std::bit_cast<std::uint64_t>(hua::get<I>(args[0].data));
     if (f.name == "popcount") return Value(static_cast<I>(std::popcount(bits)));
     if (f.name == "leading_zeros") return Value(static_cast<I>(std::countl_zero(bits)));
     if (f.name == "trailing_zeros") return Value(static_cast<I>(std::countr_zero(bits)));
-    const auto amount = std::get<I>(args[1].data);
+    const auto amount = hua::get<I>(args[1].data);
     if (amount < 0 || amount > 63)
         runtime_error(span, "math rotation count must be in 0..63", "E4003");
     const auto rotated = f.name == "rotate_left" ? std::rotl(bits, static_cast<int>(amount))
@@ -68,7 +68,7 @@ Value math_p0(const StandardFunction& f, const std::vector<Value>& args, const S
     if (name == "e") return Value(std::numbers::e);
     if (name == "tau") return Value(2 * std::numbers::pi);
     if (name == "gcd" || name == "lcm") {
-        auto a = magnitude(std::get<I>(args[0].data)), b = magnitude(std::get<I>(args[1].data));
+        auto a = magnitude(hua::get<I>(args[0].data)), b = magnitude(hua::get<I>(args[1].data));
         auto g = binary_gcd(a, b);
         std::uint64_t result = g;
         if (name == "lcm") {
@@ -81,7 +81,7 @@ Value math_p0(const StandardFunction& f, const std::vector<Value>& args, const S
         return Value(static_cast<I>(result));
     }
     if (name == "isqrt") {
-        auto n = std::get<I>(args[0].data);
+        auto n = hua::get<I>(args[0].data);
         if (n < 0) runtime_error(span, "math.isqrt requires a non-negative integer", "E4003");
         // The float estimate is within a few units; correct it exactly in 128-bit.
         auto x = static_cast<unsigned __int128>(std::sqrt(static_cast<double>(n)));
@@ -91,18 +91,18 @@ Value math_p0(const StandardFunction& f, const std::vector<Value>& args, const S
         return Value(static_cast<I>(x));
     }
     for (const auto& arg : args)
-        if (!std::isfinite(std::get<double>(arg.data)))
+        if (!std::isfinite(hua::get<double>(arg.data)))
             return failure("MATH_DOMAIN: finite input required", "float");
-    double x = std::get<double>(args[0].data), result{};
+    double x = hua::get<double>(args[0].data), result{};
     if ((name == "asin" || name == "acos") && std::abs(x) > 1.0)
         return failure("MATH_DOMAIN: " + name + " requires -1 <= x <= 1", "float");
     if (name == "asin") result = std::asin(x);
     else if (name == "acos") result = std::acos(x);
     else if (name == "atan") result = std::atan(x);
-    else if (name == "atan2") result = std::atan2(x, std::get<double>(args[1].data));
+    else if (name == "atan2") result = std::atan2(x, hua::get<double>(args[1].data));
     else if (name == "cbrt") result = std::cbrt(x);
     else if (name == "fmod") {
-        auto y = std::get<double>(args[1].data);
+        auto y = hua::get<double>(args[1].data);
         if (y == 0.0) return failure("MATH_DOMAIN: fmod requires y != 0", "float");
         result = std::fmod(x, y);
     }
@@ -111,9 +111,9 @@ Value math_p0(const StandardFunction& f, const std::vector<Value>& args, const S
     return standard_result(Value(result), true, "float");
 }
 Value math(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& span) {
-    double x = std::get<double>(args[0].data), result{};
+    double x = hua::get<double>(args[0].data), result{};
     for (const auto& arg : args)
-        if (!std::isfinite(std::get<double>(arg.data)))
+        if (!std::isfinite(hua::get<double>(arg.data)))
             return failure("MATH_DOMAIN: finite input required", "float");
     const auto& name = f.name;
     if ((name == "log" || name == "log2" || name == "log10") && x <= 0.0)
@@ -129,7 +129,7 @@ Value math(const StandardFunction& f, const std::vector<Value>& args, const Sour
     else if (name == "log") result = std::log(x);
     else if (name == "log2") result = std::log2(x);
     else if (name == "log10") result = std::log10(x);
-    else if (name == "hypot") result = std::hypot(x, std::get<double>(args[1].data));
+    else if (name == "hypot") result = std::hypot(x, hua::get<double>(args[1].data));
     else runtime_error(span, "unknown math operation", "E4003");
     if (!std::isfinite(result)) return failure("MATH_OVERFLOW: non-finite result", "float");
     return standard_result(Value(result), true, "float");
@@ -141,18 +141,18 @@ Value item(const SliceValue& input, std::size_t index, Work& work) {
         runtime_error(work.span, "algorithm element type mismatch", "E4003");
     if (auto text = hua::string_data(&result.data); text && text->size() > max_text)
         runtime_error(work.span, "algorithm string exceeds 16 MiB", "E4099");
-    if (auto real = std::get_if<double>(&result.data); real && !std::isfinite(*real))
+    if (auto real = hua::get_if<double>(&result.data); real && !std::isfinite(*real))
         runtime_error(work.span, "algorithm requires finite float values", "E4003");
     return result;
 }
 int compare(const Value& a, const Value& b, Work& work) {
     work.tick();
-    if (auto left = std::get_if<I>(&a.data)) {
-        auto right = std::get<I>(b.data);
+    if (auto left = hua::get_if<I>(&a.data)) {
+        auto right = hua::get<I>(b.data);
         return *left < right ? -1 : *left > right ? 1 : 0;
     }
-    if (auto left = std::get_if<double>(&a.data)) {
-        auto right = std::get<double>(b.data);
+    if (auto left = hua::get_if<double>(&a.data)) {
+        auto right = hua::get<double>(b.data);
         return *left < right ? -1 : *left > right ? 1 : 0;
     }
     const auto& left = hua::string_value(a.data);
@@ -230,18 +230,18 @@ Value unique(const SliceValue& input, Work& work) {
     auto mismatch = [&] { runtime_error(work.span, "algorithm element type mismatch", "E4003"); };
     std::vector<std::size_t> kept;
     if (type == "int") {
-        for (std::size_t i = 0; i < input.length; ++i) if (!std::holds_alternative<I>(x[i].data)) mismatch();
-        kept = first_positions(input.length, [&](std::size_t i) { return static_cast<std::uint64_t>(std::get<I>(x[i].data)); },
-                               [&](std::size_t a, std::size_t b) { return std::get<I>(x[a].data) == std::get<I>(x[b].data); }, work);
+        for (std::size_t i = 0; i < input.length; ++i) if (!hua::holds_alternative<I>(x[i].data)) mismatch();
+        kept = first_positions(input.length, [&](std::size_t i) { return static_cast<std::uint64_t>(hua::get<I>(x[i].data)); },
+                               [&](std::size_t a, std::size_t b) { return hua::get<I>(x[a].data) == hua::get<I>(x[b].data); }, work);
     } else if (type == "float") {
         for (std::size_t i = 0; i < input.length; ++i) {
-            auto real = std::get_if<double>(&x[i].data);
+            auto real = hua::get_if<double>(&x[i].data);
             if (!real) mismatch();
             if (!std::isfinite(*real)) runtime_error(work.span, "algorithm requires finite float values", "E4003");
         }
         // == semantics: -0.0 and 0.0 hash alike (finite inputs, so no NaN).
-        kept = first_positions(input.length, [&](std::size_t i) { auto v = std::get<double>(x[i].data); return std::bit_cast<std::uint64_t>(v == 0.0 ? 0.0 : v); },
-                               [&](std::size_t a, std::size_t b) { return std::get<double>(x[a].data) == std::get<double>(x[b].data); }, work);
+        kept = first_positions(input.length, [&](std::size_t i) { auto v = hua::get<double>(x[i].data); return std::bit_cast<std::uint64_t>(v == 0.0 ? 0.0 : v); },
+                               [&](std::size_t a, std::size_t b) { return hua::get<double>(x[a].data) == hua::get<double>(x[b].data); }, work);
     } else if (type == "string") {
         for (std::size_t i = 0; i < input.length; ++i) {
             auto text = hua::string_data(&x[i].data);
@@ -264,7 +264,7 @@ Value unique(const SliceValue& input, Work& work) {
     return read_only_slice(std::move(out), type);
 }
 Value chunk(const SliceValue& input, const Value& width, Work& work) {
-    auto size = std::get_if<I>(&width.data);
+    auto size = hua::get_if<I>(&width.data);
     if (!size) runtime_error(work.span, "alg.chunk size must be an int", "E4003");
     if (*size <= 0) runtime_error(work.span, "alg.chunk size must be positive", "E4003");
     const auto n = input.length, step = static_cast<std::size_t>(std::min<I>(*size, static_cast<I>(max_items)));
@@ -290,7 +290,7 @@ Value chunk(const SliceValue& input, const Value& width, Work& work) {
 // windows (since 20): the input is copied once into read-only storage and every
 // window is a read-only view of it, so copying and memory stay O(n).
 Value windows(const SliceValue& input, const Value& width, Work& work) {
-    auto size = std::get_if<I>(&width.data);
+    auto size = hua::get_if<I>(&width.data);
     if (!size) runtime_error(work.span, "alg.windows size must be an int", "E4003");
     if (*size <= 0) runtime_error(work.span, "alg.windows size must be positive", "E4003");
     const auto n = input.length;
@@ -326,7 +326,7 @@ Value product(const SliceValue& input, Work& work) {
         I result = 1;
         for (std::size_t i = 0; i < input.length; ++i) {
             work.tick();
-            auto x = std::get_if<I>(&items.data[i].data);
+            auto x = hua::get_if<I>(&items.data[i].data);
             if (!x) runtime_error(work.span, "algorithm element type mismatch", "E4003");
             if (__builtin_mul_overflow(result, *x, &result)) return failure("ALG_OVERFLOW: int64 product overflow", "int");
         }
@@ -335,7 +335,7 @@ Value product(const SliceValue& input, Work& work) {
     double result = 1.0;
     for (std::size_t i = 0; i < input.length; ++i) {
         work.tick();
-        auto x = std::get_if<double>(&items.data[i].data);
+        auto x = hua::get_if<double>(&items.data[i].data);
         if (!x) runtime_error(work.span, "algorithm element type mismatch", "E4003");
         result *= *x;
         if (!std::isfinite(result)) return failure("ALG_OVERFLOW: float product overflow", "float");
@@ -406,7 +406,7 @@ Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Val
             runtime_error(span, "algorithm target type mismatch", "E4003");
         if (auto text = hua::string_data(&args[1].data); text && text->size() > max_text)
             runtime_error(span, "algorithm target exceeds 16 MiB", "E4099");
-        if (auto real = std::get_if<double>(&args[1].data); real && !std::isfinite(*real))
+        if (auto real = hua::get_if<double>(&args[1].data); real && !std::isfinite(*real))
             runtime_error(span, "algorithm requires finite float target", "E4003");
     }
     if (name == "sorted" || name == "reverse") return copied(f, *input, work);
@@ -439,13 +439,13 @@ Value invoke_algorithm_standard(const StandardFunction& f, const std::vector<Val
         for (std::size_t i = 0; i < input->length; ++i) {
             auto value = item(*input, i, work);
             if (input->element_type == "int") {
-                auto x = std::get<I>(value.data);
+                auto x = hua::get<I>(value.data);
                 if ((x > 0 && integer > std::numeric_limits<I>::max() - x) ||
                     (x < 0 && integer < std::numeric_limits<I>::min() - x))
                     return failure("ALG_OVERFLOW: int64 sum overflow", "int");
                 integer += x;
             } else {
-                real += std::get<double>(value.data);
+                real += hua::get<double>(value.data);
                 if (!std::isfinite(real)) return failure("ALG_OVERFLOW: float sum overflow", "float");
             }
         }

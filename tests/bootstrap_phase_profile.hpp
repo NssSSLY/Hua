@@ -46,7 +46,7 @@ struct Session {
  void enter(const Node* fn,const Node* caller,const std::vector<Value>& args){
   auto found=routes.find(fn);if(found==routes.end())return;const auto& route=found->second;
   if(route.count){++calls[route.count];if(std::string_view(route.count)=="statement"&&caller==analyze){
-    if(args.size()<2)throw std::runtime_error("statement argument metadata mismatch");auto* e=std::get_if<StructValue>(&args[1].data);if(!e)throw std::runtime_error("statement environment missing");
+    if(args.size()<2)throw std::runtime_error("statement argument metadata mismatch");auto* e=hua::get_if<StructValue>(&args[1].data);if(!e)throw std::runtime_error("statement environment missing");
     auto field=e->data->fields.find("function");if(field==e->data->fields.end())throw std::runtime_error("statement function metadata missing");auto* name=hua::string_data(&field->second.data);if(!name)throw std::runtime_error("statement function type mismatch");++bodies[*name];
   }}
   if(route.phase){stack.emplace_back(fn,route.phase);event("begin",route.phase);}

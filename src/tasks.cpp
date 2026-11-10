@@ -7,7 +7,7 @@
 namespace hua {
 namespace {
 std::atomic<unsigned> running{0};
-std::shared_ptr<TaskState> task_state(const Value& v,const SourceSpan& s){auto t=std::get_if<TaskValue>(&v.data);if(!t||!t->data)runtime_error(s,"expected Task<T>","E4003");return t->data;}
+std::shared_ptr<TaskState> task_state(const Value& v,const SourceSpan& s){auto t=hua::get_if<TaskValue>(&v.data);if(!t||!t->data)runtime_error(s,"expected Task<T>","E4003");return t->data;}
 std::chrono::milliseconds duration(const Value& v,const SourceSpan& s){auto ms=as_int(v,s);if(ms<0||ms>86400000)runtime_error(s,"duration must be 0..86400000 milliseconds","E4103");return std::chrono::milliseconds(ms);}
 std::string failure(std::exception_ptr error){try{std::rethrow_exception(error);}catch(const Diagnostic& e){return e.code()+": "+e.what();}catch(const std::exception& e){return e.what();}catch(...){return "task failed";}}
 bool observed(const std::shared_ptr<TaskState>& state){std::lock_guard lock(state->mutex);return state->observed;}
@@ -69,7 +69,9 @@ Routine<Value> TaskRuntime::await_async(Value value,SourceSpan span,std::optiona
     if(canceled)runtime_error(span,"task canceled while awaiting a dependency","E4101");
     if(timed_out)co_return standard_result(Value(std::string("timeout")),false,state->result_type);
     if(state->error){if(timeout)co_return standard_result(Value(failure(state->error)),false,state->result_type);std::rethrow_exception(state->error);}
-    auto result=copy_value(state->result,true);
+    // The awaiter takes a deep copy into its own heap, one awaiter at a time: nothing but
+    // this copy ever reads a finished task's result.
+    Value result;{std::lock_guard lock(state->mutex);result=copy_value(state->result,true);}
     co_return timeout?standard_result(std::move(result),true,state->result_type):result;
 }
 Value TaskRuntime::await(const Value& value,const SourceSpan& span,std::optional<std::chrono::milliseconds> timeout){return sync_wait(await_async(value,span,timeout),context);}
