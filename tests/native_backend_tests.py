@@ -238,14 +238,81 @@ case('depth_limit', '''fn down(n int) int {
 fn main() { print(down(10), down(100000)) }
 ''')
 # Outside the subset: rejected, not miscompiled.
-reject('defer', '''fn main() {
-    defer print(1)
-    print(2)
+reject('function_value', '''fn twice(x int) int { return x * 2 }
+fn main() {
+    let f = twice
+    print(f(2))
 }
 ''')
-reject('method', '''struct P { x int }
-fn P.get() int { return self.x }
-fn main() { print(P{x: 1}.get()) }
+case('defer', '''fn note(text string, n int) { print(text, n) }
+fn work(n int) int {
+    defer note("leave", n)
+    for i in 0..3 {
+        defer note("iteration", i)
+        if i == 1 { break }
+    }
+    if n > 5 { return n // 0 }
+    return n + 1
+}
+fn main() {
+    print(work(1))
+    print(work(9))
+}
+''')
+reject('task', '''fn work(n int) int { return n * 2 }
+fn main() {
+    let t = spawn work(21)
+    print(await t)
+}
+''')
+case('methods', '''import std.buffer as buffer
+struct Box { n int
+    out Buffer }
+fn Box.double() int { return self.n * 2 }
+fn Box.bump(k int) { self.n += k }
+fn Box.twice() int { return self.double() + self.double() }
+fn main() {
+    var b = Box{n: 2, out: buffer.new()}
+    b.bump(5)
+    buffer.write_int(b.out, b.double())
+    let c = b
+    b.bump(1)
+    print(b.double(), c.twice(), buffer.len(b.out), buffer.len(c.out))
+}
+''')
+case('enums_match', '''enum Shape { Circle(int), Named(string), Pair(int, string), Empty }
+fn area(s Shape) int {
+    match s {
+        Circle(r)=>{return r * r}
+        Named(t)=>{return len(t)}
+        Pair(a, b)=>{return a + len(b)}
+        _=>{return 0}
+    }
+}
+fn word(n int) string {
+    match n {
+        1=>{return "one"}
+        2=>{return "two"}
+        _=>{return "many"}
+    }
+}
+fn main() {
+    let a = Shape.Circle(3)
+    var total = 0
+    for i in 0..4 {
+        match i {
+            0=>{total += area(a)}
+            1=>{total += area(Shape.Named("xy"))}
+            2=>{
+                total += area(Shape.Pair(4, "abc"))
+                continue
+            }
+            _=>{total += area(Shape.Empty())}
+        }
+        total += 100
+    }
+    print(total, word(1), word(2), word(7), a, Shape.Pair(1, "z"), a == Shape.Circle(3), a == Shape.Empty())
+}
 ''')
 
 def run(command):

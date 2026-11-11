@@ -10,6 +10,7 @@
 #include "hua/entry.hpp"
 #include "hua/tasks.hpp"
 #include "hua/execution.hpp"
+#include "hua/enum_value.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -123,11 +124,21 @@ template<class T,class E> struct Result {
 };
 template<class T> struct OkV { T value;template<class E> operator Result<T,E>()&&{return Result<T,E>{true,std::move(value),E{}};} };
 template<class E> struct ErrV { E error;Trace trace;template<class T> operator Result<T,E>()&&{return Result<T,E>{false,T{},std::move(error),std::move(trace)};} };
+// `[]` before its context gives it an element type.
+struct EmptySlice {};
 template<class T> struct Slice {
     Ref<std::vector<T>> storage;I start{},length{};
+    Slice()=default;
+    Slice(EmptySlice):storage(Ref<std::vector<T>>::make()){}
     static Slice of(std::vector<T> items){Slice s;s.length=static_cast<I>(items.size());s.storage=Ref<std::vector<T>>::make(std::move(items));return s;}
 };
 template<class T> struct List { Ref<std::vector<T>> data; };
+// Types the VM implements as immutable values or shared handles (Bytes, Buffer, Json):
+// carried as the VM's own Value, so library calls receive the very same handle.
+template<class Tag> struct Opaque { Value v; };
+struct BytesTag{static constexpr const char* name="Bytes";};
+struct BufferTag{static constexpr const char* name="Buffer";};
+struct JsonTag{static constexpr const char* name="Json";};
 inline std::uint64_t mix64(std::uint64_t x){x^=x>>33;x*=0xff51afd7ed558ccdULL;x^=x>>33;x*=0xc4ceb9fe1a85ec53ULL;x^=x>>33;return x;}
 inline std::uint64_t hash_of(bool k){return k?0x9e3779b97f4a7c15ULL:0x6a09e667f3bcc909ULL;}
 inline std::uint64_t hash_of(I k){return mix64(static_cast<std::uint64_t>(k)+0x243f6a8885a308d3ULL);}
@@ -156,6 +167,11 @@ template<class K,class V> struct MapRep {
         std::vector<std::pair<K,V>> next;std::vector<std::uint64_t> nh;next.reserve(items.size());nh.reserve(items.size());
         for(auto i:order){next.push_back(std::move(items[i]));nh.push_back(hashes[i]);}
         items=std::move(next);hashes=std::move(nh);rebuild(index.size());sorted=true;}
+    bool erase(const K& k){
+        auto* found=find(k);if(!found)return false;
+        const std::size_t at=static_cast<std::size_t>(found-items.data());
+        items.erase(items.begin()+static_cast<std::ptrdiff_t>(at));hashes.erase(hashes.begin()+static_cast<std::ptrdiff_t>(at));
+        rebuild(index.size());return true;}
     auto begin(){ensure_sorted();return items.begin();}
     auto end(){return items.end();}
 };
@@ -171,6 +187,7 @@ template<> struct TypeName<Unit>{static std::string get(){return "void";}};
 template<class T> struct TypeName<Slice<T>>{static std::string get(){return "[]"+TypeName<T>::get();}};
 template<class T> struct TypeName<List<T>>{static std::string get(){return "List<"+TypeName<T>::get()+">";}};
 template<class T> struct TypeName<Opt<T>>{static std::string get(){return TypeName<T>::get()+"?";}};
+template<class Tag> struct TypeName<Opaque<Tag>>{static std::string get(){return Tag::name;}};
 template<class K,class V> struct TypeName<Map<K,V>>{static std::string get(){return "map["+TypeName<K>::get()+"]"+TypeName<V>::get();}};
 template<class T,class E> struct TypeName<Result<T,E>>{static std::string get(){return "Result<"+TypeName<T>::get()+","+TypeName<E>::get()+">";}};
 
@@ -180,6 +197,7 @@ inline Value to_value(F v){return Value(v);}
 inline Value to_value(bool v){return Value(v);}
 inline Value to_value(const Str& v){return Value(v.text());}
 inline Value to_value(Unit){return Value{};}
+template<class Tag> Value to_value(const Opaque<Tag>& v){return v.v;}
 template<class T> Value to_value(const Opt<T>& v);
 template<class T,class E> Value to_value(const Result<T,E>& v);
 template<class T> Value to_value(const List<T>& v);
@@ -218,6 +236,7 @@ template<> struct From<F>{static F get(const Value& v){if(auto p=hua::get_if<F>(
 template<> struct From<bool>{static bool get(const Value& v){if(auto p=hua::get_if<bool>(&v.data))return *p;bad_unbox("bool");}};
 template<> struct From<Str>{static Str get(const Value& v){if(auto p=hua::string_data(&v.data))return Str(*p);bad_unbox("string");}};
 template<> struct From<Unit>{static Unit get(const Value&){return {};}};
+template<class Tag> struct From<Opaque<Tag>>{static Opaque<Tag> get(const Value& v){return {v};}};
 template<class T> struct From<Slice<T>>{static Slice<T> get(const Value& v){
     auto p=hua::cget_if<hua::SliceValue>(&v.data);if(!p)bad_unbox("slice");
     std::vector<T> items;items.reserve(p->length);for(std::size_t i=0;i<p->length;++i)items.push_back(from_value<T>(hua::sequence_read(*p,i)));
@@ -291,6 +310,9 @@ template<class T,class E> T unwrap(Result<T,E> r,const SourceSpan& s){
 template<class T> T unwrap(Opt<T> v,const SourceSpan& s){
     if(!v)[[unlikely]]{call_builtin("unwrap",s,{Value{}},{false},"");fail(s,"unwrap failed","E4009");}
     return std::move(*v);}
+template<class T,class E> E unwrap_err(Result<T,E> r,const SourceSpan& s){
+    if(r.ok)[[unlikely]]{call_builtin("unwrap_err",s,{to_value(r)},{false},"");fail(s,"unwrap_err failed","E4009");}
+    return std::move(r.error);}
 template<class T,class E,class D> T unwrap_or(Result<T,E> r,D fallback){return r.ok?std::move(r.value):T(std::move(fallback));}
 template<class T,class D> T unwrap_or(Opt<T> v,D fallback){return v?std::move(*v):T(std::move(fallback));}
 
@@ -307,6 +329,7 @@ template<class K,class V> bool has(const Map<K,V>& m,const K& k){return m.data->
 template<class K,class V> void put(Map<K,V>& m,K k,V v,const SourceSpan& s){
     if(m.data->size()>=1000000&&!m.data->find(k))[[unlikely]]fail(s,"map entry limit exceeded","E4099");
     m.data->insert_or_assign(std::move(k),std::move(v));}
+template<class K,class V> bool erase(Map<K,V>& m,const K& k){return m.data->erase(k);}
 template<class K,class V> V& slot(Map<K,V>& m,const K& k,const SourceSpan& s){
     auto f=m.data->find(k);if(!f)[[unlikely]]fail(s,"compound assignment requires an existing map key","E4006");return f->second;}
 // clone: a deep copy (handles get fresh storage)
@@ -315,6 +338,8 @@ template<class T> Slice<T> clone(const Slice<T>& v){std::vector<T> items;items.r
 template<class K,class V> Map<K,V> clone(const Map<K,V>& v){auto out=new_map<K,V>();for(const auto& [k,x]:v.data->items)out.data->insert_or_assign(k,clone(x));return out;}
 template<class T> List<T> clone(const List<T>& v){std::vector<T> items;for(const auto& x:*v.data)items.push_back(clone(x));return List<T>{Ref<std::vector<T>>::make(std::move(items))};}
 template<class T> Opt<T> clone(const Opt<T>& v){if(!v)return std::nullopt;return clone(*v);}
+template<class Tag> Opaque<Tag> clone(const Opaque<Tag>& v){return {hua::copy_value(v.v,true)};}
+template<class T,class E> Result<T,E> clone(const Result<T,E>& v){return Result<T,E>{v.ok,clone(v.value),clone(v.error),v.trace};}
 
 // ---- typed std.list / std.strings (the rest goes through call_builtin)
 template<class T> List<T> list_from_slice(const Slice<T>& v){return List<T>{clone(v).storage};}
@@ -323,6 +348,37 @@ template<class T> Result<T,Str> list_get(const List<T>& l,I i,const SourceSpan& 
     if(static_cast<std::uint64_t>(i)>=l.data->size())[[unlikely]]{static StrRep text(1u<<30,"list index out of bounds");return Result<T,Str>{false,T{},Str(&text),traced({},s,"Result error created here")};}
     return Result<T,Str>{true,(*l.data)[static_cast<std::size_t>(i)],Str{}};}
 template<class T> Slice<T> list_snapshot(const List<T>& l){return Slice<T>::of(*l.data);}
+inline Str static_text(const char* text){return Str(std::string(text));}
+template<class T> Result<bool,Str> list_set(List<T>& l,I i,T v,const SourceSpan& s){
+    if(static_cast<std::uint64_t>(i)>=l.data->size())[[unlikely]]return Result<bool,Str>{false,false,static_text("list index out of bounds"),traced({},s,"Result error created here")};
+    (*l.data)[static_cast<std::size_t>(i)]=std::move(v);return Result<bool,Str>{true,true,Str{}};}
+template<class T> Result<T,Str> list_pop(List<T>& l,const SourceSpan& s){
+    if(l.data->empty())[[unlikely]]return Result<T,Str>{false,T{},static_text("cannot pop an empty list"),traced({},s,"Result error created here")};
+    T v=std::move(l.data->back());l.data->pop_back();return Result<T,Str>{true,std::move(v),Str{}};}
+template<class T> void list_clear(List<T>& l){l.data->clear();}
+// Typed std.list/std.maps for the common functions: the bridge would box the whole
+// container on every call. Semantics follow collections_stdlib/binary_stdlib.
+template<class T> I list_index_of(const List<T>& l,const T& v){for(std::size_t i=0;i<l.data->size();++i)if((*l.data)[i]==v)return static_cast<I>(i);return -1;}
+template<class T> bool list_contains(const List<T>& l,const T& v){return list_index_of(l,v)>=0;}
+template<class T> Result<I,Str> list_insert(List<T>& l,I at,T v,const SourceSpan& s){
+    if(at<0||static_cast<std::size_t>(at)>l.data->size())[[unlikely]]return Result<I,Str>{false,0,static_text("list index out of bounds"),traced({},s,"Result error created here")};
+    if(l.data->size()>=1000000)[[unlikely]]return Result<I,Str>{false,0,static_text("list item limit exceeded"),traced({},s,"Result error created here")};
+    l.data->insert(l.data->begin()+at,std::move(v));return Result<I,Str>{true,static_cast<I>(l.data->size()),Str{}};}
+template<class T> Result<T,Str> list_remove_at(List<T>& l,I at,const SourceSpan& s){
+    if(at<0||static_cast<std::size_t>(at)>=l.data->size())[[unlikely]]return Result<T,Str>{false,T{},static_text("list index out of bounds"),traced({},s,"Result error created here")};
+    T v=std::move((*l.data)[static_cast<std::size_t>(at)]);l.data->erase(l.data->begin()+at);return Result<T,Str>{true,std::move(v),Str{}};}
+template<class T> Result<I,Str> list_extend(List<T>& l,const Slice<T>& items,const SourceSpan& s){
+    if(static_cast<std::size_t>(items.length)>1000000-l.data->size())[[unlikely]]return Result<I,Str>{false,0,static_text("list item limit exceeded"),traced({},s,"Result error created here")};
+    for(I i=0;i<items.length;++i)l.data->push_back((*items.storage)[static_cast<std::size_t>(items.start+i)]);
+    return Result<I,Str>{true,static_cast<I>(l.data->size()),Str{}};}
+template<class T> Result<bool,Str> list_reserve(List<T>& l,I n,const SourceSpan& s){
+    if(n<0||n>1000000)[[unlikely]]return Result<bool,Str>{false,false,static_text("list capacity outside 0..1000000"),traced({},s,"Result error created here")};
+    const bool changed=static_cast<std::size_t>(n)>l.data->capacity();if(changed)l.data->reserve(static_cast<std::size_t>(n));return Result<bool,Str>{true,changed,Str{}};}
+template<class T> void list_reverse(List<T>& l){std::reverse(l.data->begin(),l.data->end());}
+template<class K,class V> Slice<K> map_keys(const Map<K,V>& m){std::vector<K> out;out.reserve(m.data->size());for(const auto& [k,v]:*m.data)out.push_back(k);return Slice<K>::of(std::move(out));}
+template<class K,class V> Slice<V> map_values(const Map<K,V>& m){std::vector<V> out;out.reserve(m.data->size());for(const auto& [k,v]:*m.data)out.push_back(v);return Slice<V>::of(std::move(out));}
+template<class K,class V> V map_get_or(const Map<K,V>& m,const K& k,V fallback){if(auto* f=m.data->find(k))return f->second;return fallback;}
+template<class K,class V> Opt<V> map_pop(Map<K,V>& m,const K& k){auto* f=m.data->find(k);if(!f)return std::nullopt;V v=std::move(f->second);m.data->erase(k);return v;}
 template<class T> Result<I,Str> list_append(List<T>& l,T v,const SourceSpan& s){
     if(l.data->size()>=1000000)[[unlikely]]{static StrRep text(1u<<30,"list item limit exceeded");return Result<I,Str>{false,0,Str(&text),traced({},s,"Result error created here")};}
     l.data->push_back(std::move(v));return Result<I,Str>{true,static_cast<I>(l.data->size()),Str{}};}
@@ -339,6 +395,18 @@ inline Slice<Str> split(const Str& text,const Str& delimiter,const SourceSpan& s
 inline bool starts_with(const Str& s,const Str& p){return s.text().size()>=p.text().size()&&std::memcmp(s.text().data(),p.text().data(),p.text().size())==0;}
 inline bool ends_with(const Str& s,const Str& p){return s.text().size()>=p.text().size()&&std::memcmp(s.text().data()+s.text().size()-p.text().size(),p.text().data(),p.text().size())==0;}
 
+// ---- defer: runs when the enclosing block exits (normally, by return/break/continue, or
+// while an error unwinds; an error from the deferred call itself is then dropped, as the
+// first error wins).
+template<class F> struct Deferred {
+    F f;int unwinding=std::uncaught_exceptions();
+    explicit Deferred(F g):f(std::move(g)){}
+    Deferred(const Deferred&)=delete;
+    ~Deferred()noexcept(false){
+        if(std::uncaught_exceptions()>unwinding){try{f();}catch(...){}return;}
+        f();
+    }
+};
 // ---- entry
 int run_main(int argc,char** argv,const SourceSpan& main_site,Value (*body)());
 }
