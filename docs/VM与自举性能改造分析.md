@@ -383,6 +383,35 @@ python perf/run_bench.py --hua tests/build/hua.exe --compare perf/results/win-ba
 
 ### 0.3 下一步
 
+<a id="native-release-route-20261114"></a>
+
+#### 路线重定：本地后端成为发布主路径（2026-11-14，用户确认）
+
+**根因与结论。** Hua慢的根本原因是编译器已知的静态类型在运行时边界被丢弃：VM每个操作约26–240ns，带类型原生代码约0.2–3ns。VM上的微优化最多缩小几成（D6 Rc实测1.00×，已撤回）。本地后端（`hua native`，带类型链接AST→C++→clang）已证明根本解法：自举编译器编译真实源码快7–9×（type_rules 0.042s对0.355s，ast_pool 0.163s对1.484s，自编译18–26s对166–186s），C2产物、输出与诊断与VM逐字节一致；核心基准均快于CPython/Lua；标准库基准102/132可本地编译且输出一致，中位1.9×，3项低于1.0×（以上为2026-11提交1acece5/686589d时的实测）。这与[原始规范](history/原始语言规范_零点一版.md)“开发走VM、发布走AOT→native/WASM”的架构一致。
+
+**用户已确认的决策（2026-11-14）。**
+
+1. 后端形式：生成C++，发行包内附带clang/lld；不自研机器码后端，不直接调用LLVM API。
+2. 步数合同：步数限制是VM沙箱特性；发布（本地）模式默认不计步，可选在循环回边/调用处检查预算，其数值不承诺与VM相同。
+3. 并发：线程池上的栈式协程（fiber）M:N调度；IO事件循环自建（Windows IOCP、Linux epoll），挂在同一调度器；跨Task一律深拷贝（D6）保证无共享可变状态。
+4. 文档：本轮只记路线；项目概览等状态文档暂不更新（概览中“VM约273ns/步”等数字已过时，待用户决定统一更新时机）。
+
+**VM的定位。** 保留为开发/快速启动、差分对照基准（oracle）、带步数预算的沙箱（compiler执行配置）与嵌入宿主；不再投入VM微优化。
+
+**分阶段路线（按顺序，每阶段独立验收）。**
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| N1 语言覆盖 | 函数值与闭包、回调型内建（alg.map/fold/sorted_by等）、多重绑定、deque/heap/random/文件句柄、本地List上的修改型内建；热点标准库改为带类型实现，避免经桥接整体装箱（`maps.get_or`曾由10.3s降到16ms）；修掉低于1.0×的基准 | 132个基准、全部示例与自举测试集本地编译，输出/诊断/退出码与VM逐字节一致；测试语料中不再出现unsupported |
+| N2 并发与异步 | fiber M:N调度、spawn/await、事件循环与IO | spawn/await语义与VM一致；多核并行实测 |
+| N3 发布与部署 | `hua build --release`单文件exe；附带clang+lld；运行时预编译库；按模块拆编译单元，以模块哈希增量缓存（HUA-D021）；wasmtime按需链接 | hello world构建＜2秒、体积约1MB级；自举编译器增量构建明显短于当前约1分钟 |
+| N4 统一带类型IR | AST→带类型IR→{字节码,C++}（HUA-D009）；逃逸分析消除COW计数、边界检查消除、跨模块内联；VM也获得类型；C++生成器移入selfhost完成G3原生闭环 | IR两路输出与现状逐字节一致；Hua编译器由自身编译为原生程序 |
+| N5 设想能力 | 嵌入C API（VM）、稳定C ABI扩展、WASM（clang wasm32-wasi）、HTTP/JSON/网络、parallel/SIMD、AI/Agent运行时 | 每族独立合同与验收 |
+
+**不做的事。** VM细碎优化；自研机器码后端；直接接LLVM API。
+
+**差分测试纪律。** 本地后端每项新能力都在`tests/native_backend_tests.py`加入与VM逐字节比对的用例；子集外程序必须由`hua native`以退出码2拒绝，不得误编译；`tests/native_selfhost_tests.py`保持自举编译器本地版与VM版产物一致。
+
 <a id="route-reorder-20261108"></a>
 
 #### 路线重排：先做结构体COW（2026-11-08）
