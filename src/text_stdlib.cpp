@@ -3,6 +3,7 @@
 // and lengths are bytes, "width" counts Unicode scalars, whitespace is ASCII (as trim).
 // Each call is one host pass with the result sized once; limits follow std.strings.
 #include "hua/stdlib.hpp"
+#include "hua/detail/text_format.hpp"
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
@@ -51,64 +52,6 @@ std::string grouped(const std::string& number, const std::string& separator, con
     out.append(number, end);
     return out;
 }
-// Appends `value` padded by a placeholder spec "[[fill]align][width]"; false when the spec is malformed.
-bool append_with_spec(std::string& out, const std::string& value, std::string_view spec, const SourceSpan& span) {
-    std::string_view fill = " ";
-    char align = '<';
-    auto is_align = [](char c) { return c == '<' || c == '>' || c == '^'; };
-    if (!spec.empty()) {
-        std::size_t lead = 1;
-        while (lead < spec.size() && continuation(spec[lead])) ++lead;
-        if (lead < spec.size() && is_align(spec[lead])) {
-            fill = spec.substr(0, lead);
-            align = spec[lead];
-            spec.remove_prefix(lead + 1);
-        } else if (is_align(spec[0])) {
-            align = spec[0];
-            spec.remove_prefix(1);
-        }
-    }
-    std::uint64_t width = 0;
-    for (char c : spec) {
-        if (c < '0' || c > '9') return false;
-        width = width * 10 + static_cast<unsigned>(c - '0');
-        if (width > max_text) runtime_error(span, "format text exceeds 16 MiB", "E4099");
-    }
-    const auto have = scalars(value);
-    const auto missing = width > have ? static_cast<std::size_t>(width) - have : 0;
-    if (missing > (max_text - std::min(max_text, out.size() + value.size())) / fill.size()) runtime_error(span, "format text exceeds 16 MiB", "E4099");
-    const auto before = align == '>' ? missing : align == '^' ? missing / 2 : 0;
-    for (std::size_t i = 0; i < before; ++i) out += fill;
-    out += value;
-    for (std::size_t i = before; i < missing; ++i) out += fill;
-    return true;
-}
-// Shared by format and template. `resolve(key)` returns the value or nullptr after setting `problem`.
-template <class Resolve>
-bool expand_placeholders(const std::string& a, std::string& out, std::string& problem, const SourceSpan& s, Resolve resolve) {
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        const char c = a[i];
-        if (c == '}') {
-            if (i + 1 < a.size() && a[i + 1] == '}') { out += '}'; ++i; continue; }
-            problem = "FORMAT_ARGS: unmatched '}'";
-            return false;
-        }
-        if (c != '{') { out += c; continue; }
-        if (i + 1 < a.size() && a[i + 1] == '{') { out += '{'; ++i; continue; }
-        const auto close = a.find('}', i + 1);
-        if (close == std::string::npos) { problem = "FORMAT_ARGS: unclosed '{'"; return false; }
-        const std::string_view body(a.data() + i + 1, close - i - 1);
-        const auto colon = body.find(':');
-        const auto* value = resolve(body.substr(0, colon));
-        if (!value) return false;
-        if (colon == std::string_view::npos) out += *value;
-        else if (!append_with_spec(out, *value, body.substr(colon + 1), s)) { problem = "FORMAT_ARGS: invalid format spec"; return false; }
-        if (out.size() > max_text) runtime_error(s, "format text exceeds 16 MiB", "E4099");
-        i = close;
-    }
-    return true;
-}
-
 // Byte-wise digit value for bases up to 36, or 36 when the byte is not a digit.
 unsigned digit(char c) {
     if (c >= '0' && c <= '9') return static_cast<unsigned>(c - '0');
@@ -388,7 +331,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
             if (index >= items.length) { problem = "FORMAT_ARGS: placeholder index out of range"; return nullptr; }
             return &hua::string_value((*items.storage)[items.start + index].data);
         };
-        if (!expand_placeholders(a, out, problem, s, resolve)) return err(problem);
+        if (!text_format::expand_placeholders(a, out, problem, s, resolve)) return err(problem);
         limit_text(out.size(), s, "format");
         return ok(Value(std::move(out)));
     }
@@ -400,7 +343,7 @@ Value invoke_text_standard(const StandardFunction& f, const std::vector<Value>& 
             if (found == values.data->entries.end()) { problem = "FORMAT_ARGS: missing template key " + std::string(key); return nullptr; }
             return &hua::string_value(found->second.data);
         };
-        if (!expand_placeholders(a, out, problem, s, resolve)) return err(problem);
+        if (!text_format::expand_placeholders(a, out, problem, s, resolve)) return err(problem);
         limit_text(out.size(), s, "template");
         return ok(Value(std::move(out)));
     }

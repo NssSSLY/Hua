@@ -99,3 +99,5 @@ Entry尺寸下降未产生整体收益；两个接入候选撤回默认，保留
 - center奇数差额放右、codepoints与chars都提供、slice_runes越界Err、非法码点Err不替换、utf8_decode失败(-1,0)、HUAB23（用户2026-11-07定稿）
 
 - 用户2026-11-07定稿六组提案全部按推荐，并要求每组提交推送；通用Reader/Writer仍后置
+
+- 复用 ManagedHeap 回收递归类型与闭包可达对象。经证明稳定的局部字段可延迟定位。零长度递归 Slice 共享不可增长的空存储。

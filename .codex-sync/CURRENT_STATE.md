@@ -1,5 +1,13 @@
 # 当前状态
 
+## 当前主线（2026-11-17）：N1 本地后端
+
+perf/vm-register-r1 的基线为 a4eec89。用户已授权实施 N1 性能优先方案。带类型调用和多值降级、标量及部分容器的闭包快照、同步算法回调和热点容器操作均已接入。File 沿用运行时控制块，随机算法由 VM 和本地后端共享。无计步产物通过 132 项标准库与 7 项核心基准的输出对照。 五个慢项的同机复测均快于 VM。 完整自身输入的本地与 VM HUAB 逐字节相同，墙钟 18.51／153.28 秒。
+
+同步路径已有精确数值、固定数组和接口调用保活。N1 本批通过未注解高阶参数、异签名复合值及 mut、函数 Slice 的声明类型检查、绑定接口与索引接收者，以及隐式 File 捕获与 clone 检查的对照。Windows 原生差分 78 项一致，发布矩阵 132 标准库、7 核心与 23 示例通过。现有三个本地性能用例 A/B 变化约 ±1.1%。完整自举留作放行复验。任意未注解值的字段/索引及任意动态接口互转未纳入。见[本轮证据](knowledge/bootstrap-performance/runs/2026-11-17-n1-dynamic-arguments.md)。
+
+短命闭包和同签名间接调用专项已完成。闭包负载 51.512→1.860 ms，堆环境和函数 Slice backing 均降至 0。间接调用 8.394→0.424 ms。真实逃逸保持堆保活。84 项原生差分及发布矩阵通过。见[本轮记录](knowledge/bootstrap-performance/runs/2026-11-17-n1-short-closures-and-calls.md)。
+
 ## 当前主线（2026-11-05收尾）：HUA-D038 P1整数/双曲交付
 
 已按用户确认实现24个math接口：add/sub/mul/neg/abs/pow的checked/wrapping/saturating三族，加6个双曲函数。since22/HUAB22，26模块332函数（math53）；三路径128次进程检查/7074行oracle、119原生边界、21项定向CTest通过。边界加法/双曲组合相对手写约1.50/1.54倍。core纯循环首轮0.89x，独立9轮复核1.00x，未复现；其余约0.98–1.04x，原始数据保留。 [本轮记录](knowledge/bootstrap-performance/runs/2026-11-04-p1-math-arithmetic.md)。上一批6接口与性能记录完整保留，当前不据本批比较关闭其旧source字符串布局差异。文本/UTF-8 8接口已按用户定稿W1–W7完成（2026-11-07，since23/HUAB23，26模块340函数；[记录](knowledge/bootstrap-performance/runs/2026-11-07-p1-text-utf8.md)），已推送d835e57。用户2026-11-07要求的剩余六组（34函数，since24–29）也已完成并逐组推送，27模块374函数；P1只剩通用Reader/Writer；全量CTest 97/108，余11项属HUA-D036/D037已知类（[记录](knowledge/bootstrap-performance/runs/2026-11-07-p1-file-bulk.md)）。L0-4仍待selfhost since9–29同步。2026-11-07全量CTest 91/102、C2逐字节不变（见记录）。

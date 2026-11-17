@@ -1,5 +1,13 @@
 # Hua自举性能项目记忆索引
 
+## 当前主线：N1 本地后端（2026-11-17）
+
+- [本地覆盖实施与验收](runs/2026-11-17-n1-native-coverage.md)
+- [精确数值、固定数组和接口的同步语言覆盖](runs/2026-11-17-n1-sync-language.md)
+- [复杂捕获、函数值和字段及容器写目标](runs/2026-11-17-n1-lifetimes-and-places.md)
+- [高阶参数、动态复合值、绑定方法和 File 捕获](runs/2026-11-17-n1-dynamic-arguments.md)
+- [短命闭包与带类型间接调用](runs/2026-11-17-n1-short-closures-and-calls.md)
+
 ## 当前交付：P1整数/双曲24接口（2026-11-04，11-05收尾）
 
 [实际结果](runs/2026-11-04-p1-math-arithmetic.md)、[机器证据](runs/2026-11-04-p1-math-arithmetic.json)、[已定稿合同](designs/2026-11-04-p1-math-arithmetic-proposal.md)。since22，26模块332函数；21项定向回归与三路径/原生边界通过。边界加法/双曲组合对手写约1.50/1.54倍；纯循环首轮差异一次定向复核未复现，全部结果保留。下一项文本/编码基础提案；下方Set/位工具是上一批交付。
