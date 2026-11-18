@@ -156,6 +156,14 @@ Routine<Value> invoke_resumable(std::string name,std::vector<Value> args,SourceS
             co_await Blocking([c]{file_checkpoint(c);return Value{};});
         co_return result;
     }
+#ifdef _WIN32
+    if(c&&c->in_task&&f&&f->module=="file"&&(f->name=="read"||f->name=="write"||f->since==29)&&file_has_completion(args)){
+        task_checkpoint(c,span);
+        auto result=co_await invoke_completion_file(*f,args,span,c);
+        task_checkpoint(c,span);
+        co_return result;
+    }
+#endif
     // Blocking adapters never call Hua/user code. Their heap remains exclusively owned while parked.
     if(c&&c->in_task&&f&&(f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process")){
         auto heap=c->heap;co_return co_await Blocking([=,&out]{HeapScope scope(*heap);TypeRelations empty;TypeRelationScope relations(c->type_relations?*c->type_relations:empty);task_checkpoint(c,span);file_checkpoint(c);auto result=invoke_builtin(name,args,span,out,contextual,inferred,c);file_checkpoint(c);return result;});

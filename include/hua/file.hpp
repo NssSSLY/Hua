@@ -2,6 +2,7 @@
 #include "hua/resources.hpp"
 #include "hua/stdlib.hpp"
 #include <span>
+#include "hua/routine.hpp"
 namespace hua {
 // Host seam for deterministic failures; not a Hua API or Native ABI.
 struct FileHostFailure {
@@ -47,4 +48,8 @@ void prepare_file_scope(RuntimeContext&,const std::shared_ptr<resources::QuotaLe
 void file_checkpoint(RuntimeContext*);
 void finish_file_scope(RuntimeContext*);
 Value invoke_file_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
+#ifdef _WIN32
+bool file_has_completion(const std::vector<Value>&);
+Routine<Value> invoke_completion_file(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
+#endif
 }

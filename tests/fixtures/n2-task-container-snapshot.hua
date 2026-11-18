@@ -1,0 +1,17 @@
+async fn exchange(input [][]int, labels map[string]string, pair [2]int) [][]int {
+    print("once", unwrap(labels["key"]), pair[0])
+    return input
+}
+fn main() {
+    var input [][]int = [[1,2],[3,4]]
+    var labels = map[string]string{"key":"before"}
+    var pair [2]int = [5,6]
+    let job Task<[][]int> = exchange(input,labels,pair)
+    input[0][0] = 10
+    labels["key"] = "after"
+    pair[0] = 50
+    var first = await job
+    first[0][0] = 99
+    var second = await job
+    print(input[0][0],first[0][0],second[0][0],second[1][1])
+}

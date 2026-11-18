@@ -2,11 +2,12 @@
 import std.alg as alg
 pub fn core(name string) bool { return alg.contains(["print", "str", "int", "float", "len", "clone", "sqrt", "min", "max", "abs", "clamp", "type", "has", "delete", "ok", "err", "is_ok", "is_err", "unwrap", "unwrap_err", "unwrap_or", "is_some", "is_none", "byte", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "usize", "isize", "sizeof", "alignof"],name) }
 pub fn primitive(name string) bool { return alg.contains(["int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Json","Bytes","Buffer","List","Result","Task","map"],name) }
-pub fn module(name string) bool { return alg.contains(["std.alg", "std.buffer", "std.bytes", "std.fs", "std.io", "std.json", "std.list", "std.math", "std.os", "std.path", "std.strings", "std.time"],name) }
+pub fn module(name string) bool { return alg.contains(["std.alg", "std.buffer", "std.bytes", "std.file", "std.fs", "std.io", "std.json", "std.list", "std.math", "std.os", "std.path", "std.strings", "std.task", "std.time"],name) }
 pub fn exports(module string) []string {
     if module == "std.alg" { return ["sorted", "reverse", "contains", "index", "lower_bound", "upper_bound", "binary_search", "sum", "min", "max"] }
     if module == "std.buffer" { return ["new", "len", "append", "write_u8", "write_u32_le", "write_i64_le", "write_text", "bytes", "text", "clear"] }
     if module == "std.bytes" { return ["from_ints", "from_text", "to_text", "to_ints", "len", "at", "slice", "concat", "u32_le", "i64_le", "read_u32_le", "read_i64_le", "crc32"] }
+    if module == "std.file" { return ["File","IOFailure","open","read","write","seek","tell","flush","close","state","close_error","error","transferred","partial","read_line","read_all","read_exact","write_all"] }
     if module == "std.fs" { return ["stat", "rename", "replace", "temp_file", "read_text", "write_text", "append_text", "exists", "canonical", "remove", "mkdir_all", "list_dir", "read_bytes", "write_bytes", "append_bytes"] }
     if module == "std.io" { return ["read_line", "read_all", "write"] }
     if module == "std.json" { return ["decode", "encode", "kind", "get", "at", "len", "keys", "as_string", "as_int", "as_float", "as_bool", "is_null", "Value"] }
@@ -15,8 +16,9 @@ pub fn exports(module string) []string {
     if module == "std.os" { return ["getenv", "args", "cwd"] }
     if module == "std.path" { return ["join", "normalize", "basename", "dirname", "ext", "relative"] }
     if module == "std.strings" { return ["contains", "starts_with", "ends_with", "index", "len_bytes", "rune_count", "trim", "lower_ascii", "upper_ascii", "split", "join", "replace", "slice"] }
+    if module == "std.task" { return ["sleep","yield","worker_id","cancel","done","state","timeout","all","race"] }
     if module == "std.time" { return ["monotonic_ns", "unix_ms"] }
     var empty []string = []
     return empty
 }
-pub fn type_export(module string, name string) bool { return module == "std.json" && name == "Value" }
+pub fn type_export(module string, name string) bool { return (module == "std.json" && name == "Value") || (module == "std.file" && (name == "File" || name == "IOFailure")) }

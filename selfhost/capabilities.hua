@@ -719,10 +719,21 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         if k=="Index" { out.root.record_copy=false }
         if k=="Index" && len(rules.arguments(base.root.type_name,"map"))==2 { out.root.type_name=typ+"?" }
         return ok(out) }
+    if k=="Unary" && text=="spawn" {
+        let operand=expression(s,e,n.children[0])?
+        let type=operand.root.type_name
+        if strings.starts_with(type,"Task<") { return ok(value(type,false)) }
+        return ok(value("Task<"+type+">",false))
+    }
     if k=="Unary" && text=="await" {
         let operand=expression(s,e,n.children[0])?
         let task=rules.arguments(operand.root.type_name,"Task")
-        if len(task)==1 { return ok(value(task[0],false)) }
+        if len(task)==1 {
+            if !rules.shared(task[0]) { return ok(value(task[0],true)) }
+            var result=seeded(s,task[0],true,e.function+"!"+key(e.unit.id,n.id.index))
+            result.root.deep_owned=true
+            return ok(result)
+        }
         return ok(value("",false))
     }
     if k=="Propagate" { var out=expression(s,e,n.children[0])?
@@ -771,6 +782,16 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
                 else { out.root.type_name=rules.optional(out.root.type_name) }
                 if name=="builtin:core:unwrap_or" && len(args)==2 { out=merge(out,args[1]) } }
             return ok(out) }
+        if name=="builtin:core:task_group_begin" { return ok(value("int",false)) }
+        if name=="builtin:core:task_group_end" { return ok(value("void",false)) }
+        if len(args)>0 && alg.contains(["builtin:std.task#all","builtin:std.task#race","builtin:std.task#timeout"],name) {
+            let type=args[0].root.type_name
+            let task=rules.arguments(type,"Task")
+            if len(task)!=1 { return ok(value("",false)) }
+            if name=="builtin:std.task#all" { return ok(value("Task<[]"+task[0]+">",false)) }
+            if name=="builtin:std.task#timeout" { return ok(seeded(s,"Result<"+task[0]+",string>",true,e.function+"!"+key(e.unit.id,n.id.index))) }
+            return ok(value(type,false))
+        }
         let std=signatures.signature(name)
         if is_some(std) { let sig=unwrap(std)
             if sig.mutates && len(args)>0 { require_write(s,e,n,args[0].root)? }

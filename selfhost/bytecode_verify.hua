@@ -37,13 +37,13 @@ fn intrinsic(text string) bool {
         let parts = strings.split(rules.cut(n,5,len(n)),"$")
         return len(parts)==2 && is_some(signatures.signature("builtin:std."+parts[0]+"#"+parts[1]))
     }
-    return n=="task_start" || n=="task_await" || catalog.core(n)
+    return n=="task_start" || n=="task_await" || n=="task_group_begin" || n=="task_group_end" || catalog.core(n)
 }
 fn valid_type(c Catalog, t string, depth int) bool {
     if depth>64 || !small(t,true) { return false }
     # 空类型是多数指令的合法默认字段，避免逐条分配原始类型名单。
     if t=="" { return true }
-    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json"],t) || has(c.structures,t) { return true }
+    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json","std.file.File","std.file.IOFailure","std.error.Value"],t) || has(c.structures,t) { return true }
     if strings.starts_with(t,"fn:") { return has(c.functions,rules.cut(t,3,len(t))) }
     if strings.starts_with(t,"builtin:") { return intrinsic(rules.cut(t,8,len(t))) }
     if strings.starts_with(t,"struct:") { return has(c.structures,rules.cut(t,7,len(t))) }

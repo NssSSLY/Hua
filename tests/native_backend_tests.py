@@ -960,26 +960,126 @@ async fn worker(zero int) int { task.sleep(1)
 fn wait_inside(child Task<int>) int { return await child }
 fn main() { print(wait_inside(worker(0))) }
 ''')
-reject('native_task_container', '''fn work(items []int) int { return len(items) }
+case('native_task_container_snapshot', (pathlib.Path(__file__).parent / 'fixtures/n2-task-container-snapshot.hua').read_text(encoding='utf-8'))
+case('native_task_container_results', (pathlib.Path(__file__).parent / 'fixtures/n2-task-container-results.hua').read_text(encoding='utf-8'))
+case('native_task_list_and_map_results', '''import std.list as list
+fn work(items List<string>) map[string][]bool {
+    print(unwrap(list.get(items,0)))
+    return map[string][]bool{"value":[true,false]}
+}
 fn main() {
-    let t = spawn work([1, 2])
-    print(await t)
+    var items = list.from_slice(["before"+"!"])
+    let job = spawn work(items)
+    unwrap(list.set(items,0,"after"))
+    var first = await job
+    first["value"] = [false,false]
+    let second = await job
+    print(unwrap(first["value"])[0],unwrap(second["value"])[0])
 }
 ''')
-reject('native_task_global', '''let value = 42
-async fn work() int { return value }
-fn main() { print(await work()) }
+reject('native_task_buffer_payload', '''import std.buffer as buffer
+fn work(items []Buffer) int { return len(items) }
+fn main() {
+    let job = spawn work([buffer.new()])
+    print(await job)
+}
 ''')
-reject('native_task_defer', '''fn done() { print("done") }
+case('native_task_globals_and_closure', '''import std.task as task
+var setting = [5,6]
+fn observe() int { return setting[0] }
+fn main() {
+    var local = [11,12]
+    fn child() int {
+        task.sleep(2)
+        return local[0] + observe()
+    }
+    local[0] = 15
+    let job = spawn child()
+    local[0] = 99
+    setting[0] = 90
+    print(await job, local[0], setting[0])
+}
+''')
+case('native_task_defer_group_timeout', '''import std.task as task
+fn done(value int) {
+    task.sleep(1)
+    print("cleanup",value)
+}
+async fn work(delay int) int {
+    defer done(delay)
+    task.sleep(delay)
+    print("body",delay)
+    return delay
+}
+fn main() {
+    taskgroup {
+        let timed = work(200)
+        let quick = work(1)
+        print(await quick)
+        print(is_err(task.timeout(timed,0)),task.done(timed),task.state(timed))
+    }
+    print("outside")
+}
+''')
+case('native_task_control', (pathlib.Path(__file__).parent / 'fixtures/n2-task-control.hua').read_text(encoding='utf-8'))
+case('native_task_defer_factory', """
+import std.task as task
+fn make(label string) {
+    fn finish() int {
+        task.yield()
+        print(label)
+        return len(label)
+    }
+    return finish
+}
 async fn work() {
-    defer done()
+    let finish=make("kept through deferred yield")
+    defer finish()
 }
 fn main() { await work() }
+""")
+case('native_task_defer_failure', '''import std.task as task
+fn cleanup(name string) {
+    task.yield()
+    print(name)
+}
+async fn work(zero int) int {
+    defer cleanup("outer")
+    if zero == 0 {
+        defer cleanup("inner")
+        return 3 // zero
+    }
+    return 7
+}
+fn main() { print(await work(0)) }
 ''')
-reject('native_task_blocking', '''import std.file as file
+case('native_task_cancel_and_combinators', '''import std.task as task
+async fn work(n int, ms int) int {
+    task.sleep(ms)
+    return n
+}
+fn main() {
+    let canceled = work(20,500)
+    print(task.cancel(canceled))
+    print(is_err(task.timeout(canceled,100)),task.state(canceled))
+    let first = work(5,2)
+    let second = work(9,1)
+    print(await task.all(first,second))
+    let slow = work(0,500)
+    let fast = work(42,1)
+    print(await task.race(slow,fast),task.state(slow))
+}
+''')
+case('native_task_void_race', '''import std.task as task
+async fn done(delay int) { task.sleep(delay) }
+fn main() {
+    await task.race(done(1),done(200))
+    print("joined")
+}
+''')
+case('native_task_file_missing', '''import std.file as file
 async fn work() {
-    let handle = file.open("must-not-create", "w")
-    print(handle)
+    print(is_err(file.open("missing-n2-directory/missing-file", "r")))
 }
 fn main() { await work() }
 ''')

@@ -154,11 +154,11 @@
         "match/variant payload bindings",
         "multi-return/binding/assignment",
         "defer call and Result propagation",
-        "top-level async fn and pub async fn, function-scope await, Task<T> syntax"
+        "top-level async fn and pub async fn, function-scope spawn, await and taskgroup, Task<T> syntax"
       ],
       "excluded": [
         "interface/user generics/method/nested declarations",
-        "spawn/taskgroup/parallel/SIMD/unsafe/attributes/ptr/ref",
+        "parallel/SIMD/unsafe/attributes/ptr/ref",
         "catch/structured Error/external modules"
       ],
       "semantic_checks": false
@@ -180,6 +180,7 @@
       "std.alg",
       "std.buffer",
       "std.bytes",
+      "std.file",
       "std.fs",
       "std.io",
       "std.json",
@@ -188,6 +189,7 @@
       "std.os",
       "std.path",
       "std.strings",
+      "std.task",
       "std.time"
     ],
     "resolve": "root-relative dotted imports; .hua before package.hua; root physical path resolved by development runner; all dependency symlink components rejected (no SB1 canonical API)",
@@ -237,17 +239,17 @@
       "unannotated value-returning functions",
       "incomplete inferred binding types",
       "interfaces/methods/user generics/unsafe/FFI",
-      "async entry and non-scalar async arguments or results",
+      "async entry and async arguments or results outside the Task data profile",
       "non-decimal or out-of-signed64 integer match patterns"
     ],
-    "scalar_async": "Top-level functions only. Input arguments are readonly numeric, bool or string. Result adds void. A call yields Task<T>, and await yields T.",
+    "task_data": "Top-level async functions only. Readonly inputs and results may contain numeric, bool or string leaves, slices, fixed arrays, List and map, with at most 64 nested containers. Results also allow void. A call yields Task<T>, and await yields T.",
     "artifact": "typed facts consumed by C05-L1 / C06-BC1 / C07-HUAB1",
     "array_extent": "Source grammar: 0 or [1-9][0-9]* only; no leading zeroes, separators or base prefixes. Legacy valid HUAB metadata is reader-only compatibility; extent 0..1000000.",
     "void_contexts": {
       "permitted": [
         "single no-value function return",
         "Result success type",
-        "Task success type for scalar async"
+        "Task success type"
       ],
       "rejected": [
         "ordinary binding",
@@ -409,6 +411,22 @@
       "builtin:std.bytes#to_ints",
       "builtin:std.bytes#to_text",
       "builtin:std.bytes#u32_le",
+      "builtin:std.file#open",
+      "builtin:std.file#read",
+      "builtin:std.file#write",
+      "builtin:std.file#seek",
+      "builtin:std.file#tell",
+      "builtin:std.file#flush",
+      "builtin:std.file#close",
+      "builtin:std.file#state",
+      "builtin:std.file#close_error",
+      "builtin:std.file#error",
+      "builtin:std.file#transferred",
+      "builtin:std.file#partial",
+      "builtin:std.file#read_line",
+      "builtin:std.file#read_all",
+      "builtin:std.file#read_exact",
+      "builtin:std.file#write_all",
       "builtin:std.fs#append_bytes",
       "builtin:std.fs#append_text",
       "builtin:std.fs#exists",
@@ -482,6 +500,15 @@
       "builtin:std.strings#starts_with",
       "builtin:std.strings#trim",
       "builtin:std.strings#upper_ascii",
+      "builtin:std.task#sleep",
+      "builtin:std.task#yield",
+      "builtin:std.task#worker_id",
+      "builtin:std.task#cancel",
+      "builtin:std.task#done",
+      "builtin:std.task#state",
+      "builtin:std.task#timeout",
+      "builtin:std.task#all",
+      "builtin:std.task#race",
       "builtin:std.time#monotonic_ns",
       "builtin:std.time#unix_ms"
     ],

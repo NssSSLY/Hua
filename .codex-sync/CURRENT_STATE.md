@@ -1,5 +1,13 @@
 # 当前状态
 
+## 2026-11-18 Windows N2 多 worker 与 IOCP
+
+已接入已知声明的原生闭包、模块快照、挂起清理和公开 Task 控制。Hua 前端已验顶层 spawn、taskgroup、std.task 和 std.file。1／2／4 原生 worker 用时 95.24／54.60／37.80 ms。128 MiB 文件下阻塞池／IOCP 为 31.35／25.88 ms。最终 C2／C3 逐字节相同，huaBin 已更新。N2.3 仍待 Hua 自举嵌套闭包与更广的原生 Task 数据类型。[证据](knowledge/bootstrap-performance/runs/2026-11-18-n2-windows-workers-iocp.md)
+
+## 2026-11-18 本机 SDK 移植与 N2.3 容器快照
+
+本机已重建并核对 huaBin，仓库外 SDK 及基线 C2/C3 通过。N2.3 的 Slice、定长数组、List 和 Map 参数与结果已通过三路径对照。新版 C2/C3 分别为 192.275／180.494 秒，产物逐字节相同。95 项原生差分、15 项拒绝和 5 项定向 CTest 通过，完整前端扩展语料在 300 秒上限停止。下一切片为闭包和模块环境快照。[记录](knowledge/bootstrap-performance/runs/2026-11-18-n2-container-tasks.md)
+
 2026-11-18 用户确认现阶段以 Hua 自身扩展语法、标准库和产物生成能力为主，逐步收缩 C++ 实现职责。Windows huaBin 已按可搬移 SDK 交付，仓库外样例、缺依赖和 C2/C3 验收通过。[证据](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)实现、测量与 N2/N3/N4 的次序见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。标量 async/await 已通过旧种子重建及两代验收。P0 已完成源码标准模块接入与完整阶段归因。C04 是后续性能工作的首要热点。[验收](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
 
 ## 2026-11-18 N2.1–N2.2 Windows 原生 Task

@@ -116,6 +116,9 @@ struct Emitter {
         no(n,"missing static type for "+std::string(node_name(n.kind))+" "+n.text);
     }
     std::map<std::string,Signature> indirect_signatures;
+    std::map<std::string,const Node*> task_closures;
+    std::set<std::string> snapshot_closures;
+    std::ostringstream closure_snapshots;
     std::map<std::string,std::set<std::string>> indirect_candidates;
     std::set<std::string> indirect_identities;
     std::unordered_map<const Node*,bool> self_borrow_cache;
@@ -246,12 +249,28 @@ struct Emitter {
     }
     // The C++ type of a Hua type.
     bool uses_tasks{};
-    const Node* deferred_in_task_program{};
     const Node* blocking_in_task_program{};
 
     bool task_scalar(const std::string& type) {
         return type == "int" || type == "float" || type == "bool" || type == "string" ||
                (hua::numeric_spec(type) && type != "@integer");
+    }
+
+    bool task_payload(const std::string& type, unsigned depth = 0) {
+        if (depth > 64) return false;
+        if (task_scalar(type)) return true;
+        if (is_sequence(type)) return task_payload(element_type(type), depth + 1);
+        if (type.starts_with("List<")) {
+            const auto parts = type_arguments(type, "List");
+            return parts.size() == 1 && task_payload(parts[0], depth + 1);
+        }
+        if (is_map(type)) {
+            const auto parts = map_parts(type);
+            return parts.size() == 2 &&
+                   (parts[0] == "int" || parts[0] == "bool" || parts[0] == "string") &&
+                   task_payload(parts[1], depth + 1);
+        }
+        return false;
     }
 
     void enable_tasks([[maybe_unused]] const Node& at) {
@@ -285,7 +304,7 @@ struct Emitter {
         }
         if(t.starts_with("Task<")){
             const auto types = type_arguments(t, "Task");
-            if (types.size() != 1 || (types[0] != "void" && !task_scalar(types[0])))
+            if (types.size() != 1 || (types[0] != "void" && !task_payload(types[0])))
                 no(at, "native Task result type " + t);
             enable_tasks(at);
             return "hn::TaskHandle";
@@ -372,7 +391,9 @@ struct Emitter {
             ||name=="$std$list$retain"||name=="$std$list$sort_by"||name=="$std$list$sort_by_key"
             ||name=="$std$maps$update"||name=="$std$heap$push_by_key"||name=="$std$heap$pop_by_key";
     }
+    std::set<const Node*> deferred_calls;
     void classify_closure_uses(const Node& n,const Node* parent,const Node* owner){
+        if(n.kind==N::Defer)deferred_calls.insert(n.children[0].get());
         if(n.kind==N::Function)owner=&n;
         if(n.kind==N::Name&&parent){
             const auto type=m.types.find(&n);
@@ -385,7 +406,7 @@ struct Emitter {
                     const bool immediate=callee!=m.types.end()&&callee->second.starts_with("builtin:")&&has_typed_callback(callee->second.substr(8));
                     const auto declaring_owner=closure_owners.find(declaration->second);
                     const bool same_frame=declaration->second==owner||(declaring_owner!=closure_owners.end()&&declaring_owner->second==owner);
-                    if(!same_frame||(!direct&&!immediate))escaping_functions.insert(name);
+                    if(!same_frame||(!direct&&!immediate)||deferred_calls.contains(parent))escaping_functions.insert(name);
                 }
             }
         }
@@ -419,7 +440,7 @@ struct Emitter {
     }
 
     struct StackClosurePlan {
-        bool array{};
+        bool array{}, deferred{};
         std::vector<std::pair<const Node*,const Node*>> calls; // call, factory declaration
     };
     std::unordered_map<const Node*,const Node*> eligible_factories;
@@ -518,7 +539,10 @@ struct Emitter {
                             value=consumer;
                             consumer=use.grandparent;
                         }
-                        if(direct_call(consumer,value))continue;
+                        if(direct_call(consumer,value)){
+                            plan.deferred|=deferred_calls.contains(consumer);
+                            continue;
+                        }
                         if(block_binding(consumer,value))aliases.emplace_back(consumer->text,false);
                         else {local=false;break;}
                     }
@@ -1062,9 +1086,24 @@ struct Emitter {
     std::string field_access(const std::string& base,const std::string& type,const std::string& field){
         return base+(located_records.contains(type)?".fields.get().":".")+mangle("f_",field);
     }
+    bool global_slot(const Node& n,const Local* local){
+        const auto global=globals.find(n.text);
+        return global!=globals.end()&&local==&global->second;
+    }
+    std::string global_value(const Node& n,const Local& local){
+        return "hn::module_value<NATIVE_TASKS>("+local.cpp+","+span(n.span)+","+quoted(n.text)+".c_str())";
+    }
     // An assignable C++ lvalue for an assignment target or a `mut` argument.
     std::string lvalue(const Node& n){
-        if(n.kind==N::Name){auto l=find(n.text,n);if(!l)no(n,"assignment to a non-local name `"+n.text+"` line "+std::to_string(n.span.line));return l->cpp;}
+        if(n.kind==N::Name){
+            const auto* local=find(n.text,n);
+            if(!local)no(n,"assignment to an unknown binding "+n.text);
+            if(global_slot(n,local)){
+                const auto target=global_value(n,*local);
+                return "({auto& slot="+target+";if constexpr(NATIVE_TASKS)hn::check_global_write("+span(n.span)+");&slot;})[0]";
+            }
+            return local->cpp;
+        }
         if(n.kind==N::Member){if(!is_struct(ty(*n.children[0])))no(n,"field of a non-struct");return field_access(lvalue(*n.children[0]),ty(*n.children[0]),n.text);}
         if(n.kind==N::Index&&ty(*n.children[0]).starts_with("[]"))return "hn::slot("+lvalue(*n.children[0])+","+expr(*n.children[1])+","+span(n.span)+")";
         no(n,"assignment target "+std::string(node_name(n.kind))+" of `"+(n.children.empty()?std::string():ty(*n.children[0]))+"` line "+std::to_string(n.span.line));
@@ -1104,8 +1143,9 @@ struct Emitter {
         switch(n.kind){
         case N::Name:{
             if(auto l=find(n.text,n)){
-                if(l->type.ends_with('?')&&ty(n)==l->type.substr(0,l->type.size()-1))return "(*"+l->cpp+")";
-                return l->cpp;
+                const auto value=global_slot(n,l)?global_value(n,*l):l->cpp;
+                if(l->type.ends_with('?')&&ty(n)==l->type.substr(0,l->type.size()-1))return "(*"+value+")";
+                return value;
             }
             if(auto c=constants.find(n.text);c!=constants.end())return value_literal(m.constants.at(c->second),n);
             const auto& type=ty(n);
@@ -1315,22 +1355,36 @@ struct Emitter {
         enable_tasks(call_node);
         const auto& target = *call_node.children[1];
         const auto& type = ty(target);
-        if (!type.starts_with("fn:") || target.kind != N::Name || find(target.text, target))
-            no(target, "native Task requires a direct function name");
+        if (!type.starts_with("fn:") || target.kind != N::Name)
+            no(target, "native Task requires a known function declaration");
         const auto* function = m.functions.at(type.substr(3));
         const auto sig = signature(*function);
-        if (m.nested.contains(function) || !sig.self.empty() || sig.any_mut)
-            no(target, "native Task requires a top-level function with readonly scalar parameters");
+        const bool nested = m.nested.contains(function);
+        if (!sig.self.empty() || sig.any_mut)
+            no(target, "native Task requires a function with readonly parameters");
         const bool returns_task = sig.result.starts_with("Task<");
-        if ((!sig.result.empty() && !returns_task && !task_scalar(sig.result)) ||
-            !std::all_of(sig.types.begin(), sig.types.end(), [&](const auto& type) { return task_scalar(type); }))
-            no(target, "native Task boundary requires scalar parameters and result");
+        if ((!sig.result.empty() && !returns_task && !task_payload(sig.result)) ||
+            !std::all_of(sig.types.begin(), sig.types.end(), [&](const auto& type) { return task_payload(type); }))
+            no(target, "native Task boundary requires scalar or supported container parameters and result");
         if (given) no(call_node, "deferred Task creation");
-        need(function);
+        if(!nested)need(function);
         std::string code = "({";
         std::string bindings;
         std::string captures;
         std::string args;
+        if(nested){
+            const auto callee=fresh("task_callee");
+            code+="auto "+callee+"="+expr(target)+";";
+            if(returns_task)args=callee;
+            else{
+                task_closures.try_emplace(sig.name,&target);
+                const auto saved=fresh("task_closure");
+                captures=saved+"="+mangle("snapshot_task_",sig.name)+"("+callee+")";
+                args=saved;
+            }
+        }else if(find(target.text,target)) {
+            code+="(void)("+expr(target)+");";
+        }
         for (std::size_t i = 0; i < sig.types.size(); ++i) {
             const auto& input = *call_node.children[i+2];
             const auto& parameter = sig.types[i];
@@ -1339,10 +1393,14 @@ struct Emitter {
             const auto saved = fresh("task_value");
             code += "auto " + raw + "=" + expr(input) + ";";
             bindings += "auto " + native + "=" + coerce(raw, ty(input), parameter, input, true) + ";";
-            if (i) { captures += ","; args += ","; }
+            if (!captures.empty()) captures += ",";
+            if (!args.empty()) args += ",";
             if (!returns_task && parameter == "string") {
                 captures += saved + "=" + native + ".text()";
                 args += "hn::Str(std::move(" + saved + "))";
+            } else if (!returns_task && !task_scalar(parameter)) {
+                captures += saved + "=hn::task_input(" + native + ")";
+                args += "std::move(" + saved + ")";
             } else {
                 captures += saved + "=" + native;
                 args += returns_task ? native : saved;
@@ -1355,8 +1413,13 @@ struct Emitter {
             return code + "auto " + depth + "=hn::enter<NATIVE_COUNT_STEPS, NATIVE_TASKS>(" + site +
                    ");auto task=" + invoke + ";hn::leave<NATIVE_TASKS>(" + depth + ");task;})";
         }
-        const auto body = sig.result.empty() ? invoke + ";return hn::Value{};" :
-                                                "return hn::to_value(" + invoke + ");";
+        std::string body;
+        if(!module_bindings.empty()){
+            if(!captures.empty())captures+=",";
+            captures+="native_task_module=native_snapshot_module()";
+            body="hn::TaskModuleScope native_task_scope(&native_task_module);";
+        }
+        body+=sig.result.empty()?invoke+";return hn::Value{};":"return hn::to_value("+invoke+");";
         return code + "hn::start_task([" + captures + "]() mutable {" + body + "}," +
                quoted(sig.result.empty() ? "void" : sig.result) + ".c_str()," + site + ");})";
     }
@@ -1484,7 +1547,7 @@ struct Emitter {
             s+=indirect?bindings+enter:enter+bindings;
             if(auto slot=stack_call_slots.find(&n);slot!=stack_call_slots.end()){
                 if(!list.empty())list+=",";
-                list+="&"+slot->second;
+                list+=slot->second;
             }
             const auto invoked=indirect?indirect_call(kind,sig,target,list,n):
                 mangle("hf_",sig.name)+"("+list+(is_interface(sig.self)?","+span(n.span):"")+")";
@@ -1502,17 +1565,31 @@ struct Emitter {
             if (type.empty() || type == "void") return "(" + awaited + ",hn::Unit{})";
             return "hn::from_value<" + ct(type, n) + ">(" + awaited + ")";
         }
-        if (name == "$std$task$sleep" || name == "$std$task$yield") {
+        if (name == "task_group_begin") {
             enable_tasks(n);
-            const auto values = count ? "hn::to_value(" + a(0) + ")" : "";
-            return "(hn::task_wait(" + quoted(name) + ".c_str(),{" + values + "}," + s + "),hn::Unit{})";
+            return "hn::task_group_begin()";
         }
-        if (name.starts_with("$std$task$") && name != "$std$task$worker_id")
-            no(n, "native Task builtin " + name);
-        if (name.starts_with("$std$file$") || name.starts_with("$std$fs$") ||
-            name.starts_with("$std$io$") || name.starts_with("$std$process$") ||
-            name == "$std$os$exit")
-            blocking_in_task_program = &n;
+        if (name == "task_group_end" || name == "$std$task$timeout" ||
+            name == "$std$task$sleep" || name == "$std$task$yield" ||
+            name == "$std$task$cancel" || name == "$std$task$done" || name == "$std$task$state" ||
+            name == "$std$task$all" || name == "$std$task$race") {
+            enable_tasks(n);
+            std::string values;
+            for(std::size_t i=0;i<count;++i){
+                if(i)values+=",";
+                values+="hn::to_value("+a(i)+")";
+            }
+            const bool resumable=name=="task_group_end"||name=="$std$task$timeout"||
+                name=="$std$task$sleep"||name=="$std$task$yield";
+            const auto call=resumable
+                ?"hn::task_wait("+quoted(name)+".c_str(),{"+values+"},"+s+")"
+                :"hn::call_builtin("+quoted(name)+".c_str(),"+s+",{"+values+"},{},\"\")";
+            const auto& type=ty(n);
+            if(type.empty()||type=="void")return "("+call+",hn::Unit{})";
+            if(type.starts_with("Task<"))return "hn::TaskHandle{"+call+"}";
+            return "hn::from_value<"+ct(type,n)+">("+call+")";
+        }
+        if (name == "$std$os$exit") blocking_in_task_program = &n;
         static const std::set<std::string> needs_static_argument{
             "delete","is_ok","is_err","is_some","is_none","unwrap","unwrap_err","unwrap_or"};
         if(count&&needs_static_argument.contains(name)&&ty(arg(0))=="@dynamic")
@@ -1718,8 +1795,8 @@ struct Emitter {
     }
     // Defer: arguments evaluated now (into the guard), the call run at block exit.
     const std::vector<std::string>* given{};
+    std::string block_defers;
     void defer(const Node& n){
-        deferred_in_task_program = &n;
         const auto& c=*n.children[0];if(c.kind!=N::Call)no(n,"defer of a non-call");
         const auto& callee=*c.children[0];if(callee.kind!=N::Name)no(n,"deferred method or expression call");
         std::vector<std::string> args;std::string capture,callee_snapshot;
@@ -1749,10 +1826,27 @@ struct Emitter {
         const auto text=call(c,true);
         deferred_callee=nullptr;
         given=nullptr;
-        auto g=fresh("defer");line("hn::Deferred "+g+"([= "+(capture.empty()?"":","+capture)+"]()mutable{(void)"+text+";});");
+        const auto g=fresh("defer");
+        const auto callback="[= "+(capture.empty()?"":","+capture)+"]()mutable{(void)"+text+";}";
+        if(block_defers.empty())line("hn::Deferred "+g+"("+callback+");");
+        else line("[[maybe_unused]] auto "+g+"="+block_defers+".add("+callback+");");
     }
     void line(const std::string& text){body<<text<<'\n';}
-    void block(const Node& n){scopes.emplace_back();line("{");for(const auto& c:n.children)statement(*c);line("}");scopes.pop_back();}
+    void block_contents(const Node& n){
+        const bool needs_defers=std::any_of(n.children.begin(),n.children.end(),
+            [](const auto& child){return child->kind==N::Defer;});
+        const auto previous=std::exchange(block_defers,needs_defers?fresh("defers"):std::string{});
+        std::string error;
+        if(needs_defers){
+            error=fresh("unwinding");
+            line("hn::Defers<NATIVE_TASKS> "+block_defers+";std::exception_ptr "+error+";try{");
+        }
+        for(const auto& child:n.children)statement(*child);
+        if(needs_defers)
+            line("}catch(...){"+error+"=std::current_exception();}"+block_defers+".drain("+error+");");
+        block_defers=previous;
+    }
+    void block(const Node& n){scopes.emplace_back();line("{");block_contents(n);line("}");scopes.pop_back();}
     void declare(const std::string& name,const std::string& type,const std::string& init,const Node& at){
         if(scopes.back().contains(name))no(at,"redeclaration");
         auto cpp=fresh(name);line(ct(type,at)+" "+cpp+"="+init+";");scopes.back()[name]=Local{cpp,type};
@@ -1776,7 +1870,7 @@ struct Emitter {
                     const auto slot=fresh("closure_slot");
                     const auto& closure=*enabled_factories.at(fn);
                     line("std::optional<hn::"+mangle("FE_",declared_name(closure))+"> "+slot+";");
-                    stack_call_slots.emplace(call,slot);
+                    stack_call_slots.emplace(call,plan->second.deferred?"(NATIVE_TASKS?nullptr:&"+slot+")":"&"+slot);
                 }
                 if(plan->second.array){
                     const auto local=fresh(n.text);
@@ -2112,7 +2206,7 @@ struct Emitter {
                 if(count==2){auto v=fresh(n.children[1]->text);line("const "+ct(parts[1],n)+" "+v+"="+kv+".second;");scopes.back()[n.children[1]->text]=Local{v,parts[1]};}
             }else no(n,"loop over `"+t+"`");
         }
-        for(const auto& c:code.children)statement(*c);
+        block_contents(code);
         line("}}");scopes.pop_back();
     }
     void nested_function(const Node& fn){
@@ -2166,6 +2260,22 @@ struct Emitter {
         scopes=std::move(outer);
         closure_frame=frame.parent;
 
+        bool transferable=true;
+        std::string snapshot;
+        for(const auto& [_,capture]:frame.fields){
+            if(!task_payload(capture.source.type)){transferable=false;break;}
+            if(!snapshot.empty())snapshot+=",";
+            snapshot+="hn::task_input(v."+capture.field+")";
+        }
+        if(transferable){
+            snapshot_closures.insert(name);
+            closure_snapshots<<"static "<<signature_type<<" "<<mangle("snapshot_task_",name)
+                <<"(const "<<signature_type<<"& source){\n";
+            if(snapshot.empty())closure_snapshots<<"    return source;\n";
+            else closure_snapshots<<"    const auto& v=*static_cast<const "<<env<<"*>(source.data);\n"
+                <<"    return hn::make_function<"<<signature_type<<">("<<env<<"{"<<snapshot<<"});\n";
+            closure_snapshots<<"}\n";
+        }
         std::string init=signature_type+"{}";
         closure_code<<head<<"{\n";
         if(!frame.fields.empty()){
@@ -2433,16 +2543,20 @@ struct Emitter {
         plan_locations(tree);
         const auto struct_code=structs();
         // The module body executes in source order, before an optional entry function.
-        std::string global_declarations;
+        std::string global_declarations,global_initializers;
         scopes.clear();scopes.emplace_back();result_type.clear();
         for(const auto& c:tree.children){
             if(c->kind==N::Function||c->kind==N::Struct||c->kind==N::Const||c->kind==N::Import)continue;
             try{
                 if(c->kind==N::Let||c->kind==N::Var){
                     const auto& t=ty(*c);const auto cpp=mangle("g_",c->text);const auto& init=*c->children.back();
-                    line(cpp+"="+binding_value(*c,t,coerce(expr(init),ty(init),t,*c))+";");
-                    global_declarations+="static "+ct(t,*c)+" "+cpp+"{};\n";
-                    globals[c->text]=Local{cpp,t};
+                    const auto slot="native_module()."+cpp;
+                    line(slot+"="+binding_value(*c,t,coerce(expr(init),ty(init),t,*c))+";");
+                    const auto type=ct(t,*c);
+                    global_declarations+="    std::conditional_t<NATIVE_TASKS,std::optional<"+type+">,"+type+"> "+cpp+"{};\n";
+                    if(!global_initializers.empty())global_initializers+=",";
+                    global_initializers+="hn::task_module_input("+slot+")";
+                    globals[c->text]=Local{slot,t};
                 }else statement(*c);
             }catch(const NativeUnsupported& u){if(!survey)throw;++missing["global: "+u.what];}
         }
@@ -2458,11 +2572,13 @@ struct Emitter {
         }
         while(!queue.empty()){auto fn=queue.front();queue.pop_front();function(*fn);}
         if (uses_tasks) {
-            if (deferred_in_task_program) no(*deferred_in_task_program, "defer in a native Task program");
             if (blocking_in_task_program) no(*blocking_in_task_program, "blocking builtin in a native Task program");
             for (const auto& child : tree.children)
-                if (child->kind == N::Let || child->kind == N::Var)
-                    no(*child, "module runtime bindings in a native Task program");
+                if ((child->kind == N::Let || child->kind == N::Var) && !task_payload(ty(*child)))
+                    no(*child, "module binding is outside the native Task snapshot data profile");
+            for(const auto& [name,site]:task_closures)
+                if(!snapshot_closures.contains(name))
+                    no(*site,"closure captures are outside the native Task snapshot data profile");
         }
         const auto main_site=span(main!=m.functions.end()?main->second->span:tree.span);
         std::ostringstream o;
@@ -2482,8 +2598,21 @@ struct Emitter {
             for(unsigned char c:"fn:"+name)o<<"static_cast<char>("<<static_cast<unsigned>(c)<<"),";
             o<<"0};\n";
         }
-        o<<interface_layouts()<<struct_code<<global_declarations<<closure_layouts.str()<<protos.str()<<closure_code.str()<<body.str();
-        o<<"static Value entry(){\n"<<global_init;
+        o<<interface_layouts()<<struct_code;
+        if(!global_declarations.empty()){
+            o<<"struct NativeModule{\n"<<global_declarations<<"};\n";
+            o<<"static NativeModule& native_module(){\n";
+            if(uses_tasks)o<<"    return *static_cast<NativeModule*>(hn::current_state().module_data);\n";
+            else o<<"    static NativeModule module;return module;\n";
+            o<<"}\n";
+            if(uses_tasks)o<<"static NativeModule native_snapshot_module(){return NativeModule{"<<global_initializers<<"};}\n";
+        }
+        o<<closure_layouts.str();
+        if(!task_closures.empty())o<<closure_snapshots.str();
+        o<<protos.str()<<closure_code.str()<<body.str();
+        o<<"static Value entry(){\n";
+        if(uses_tasks&&!global_declarations.empty())o<<"    NativeModule module;hn::TaskModuleScope scope(&module);\n";
+        o<<global_init;
         if(main==m.functions.end())o<<"    return Value{};\n";
         else if(main_sig.result.empty())o<<"    hf_main();return Value{};\n";
         else if(main_sig.result.starts_with("Task<"))o<<"    return await_task(hf_main(),"<<main_site<<");\n";

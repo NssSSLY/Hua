@@ -31,7 +31,6 @@ struct Blocking {
 };
 Value sync_wait(Routine<Value>,RuntimeContext&);
 void sync_wait(Routine<void>,RuntimeContext&);
-void use_single_task_worker();
 unsigned task_worker_count();
 void notify_task_scheduler()noexcept;
 }

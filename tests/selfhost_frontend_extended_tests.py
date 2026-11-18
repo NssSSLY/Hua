@@ -14,10 +14,10 @@ def invoke(args,code=0):
 closure=work/'persisted';closure.mkdir(exist_ok=True)
 for p in (repo/'selfhost').glob('*.hua'):shutil.copy2(p,closure/p.name)
 artifacts={}
-for profile,entry in [('C02-P2','parser_extended_main.hua'),('C03-N1','modules_main.hua')]:
+for profile,entry,format_version in [('C02-P2','parser_extended_main.hua',7),('C03-N1','modules_main.hua',17)]:
     invoke([probe,'check',repo/'selfhost'/entry]);checks+=1
     target=closure/(profile+'.huab');invoke([probe,'build',closure/entry,'-o',target])
-    assert struct.unpack_from('<II',target.read_bytes(),8)==(7,1);checks+=1
+    assert struct.unpack_from('<II',target.read_bytes(),8)==(format_version,1);checks+=1
     artifacts[profile]=target
 for p in closure.glob('*.hua'):p.unlink()
 assert not list(closure.glob('*.hua'));checks+=1

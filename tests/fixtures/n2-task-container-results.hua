@@ -1,0 +1,20 @@
+import std.list as list
+async fn fixed() [2]u16 {
+    var pair [2]u16 = [4096,17]
+    return pair
+}
+async fn entries() map[string]List<string> {
+    return map[string]List<string>{"key":list.from_slice(["task"+" result"])}
+}
+fn main() {
+    let pairJob = fixed()
+    var first = await pairJob
+    first[0] = 8192
+    let second = await pairJob
+    print(first[0],second[0],second[1])
+    let mapJob = entries()
+    var left = await mapJob
+    left["key"] = list.from_slice(["changed"])
+    let right = await mapJob
+    print(unwrap(list.get(unwrap(left["key"]),0)),unwrap(list.get(unwrap(right["key"]),0)))
+}

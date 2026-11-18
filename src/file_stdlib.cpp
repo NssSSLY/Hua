@@ -1,11 +1,14 @@
 #include "hua/performance.hpp"
 #include "hua/file.hpp"
 #include "hua/tasks.hpp"
+#include "hua/resume.hpp"
+#include <cstdlib>
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <limits>
 #include <mutex>
+#include <thread>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -69,22 +72,125 @@ FileHostFailure host_failure(DWORD n){
         n==ERROR_OPERATION_ABORTED?"interrupted":n==ERROR_WRITE_PROTECT?"read_only":"io";
     return {code,"native file operation failed","win32",static_cast<I>(n)};
 }
-class NativeFile final:public FileBackend {
-    HANDLE handle_;bool append_;
+// Only the completion thread observes the kernel packet. The task resumes
+// through the shared scheduler and retains the request until that packet arrives.
+struct FileCompletion : OVERLAPPED {
+    std::atomic<bool> done{false};
+    DWORD count{},error{};
+    explicit FileCompletion(I offset) : OVERLAPPED{} {
+        const auto value=static_cast<std::uint64_t>(offset);
+        Offset=static_cast<DWORD>(value);
+        OffsetHigh=static_cast<DWORD>(value>>32);
+    }
+};
+class FileCompletionPort {
+    HANDLE port=CreateIoCompletionPort(INVALID_HANDLE_VALUE,nullptr,0,1);
+    std::jthread thread;
 public:
-    explicit NativeFile(HANDLE h,bool append):handle_(h),append_(append){}
+    FileCompletionPort(){
+        if(!port)return;
+        try{
+            thread=std::jthread([this]{
+                for(;;){
+                    DWORD bytes{};ULONG_PTR key{};OVERLAPPED* request{};
+                    const bool ok=GetQueuedCompletionStatus(port,&bytes,&key,&request,INFINITE);
+                    const auto error=ok?ERROR_SUCCESS:GetLastError();
+                    if(!request)return;
+                    auto& completion=*static_cast<FileCompletion*>(request);
+                    completion.count=bytes;
+                    completion.error=error;
+                    completion.done.store(true,std::memory_order_release);
+                    notify_task_scheduler();
+                }
+            });
+        }catch(...){CloseHandle(port);throw;}
+    }
+    ~FileCompletionPort(){
+        if(!port)return;
+        if(!PostQueuedCompletionStatus(port,0,0,nullptr)){
+            const auto handle=port;
+            CloseHandle(handle);
+            thread.join();
+        }else{
+            thread.join();
+            CloseHandle(port);
+        }
+    }
+    bool associate(HANDLE file) const {
+        return port&&CreateIoCompletionPort(file,port,0,0)==port;
+    }
+};
+FileCompletionPort& file_completion_port(){static FileCompletionPort port;return port;}
+
+class NativeFile final:public FileBackend {
+    HANDLE handle_;bool append_,overlapped_;
+    I cursor_{};
+    FileHostIO complete(bool reading,DWORD bytes,DWORD error){
+        if(reading&&error==ERROR_HANDLE_EOF)return {I{0},{}};
+        if(error)return {{},host_failure(error)};
+        if(overlapped_){
+            if(append_&&!reading){
+                auto end=size();
+                if(end.error)return {static_cast<I>(bytes),end.error};
+                cursor_=end.value;
+            }else cursor_+=static_cast<I>(bytes);
+        }
+        return {static_cast<I>(bytes),{}};
+    }
+    bool issue(bool reading,char* storage,std::size_t size,OVERLAPPED& request){
+        if(reading)return ReadFile(handle_,storage,static_cast<DWORD>(size),nullptr,&request);
+        return WriteFile(handle_,storage,static_cast<DWORD>(size),nullptr,&request);
+    }
+    FileHostIO blocking_io(bool reading,char* storage,std::size_t size){
+        FileCompletion request(append_&&!reading?-1:cursor_);
+        const auto event=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        if(!event)return {{},host_failure(GetLastError())};
+        struct CloseEvent {HANDLE handle;~CloseEvent(){CloseHandle(handle);}} guard{event};
+        // Low bit suppresses the IOCP packet for this blocking fallback.
+        request.hEvent=reinterpret_cast<HANDLE>(reinterpret_cast<std::uintptr_t>(event)|1);
+        if(!issue(reading,storage,size,request)){
+            const auto error=GetLastError();
+            if(error!=ERROR_IO_PENDING)return complete(reading,0,error);
+        }
+        DWORD bytes{};
+        const auto ok=GetOverlappedResult(handle_,&request,&bytes,TRUE);
+        return complete(reading,bytes,ok?ERROR_SUCCESS:GetLastError());
+    }
+public:
+    explicit NativeFile(HANDLE h,bool append,bool overlapped):handle_(h),append_(append),overlapped_(overlapped){}
+    bool overlapped() const {return overlapped_;}
+    Routine<FileHostIO> transfer(bool reading,char* storage,std::size_t size,RuntimeContext& context){
+        FileCompletion completion(append_&&!reading?-1:cursor_);
+        const auto finished=[&completion]{return completion.done.load(std::memory_order_acquire);};
+        // Allocate wait predicates before exposing OVERLAPPED to the OS.
+        Suspend interruptible{[&]{return finished()||(!context.cleanup&&context.cancellation&&context.cancellation->stopped());}};
+        Suspend confirmed{finished};
+        if(!issue(reading,storage,size,completion)){
+            const auto error=GetLastError();
+            if(error!=ERROR_IO_PENDING)co_return complete(reading,0,error);
+        }
+        co_await std::move(interruptible);
+        if(!finished()){
+            CancelIoEx(handle_,&completion);
+            co_await std::move(confirmed);
+        }
+        co_return complete(reading,completion.count,completion.error);
+    }
     void attach(HANDLE h){handle_=h;}
     ~NativeFile()override{if(handle_!=INVALID_HANDLE_VALUE)close();}
     FileHostIO read(std::span<char> b)override{
+        if(overlapped_)return blocking_io(true,b.data(),b.size());
         DWORD n{};if(ReadFile(handle_,b.data(),static_cast<DWORD>(b.size()),&n,nullptr))return {static_cast<I>(n),{}};
         auto e=GetLastError();if(e==ERROR_HANDLE_EOF)return {I{0},{}};return {{},host_failure(e)};
     }
     FileHostIO write(std::span<const char> b)override{
+        if(overlapped_)return blocking_io(false,const_cast<char*>(b.data()),b.size());
         DWORD n{};OVERLAPPED end{};end.Offset=end.OffsetHigh=0xffffffff;
         if(WriteFile(handle_,b.data(),static_cast<DWORD>(b.size()),&n,append_?&end:nullptr))return {static_cast<I>(n),{}};
         auto e=GetLastError();return {{},host_failure(e)};
     }
     FileHostPosition position()override{
+        if(overlapped_)return {cursor_,{}};
         LARGE_INTEGER zero{},pos{};if(SetFilePointerEx(handle_,zero,&pos,FILE_CURRENT))return {pos.QuadPart,{}};
         return {0,host_failure(GetLastError())};
     }
@@ -93,6 +199,7 @@ public:
         return {0,host_failure(GetLastError())};
     }
     FileHostFailure seek(I n)override{
+        if(overlapped_){cursor_=n;return {};}
         LARGE_INTEGER pos{};pos.QuadPart=n;if(SetFilePointerEx(handle_,pos,nullptr,FILE_BEGIN))return {};
         return host_failure(GetLastError());
     }
@@ -125,7 +232,7 @@ public:
 };
 #endif
 struct Opened {std::unique_ptr<FileBackend> backend;FileHostFailure error;};
-Opened native_open(const std::filesystem::path& path,Mode m){
+Opened native_open(const std::filesystem::path& path,Mode m,[[maybe_unused]] bool overlapped){
 #ifdef _WIN32
     auto text=path.native();std::replace(text.begin(),text.end(),L'/',L'\\');
     if(text.starts_with(L"\\\\?\\")||text.starts_with(L"\\\\.\\"))
@@ -145,9 +252,9 @@ Opened native_open(const std::filesystem::path& path,Mode m){
         start=end+1;
     }
     // Validate the opened handle before truncation: path prechecks alone are subject to races.
-    auto backend=std::make_unique<NativeFile>(INVALID_HANDLE_VALUE,m.append);
+    auto backend=std::make_unique<NativeFile>(INVALID_HANDLE_VALUE,m.append,overlapped);
     auto h=CreateFileW(text.c_str(),(m.read?GENERIC_READ:0)|(m.write?GENERIC_WRITE:0),
-        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,m.create?OPEN_ALWAYS:OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,m.create?OPEN_ALWAYS:OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|(overlapped?FILE_FLAG_OVERLAPPED:0),nullptr);
     if(h==INVALID_HANDLE_VALUE)return {{},host_failure(GetLastError())};
     backend->attach(h);
     BY_HANDLE_FILE_INFORMATION info{};
@@ -155,6 +262,8 @@ Opened native_open(const std::filesystem::path& path,Mode m){
     if(!GetFileInformationByHandle(h,&info))return {std::move(backend),host_failure(GetLastError())};
     if(info.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)return {std::move(backend),failure("not_regular","directories cannot be opened as File")};
     if(m.truncate&&!SetEndOfFile(h))return {std::move(backend),host_failure(GetLastError())};
+    if(overlapped&&!file_completion_port().associate(h))
+        return {std::move(backend),host_failure(GetLastError())};
 #else
     int flags=m.read?(m.write?O_RDWR:O_RDONLY):O_WRONLY;
     if(m.create)flags|=O_CREAT;if(m.append)flags|=O_APPEND;
@@ -232,28 +341,50 @@ struct OperationGuard {
     ~OperationGuard(){if(submitted)domain.settle(event,{R::ResultKind::failed,{},std::nullopt,{}});else domain.cancel(event);}
 };
 constexpr std::size_t read_ahead=64*1024,max_line=16*1024*1024,max_bulk=128*1024*1024;
+static Routine<FileHostIO> file_io(FileNativeState& native,[[maybe_unused]] RuntimeContext& context,
+    std::unique_lock<std::mutex>& lock,[[maybe_unused]] bool suspend,bool reading,char* data,std::size_t size){
+    try{
+#ifdef _WIN32
+        if(suspend){
+            auto& backend=static_cast<NativeFile&>(*native.backend);
+            // The resource event and File owner retain the handle and storage.
+            // Drop the mutex before suspension so VM workers can migrate the frame.
+            lock.unlock();
+            auto result=co_await backend.transfer(reading,data,size,context);
+            lock.lock();
+            co_return result;
+        }
+#endif
+        co_return reading?native.backend->read(std::span<char>(data,size)):
+                          native.backend->write(std::span<const char>(data,size));
+    }catch(...){
+        if(!lock.owns_lock())lock.lock();
+        co_return FileHostIO{{},failure("io","host operation threw; progress unknown")};
+    }
+}
 // One admitted host call of a bulk operation: the same reserve/submit/settle as read and write.
-template<class Call> FileHostIO guarded_io(FileData& file,RuntimeContext* c,std::size_t n,std::shared_ptr<void> keepalive,Call call){
+template<class Call> Routine<FileHostIO> guarded_io(FileData& file,RuntimeContext* c,std::size_t n,std::shared_ptr<void> keepalive,Call call){
     auto admitted=file.scope->protocol.reserve(file.handle,c->task_id,{},R::Access::read,0,n,std::move(keepalive));
-    if(!admitted)return {I{0},resource_failure(admitted.error)};
+    if(!admitted)co_return FileHostIO{I{0},resource_failure(admitted.error)};
     OperationGuard operation{file.scope->protocol,*admitted.value};
-    if(auto e=file.scope->protocol.submit(operation.event))return {I{0},resource_failure(e)};
+    if(auto e=file.scope->protocol.submit(operation.event))co_return FileHostIO{I{0},resource_failure(e)};
     operation.submitted=true;FileHostIO observed;
-    try{observed=call();}catch(...){observed={{},failure("io","host operation threw; progress unknown")};}
+    try{observed=co_await call();}catch(...){observed={{},failure("io","host operation threw; progress unknown")};}
     if((observed.transferred&&(*observed.transferred<0||*observed.transferred>static_cast<I>(n)))||(!observed.error&&!observed.transferred))
         observed={{},failure("io","invalid host progress; progress unknown")};
     file.scope->protocol.settle(operation.event,{observed.error?R::ResultKind::failed:R::ResultKind::success,{},observed.transferred?std::optional<std::uint64_t>(*observed.transferred):std::nullopt,{}});
     operation.submitted=false;
-    return observed;
+    co_return observed;
 }
 // Reads at most n bytes into `out`.
-FileHostIO read_chunk(FileData& file,FileNativeState& native,RuntimeContext* c,std::size_t n,std::string& out){
+static Routine<FileHostIO> read_chunk(FileData& file,FileNativeState& native,RuntimeContext* c,
+    std::unique_lock<std::mutex>& lock,bool suspend,std::size_t n,std::string& out){
     auto permit=file.scope->ledger->reserve(R::cost(R::Metric::storage_bytes,n));
-    if(!permit)return {I{0},resource_failure(permit.error)};
+    if(!permit)co_return FileHostIO{I{0},resource_failure(permit.error)};
     auto storage=std::make_shared<QuotaBytes>(std::move(*permit.value),n);
-    auto got=guarded_io(file,c,n,storage,[&]{return native.backend->read(std::span<char>(storage->data.data(),n));});
+    auto got=co_await guarded_io(file,c,n,storage,[&]{return file_io(native,*c,lock,suspend,true,storage->data.data(),n);});
     if(got.transferred&&*got.transferred>0)out.append(storage->data.data(),static_cast<std::size_t>(*got.transferred));
-    return got;
+    co_return got;
 }
 // read_line's buffer is charged to the File quota, so one long line cannot go unaccounted.
 FileHostFailure charge_pending(FileData& file,FileNativeState& native,std::size_t size){
@@ -278,22 +409,24 @@ FileHostFailure settle_read_ahead(FileNativeState& native){
 }
 Value ok_bytes(std::string text,const char* type){return result(Value(BytesValue{managed<const std::string>(std::move(text))}),true,type,"std.file.IOFailure");}
 BytesValue partial_bytes(std::string text){return BytesValue{managed<const std::string>(std::move(text))};}
-Value bulk_operation(const std::string& name,FileData& file,FileNativeState& native,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* c){
+Routine<Value> bulk_operation(const std::string& name,FileData& file,FileNativeState& native,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* c,std::unique_lock<std::mutex>& lock,bool suspend){
     if(name=="write_all"){
-        if(!native.mode.write)return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
-        if(auto e=settle_read_ahead(native))return io_failed(e,name,I{0});
+        if(!native.mode.write)co_return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
+        if(auto e=settle_read_ahead(native))co_return io_failed(e,name,I{0});
         auto data=hua::get<BytesValue>(args[1].data).data;I total=0;
         for(std::size_t at=0;at<data->size();){
             if(at)task_checkpoint(c,span);
             const auto n=std::min(data->size()-at,max_io);
-            auto wrote=guarded_io(file,c,n,std::const_pointer_cast<std::string>(data),[&]{return native.backend->write(std::span<const char>(data->data()+at,n));});
-            if(wrote.error)return io_failed(wrote.error,name,wrote.transferred?std::optional<I>(total+*wrote.transferred):std::nullopt);
-            if(*wrote.transferred==0)return io_failed(failure("io","host write made no progress"),name,total);
+            auto wrote=co_await guarded_io(file,c,n,std::const_pointer_cast<std::string>(data),[&]{
+                return file_io(native,*c,lock,suspend,false,const_cast<char*>(data->data()+at),n);
+            });
+            if(wrote.error)co_return io_failed(wrote.error,name,wrote.transferred?std::optional<I>(total+*wrote.transferred):std::nullopt);
+            if(*wrote.transferred==0)co_return io_failed(failure("io","host write made no progress"),name,total);
             total+=*wrote.transferred;at+=static_cast<std::size_t>(*wrote.transferred);
         }
-        return Value(ResultValue{true,{},"void","std.file.IOFailure",true,false});
+        co_return Value(ResultValue{true,{},"void","std.file.IOFailure",true,false});
     }
-    if(!native.mode.read)return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
+    if(!native.mode.read)co_return io_failed(failure("permission_denied","File mode does not permit this operation"),name,I{0});
     if(name=="read_line"){
         std::size_t scan=native.pending_at;
         for(;;){
@@ -305,18 +438,18 @@ Value bulk_operation(const std::string& name,FileData& file,FileNativeState& nat
                 native.pending_at=newline!=std::string::npos?newline+1:native.pending.size();
                 if(native.pending_at==native.pending.size())native.drop_pending();
                 if(newline!=std::string::npos&&!line.empty()&&line.back()=='\r')line.pop_back();
-                if(!text_utf8_error(line).empty()){const auto size=static_cast<I>(line.size());return io_failed(failure("invalid_utf8","line is not valid UTF-8"),name,size,partial_bytes(std::move(line)));}
-                return result(Value(std::move(line)),true,"string?","std.file.IOFailure");
+                if(!text_utf8_error(line).empty()){const auto size=static_cast<I>(line.size());co_return io_failed(failure("invalid_utf8","line is not valid UTF-8"),name,size,partial_bytes(std::move(line)));}
+                co_return result(Value(std::move(line)),true,"string?","std.file.IOFailure");
             }
-            if(native.buffered()>=max_line)return io_failed(failure("limit","line exceeds 16 MiB"),name,I{0});
+            if(native.buffered()>=max_line)co_return io_failed(failure("limit","line exceeds 16 MiB"),name,I{0});
             if(native.pending_at){native.pending.erase(0,native.pending_at);native.pending_at=0;}
             scan=native.pending.size();
-            if(auto e=charge_pending(file,native,native.pending.size()+read_ahead))return io_failed(e,name,I{0});
+            if(auto e=charge_pending(file,native,native.pending.size()+read_ahead))co_return io_failed(e,name,I{0});
             task_checkpoint(c,span);
-            auto got=read_chunk(file,native,c,read_ahead,native.pending);
-            if(got.error)return io_failed(got.error,name,I{0});
+            auto got=co_await read_chunk(file,native,c,lock,suspend,read_ahead,native.pending);
+            if(got.error)co_return io_failed(got.error,name,I{0});
             if(*got.transferred==0){
-                if(native.pending.empty())return result(Value{},true,"string?","std.file.IOFailure");
+                if(native.pending.empty())co_return result(Value{},true,"string?","std.file.IOFailure");
                 scan=std::string::npos;
             }
         }
@@ -324,25 +457,25 @@ Value bulk_operation(const std::string& name,FileData& file,FileNativeState& nat
     // read_all and read_exact: buffered bytes first, then the host in chunks up to max_io.
     const bool exact=name=="read_exact";
     const auto wanted=exact?as_int(args[1],span):static_cast<I>(max_bulk);
-    if(wanted<0||wanted>static_cast<I>(max_bulk))return io_failed(failure("limit","one File operation requires 0..134217728 bytes"),name,I{0});
+    if(wanted<0||wanted>static_cast<I>(max_bulk))co_return io_failed(failure("limit","one File operation requires 0..134217728 bytes"),name,I{0});
     const auto goal=static_cast<std::size_t>(wanted);std::string out;
     const auto take=std::min(goal,native.buffered());
     out.append(native.pending,native.pending_at,take);native.pending_at+=take;
     if(!native.buffered())native.drop_pending();
     while(!exact||out.size()<goal){
         if(!out.empty())task_checkpoint(c,span);
-        if(!exact&&out.size()>goal){const auto size=static_cast<I>(out.size());return io_failed(failure("limit","file exceeds 128 MiB"),name,size,partial_bytes(std::move(out)));}
+        if(!exact&&out.size()>goal){const auto size=static_cast<I>(out.size());co_return io_failed(failure("limit","file exceeds 128 MiB"),name,size,partial_bytes(std::move(out)));}
         // read_all probes one byte past the limit, so a file of exactly the limit still succeeds.
         const auto n=out.size()<goal?std::min(goal-out.size(),max_io):std::size_t{1};
-        auto got=read_chunk(file,native,c,n,out);
-        if(got.error){const auto size=static_cast<I>(out.size());return io_failed(got.error,name,size,out.empty()?std::optional<BytesValue>{}:std::optional<BytesValue>(partial_bytes(std::move(out))));}
+        auto got=co_await read_chunk(file,native,c,lock,suspend,n,out);
+        if(got.error){const auto size=static_cast<I>(out.size());co_return io_failed(got.error,name,size,out.empty()?std::optional<BytesValue>{}:std::optional<BytesValue>(partial_bytes(std::move(out))));}
         if(*got.transferred==0){
             if(!exact)break;
-            if(out.empty())return result(Value{},true,"Bytes?","std.file.IOFailure");
-            const auto size=static_cast<I>(out.size());return io_failed(failure("unexpected_eof","file ended before the requested count"),name,size,partial_bytes(std::move(out)));
+            if(out.empty())co_return result(Value{},true,"Bytes?","std.file.IOFailure");
+            const auto size=static_cast<I>(out.size());co_return io_failed(failure("unexpected_eof","file ended before the requested count"),name,size,partial_bytes(std::move(out)));
         }
     }
-    return ok_bytes(std::move(out),exact?"Bytes?":"Bytes");
+    co_return ok_bytes(std::move(out),exact?"Bytes?":"Bytes");
 }
 }
 Value FileScope::adopt(std::unique_ptr<FileBackend> backend,std::string_view text){
@@ -351,6 +484,82 @@ Value FileScope::adopt(std::unique_ptr<FileBackend> backend,std::string_view tex
     auto h=admit(*this,native);if(!h)return failed(resource_failure(h.error),"open","std.file.File");
     return publish(shared_from_this(),*h.value,std::move(native));
 }
+static Routine<Value> transfer_file(const StandardFunction& f,const std::vector<Value>& args,
+                                   const SourceSpan& span,RuntimeContext* c,std::shared_ptr<FileData> file,
+                                   std::unique_lock<std::mutex> lock,[[maybe_unused]] bool allow_suspend){
+    auto& native=*file->native;
+    const auto bad=[&](FileHostFailure error){return io_failed(error,f.name,I{0});};
+    I n=f.name=="read"?as_int(args[1],span):static_cast<I>(hua::get<BytesValue>(args[1].data).data->size());
+    if(n<0||n>static_cast<I>(max_io))co_return bad(failure("limit","one File operation requires 0..1048576 bytes"));
+    if(f.name=="read"?!native.mode.read:!native.mode.write)co_return bad(failure("permission_denied","File mode does not permit this operation"));
+    if(!n)co_return result(f.name=="read"?Value(BytesValue{managed<const std::string>()}):Value(I{0}),true,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
+    if(f.name=="read"&&native.buffered()){
+        const auto take=std::min(native.buffered(),static_cast<std::size_t>(n));
+        auto bytes=native.pending.substr(native.pending_at,take);native.pending_at+=take;
+        if(!native.buffered())native.drop_pending();
+        co_return ok_bytes(std::move(bytes),"Bytes?");
+    }
+    if(f.name=="write")if(auto e=settle_read_ahead(native))co_return bad(e);
+    std::shared_ptr<QuotaBytes> storage;std::shared_ptr<void> keepalive;
+    if(f.name=="read"){
+        auto permit=file->scope->ledger->reserve(R::cost(R::Metric::storage_bytes,static_cast<std::uint64_t>(n)));
+        if(!permit)co_return bad(resource_failure(permit.error));
+        try{storage=std::make_shared<QuotaBytes>(std::move(*permit.value),static_cast<std::size_t>(n));}
+        catch(const std::bad_alloc&){co_return bad(failure("allocation","read allocation failed before native admission"));}
+        keepalive=storage;
+    }else keepalive=std::const_pointer_cast<std::string>(hua::get<BytesValue>(args[1].data).data);
+    auto admitted=file->scope->protocol.reserve(file->handle,c->task_id,{},R::Access::read,0,static_cast<std::size_t>(n),keepalive);
+    if(!admitted)co_return bad(resource_failure(admitted.error));
+    OperationGuard operation{file->scope->protocol,*admitted.value};
+    if(auto e=file->scope->protocol.submit(operation.event))co_return bad(resource_failure(e));
+    operation.submitted=true;
+    // Preallocate both outcomes and register retained storage before entering the OS.
+    // No managed allocation after a read/write can erase confirmed progress.
+    auto detail=managed<ErrorData>();detail->domain="file";detail->origin="std.file."+f.name;
+    detail->code.reserve(128);detail->message.reserve(4096);detail->native_domain.reserve(128);
+    auto issue=managed<IOFailureData>();issue->error={detail};
+    auto success=result({},true,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
+    auto unsuccessful=result(Value(IOFailureValue{issue}),false,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
+    std::optional<BytesValue> bytes;
+    if(storage){std::shared_ptr<const std::string> alias(storage,&storage->data);managed_heap().track(alias);bytes=BytesValue{std::move(alias)};}
+    const bool reading=f.name=="read";
+    auto* data=reading?storage->data.data():const_cast<char*>(hua::get<BytesValue>(args[1].data).data->data());
+    auto observed=co_await file_io(native,*c,lock,allow_suspend,reading,data,static_cast<std::size_t>(n));
+    if((observed.transferred&&(*observed.transferred<0||*observed.transferred>n))||(!observed.error&&!observed.transferred))
+        observed={{},failure("io","invalid host progress; progress unknown")};
+    if(storage&&observed.transferred&&*observed.transferred>0)storage->data.resize(static_cast<std::size_t>(*observed.transferred));
+    else bytes.reset();
+    file->scope->protocol.settle(operation.event,{observed.error?R::ResultKind::failed:R::ResultKind::success,{},observed.transferred?std::optional<std::uint64_t>(*observed.transferred):std::nullopt,{}});
+    operation.submitted=false;
+    if(observed.error){
+        auto assign=[](std::string& to,const char* from,std::size_t max){auto text=std::string_view(from?from:"");to.assign(text.substr(0,max));};
+        assign(detail->code,observed.error.code,128);assign(detail->message,observed.error.message,4096);
+        assign(detail->native_domain,observed.error.native_domain,128);detail->native_code=observed.error.native_code;
+        issue->transferred=observed.transferred;issue->partial=bytes;co_return unsuccessful;
+    }
+    *cget<ResultValue>(success.data).payload=f.name=="read"?(bytes?Value(*bytes):Value{}):Value(*observed.transferred);
+    co_return success;
+}
+#ifdef _WIN32
+bool file_has_completion(const std::vector<Value>& args){
+    if(args.empty())return false;
+    auto value=hua::get_if<FileValue>(&args[0].data);
+    if(!value||!value->data)return false;
+    const auto& file=*value->data;
+    if(!file.native)return false;
+    std::lock_guard lock(file.native->mutex);
+    auto backend=dynamic_cast<const NativeFile*>(file.native->backend.get());
+    return backend&&backend->overlapped();
+}
+Routine<Value> invoke_completion_file(const StandardFunction& f,const std::vector<Value>& args,
+                                      const SourceSpan& span,RuntimeContext* c){
+    auto file=hua::get<FileValue>(args[0].data).data;
+    if(auto error=check(file,c))co_return io_failed(error,f.name,I{0});
+    auto lock=std::unique_lock(file->native->mutex);
+    if(f.since==29)co_return co_await bulk_operation(f.name,*file,*file->native,args,span,c,lock,true);
+    co_return co_await transfer_file(f,args,span,c,std::move(file),std::move(lock),true);
+}
+#endif
 Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& args,const SourceSpan& span,RuntimeContext* c){
     if(f.name=="error"||f.name=="transferred"||f.name=="partial"){
         auto io=hua::get_if<IOFailureValue>(&args[0].data);if(!io||!io->data)runtime_error(span,"expected std.file.IOFailure","E4003");
@@ -372,7 +581,15 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         auto h=admit(*c->files,native);if(!h)return failed(resource_failure(h.error),f.name,"std.file.File");
         try{
             auto p=std::filesystem::path(std::u8string(path.begin(),path.end()));if(!p.is_absolute()&&!c->working_directory.empty())p=c->working_directory/p;
-            auto opened=native_open(p,*m);
+            bool overlapped=false;
+#ifdef _WIN32
+            static const bool use_iocp=[] {
+                const auto* backend=std::getenv("HUA_TASK_FILE_BACKEND");
+                return !backend||std::string_view(backend)!="blocking";
+            }();
+            overlapped=use_iocp&&c->in_task&&c->resumable;
+#endif
+            auto opened=native_open(p,*m,overlapped);
             native->backend=std::move(opened.backend);
             if(opened.error){c->files->protocol.close(*h.value,c->task_id);c->files->pump();return failed(opened.error,f.name,"std.file.File");}
             return publish(c->files,*h.value,std::move(native));
@@ -401,59 +618,15 @@ Value invoke_file_standard(const StandardFunction& f,const std::vector<Value>& a
         return result(Value(std::string(s==R::Lifecycle::open?"open":s==R::Lifecycle::closing?"closing":s==R::Lifecycle::closed?"closed":"poisoned")),true,"string");
     }
     if(f.name=="close_error")return result(native.first_close_error?Value(error(native.first_close_error,"close")):Value{},true,"std.error.Value?");
-    if(bulk)return bulk_operation(f.name,*file,native,args,span,c);
+    if(bulk){
+        auto operation=bulk_operation(f.name,*file,native,args,span,c,lock,false);
+        operation.handle.resume();
+        return operation.take();
+    }
     if(io){
-        I n=f.name=="read"?as_int(args[1],span):static_cast<I>(hua::get<BytesValue>(args[1].data).data->size());
-        if(n<0||n>static_cast<I>(max_io))return bad(failure("limit","one File operation requires 0..1048576 bytes"));
-        if(f.name=="read"?!native.mode.read:!native.mode.write)return bad(failure("permission_denied","File mode does not permit this operation"));
-        if(!n)return result(f.name=="read"?Value(BytesValue{managed<const std::string>()}):Value(I{0}),true,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
-        if(f.name=="read"&&native.buffered()){
-            const auto take=std::min(native.buffered(),static_cast<std::size_t>(n));
-            auto bytes=native.pending.substr(native.pending_at,take);native.pending_at+=take;
-            if(!native.buffered())native.drop_pending();
-            return ok_bytes(std::move(bytes),"Bytes?");
-        }
-        if(f.name=="write")if(auto e=settle_read_ahead(native))return bad(e);
-        std::shared_ptr<QuotaBytes> storage;std::shared_ptr<void> keepalive;
-        if(f.name=="read"){
-            auto permit=file->scope->ledger->reserve(R::cost(R::Metric::storage_bytes,static_cast<std::uint64_t>(n)));
-            if(!permit)return bad(resource_failure(permit.error));
-            try{storage=std::make_shared<QuotaBytes>(std::move(*permit.value),static_cast<std::size_t>(n));}
-            catch(const std::bad_alloc&){return bad(failure("allocation","read allocation failed before native admission"));}
-            keepalive=storage;
-        }else keepalive=std::const_pointer_cast<std::string>(hua::get<BytesValue>(args[1].data).data);
-        auto admitted=file->scope->protocol.reserve(file->handle,c->task_id,{},R::Access::read,0,static_cast<std::size_t>(n),keepalive);
-        if(!admitted)return bad(resource_failure(admitted.error));
-        OperationGuard operation{file->scope->protocol,*admitted.value};
-        if(auto e=file->scope->protocol.submit(operation.event))return bad(resource_failure(e));
-        operation.submitted=true;
-        // Preallocate both outcomes and register retained storage before entering the OS.
-        // No managed allocation after a read/write can erase confirmed progress.
-        auto detail=managed<ErrorData>();detail->domain="file";detail->origin="std.file."+f.name;
-        detail->code.reserve(128);detail->message.reserve(4096);detail->native_domain.reserve(128);
-        auto issue=managed<IOFailureData>();issue->error={detail};
-        auto success=result({},true,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
-        auto unsuccessful=result(Value(IOFailureValue{issue}),false,f.name=="read"?"Bytes?":"int","std.file.IOFailure");
-        std::optional<BytesValue> bytes;
-        if(storage){std::shared_ptr<const std::string> alias(storage,&storage->data);managed_heap().track(alias);bytes=BytesValue{std::move(alias)};}
-        operation.submitted=true;FileHostIO observed;
-        try{observed=f.name=="read"?native.backend->read(std::span<char>(storage->data.data(),static_cast<std::size_t>(n))):
-            native.backend->write(std::span<const char>(*hua::get<BytesValue>(args[1].data).data));}
-        catch(...){observed={{},failure("io","host operation threw; progress unknown")};}
-        if((observed.transferred&&(*observed.transferred<0||*observed.transferred>n))||(!observed.error&&!observed.transferred))
-            observed={{},failure("io","invalid host progress; progress unknown")};
-        if(storage&&observed.transferred&&*observed.transferred>0)storage->data.resize(static_cast<std::size_t>(*observed.transferred));
-        else bytes.reset();
-        file->scope->protocol.settle(operation.event,{observed.error?R::ResultKind::failed:R::ResultKind::success,{},observed.transferred?std::optional<std::uint64_t>(*observed.transferred):std::nullopt,{}});
-        operation.submitted=false;
-        if(observed.error){
-            auto assign=[](std::string& to,const char* from,std::size_t max){auto text=std::string_view(from?from:"");to.assign(text.substr(0,max));};
-            assign(detail->code,observed.error.code,128);assign(detail->message,observed.error.message,4096);
-            assign(detail->native_domain,observed.error.native_domain,128);detail->native_code=observed.error.native_code;
-            issue->transferred=observed.transferred;issue->partial=bytes;return unsuccessful;
-        }
-        *cget<ResultValue>(success.data).payload=f.name=="read"?(bytes?Value(*bytes):Value{}):Value(*observed.transferred);
-        return success;
+        auto operation=transfer_file(f,args,span,c,file,std::move(lock),false);
+        operation.handle.resume();
+        return operation.take();
     }
     // All position/flush operations also reserve an operation and prevent close until native return.
     auto admitted=file->scope->protocol.reserve(file->handle,c->task_id);

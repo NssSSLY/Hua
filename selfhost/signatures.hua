@@ -5,6 +5,31 @@ pub struct Signature { parameters []string
     mutates bool
     writable bool }
 pub fn signature(target string) Signature? {
+    if target == "builtin:std.file#open" { return Signature{parameters:["string","string"],result:"Result<std.file.File,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#read" { return Signature{parameters:["std.file.File","int"],result:"Result<Bytes?,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.file#write" { return Signature{parameters:["std.file.File","Bytes"],result:"Result<int,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.file#seek" { return Signature{parameters:["std.file.File","int","string"],result:"Result<int,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#tell" { return Signature{parameters:["std.file.File"],result:"Result<int,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#flush" { return Signature{parameters:["std.file.File"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#close" { return Signature{parameters:["std.file.File"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#state" { return Signature{parameters:["std.file.File"],result:"Result<string,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#close_error" { return Signature{parameters:["std.file.File"],result:"Result<std.error.Value?,std.error.Value>",mutates:false,writable:false} }
+    if target == "builtin:std.file#error" { return Signature{parameters:["std.file.IOFailure"],result:"std.error.Value",mutates:false,writable:false} }
+    if target == "builtin:std.file#transferred" { return Signature{parameters:["std.file.IOFailure"],result:"int?",mutates:false,writable:false} }
+    if target == "builtin:std.file#partial" { return Signature{parameters:["std.file.IOFailure"],result:"Bytes?",mutates:false,writable:false} }
+    if target == "builtin:std.file#read_line" { return Signature{parameters:["std.file.File"],result:"Result<string?,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.file#read_all" { return Signature{parameters:["std.file.File"],result:"Result<Bytes,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.file#read_exact" { return Signature{parameters:["std.file.File","int"],result:"Result<Bytes?,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.file#write_all" { return Signature{parameters:["std.file.File","Bytes"],result:"Result<void,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.task#sleep" { return Signature{parameters:["int"],result:"void",mutates:false,writable:false} }
+    if target == "builtin:std.task#yield" { return Signature{parameters:[],result:"void",mutates:false,writable:false} }
+    if target == "builtin:std.task#worker_id" { return Signature{parameters:[],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.task#cancel" { return Signature{parameters:[""],result:"bool",mutates:false,writable:false} }
+    if target == "builtin:std.task#done" { return Signature{parameters:[""],result:"bool",mutates:false,writable:false} }
+    if target == "builtin:std.task#state" { return Signature{parameters:[""],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.task#timeout" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
+    if target == "builtin:std.task#all" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+    if target == "builtin:std.task#race" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
     if target == "builtin:std.path#join" { return Signature{parameters:["[]string"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.path#normalize" { return Signature{parameters:["string"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.path#basename" { return Signature{parameters:["string"],result:"Result<string,string>",mutates:false,writable:false} }

@@ -1,5 +1,6 @@
 # C07-HUAB1：由 Hua 编码既有完整 HUAB6/7 布局；输入仍为 BC1。
 import bytecode as bc
+import type_rules as rules
 import bytecode_verify as verify
 import types as types
 import ast_pool as ast
@@ -88,23 +89,35 @@ fn code(mut out Buffer, value bc.Code, sites []bc.Site, ids map[string]int) Resu
     }
     return ok()
 }
-fn needs_seven(t string) bool {
-    return strings.contains(t,"std.error.Value") || strings.contains(t,"Result<void,")
+fn type_format(t string) int {
+    if t=="" { return 6 }
+    if strings.contains(t,"std.file.") { return 8 }
+    if strings.contains(t,"std.error.Value") || strings.contains(t,"Result<void,") { return 7 }
+    return 6
+}
+fn load_format(text string) int {
+    if text=="$core$$std$fs$canonical" { return 17 }
+    if strings.starts_with(text,"$core$$std$file$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["read_line","read_all","read_exact","write_all"],name) { return 29 }
+        return 8
+    }
+    return 6
 }
 fn required_format(image bc.Image) int {
     var format=6
-    for s in list.snapshot(image.structures) { for f in s.fields { if needs_seven(f.type_name) { format=max(format,7) } } }
+    for s in list.snapshot(image.structures) { for f in s.fields { format=max(format,type_format(f.type_name)) } }
     for f in list.snapshot(image.functions) {
-        for p in f.parameters { if needs_seven(p.type_name) { format=max(format,7) } }
-        for t in f.returns { if needs_seven(t) { format=max(format,7) } }
+        for p in f.parameters { format=max(format,type_format(p.type_name)) }
+        for t in f.returns { format=max(format,type_format(t)) }
         for op in list.snapshot(f.code.instructions) {
-            if needs_seven(op.type_name) { format=max(format,7) }
-            if op.op==1 && op.text=="$core$$std$fs$canonical" { format=max(format,17) }
+            format=max(format,type_format(op.type_name))
+            if op.op==1 { format=max(format,load_format(op.text)) }
         }
     }
     for op in list.snapshot(image.initializer.instructions) {
-        if needs_seven(op.type_name) { format=max(format,7) }
-        if op.op==1 && op.text=="$core$$std$fs$canonical" { format=max(format,17) }
+        format=max(format,type_format(op.type_name))
+        if op.op==1 { format=max(format,load_format(op.text)) }
     }
     return format
 }

@@ -50,6 +50,8 @@ fn runtime_name(s State, target string) string {
     if target == s.core.entry+"#main" { return "main" }
     if strings.starts_with(target,"builtin:core:") { return "$core$"+rules.cut(target,13,len(target)) }
     if target == "builtin:std.json#Value" { return "Json" }
+    if target == "builtin:std.file#File" { return "std.file.File" }
+    if target == "builtin:std.file#IOFailure" { return "std.file.IOFailure" }
     if strings.starts_with(target,"builtin:type:") { return rules.cut(target,13,len(target)) }
     if strings.starts_with(target,"builtin:std.") { return "$core$$std$"+strings.replace(rules.cut(target,12,len(target)),"#","$") }
     let parts = strings.split(target,"#")
@@ -100,6 +102,13 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
     if k == "Let" || k == "Var" || k == "Parameter" { t = info.declared }
     if k == "Const" || k == "Enum" || k == "Variant" || k == "Import" || k == "Program" || k == "Parameters" {
         return err(fail(u,n,"E8201","node outside C05 core"))
+    }
+    if k == "Unary" && text == "spawn" {
+        let callee = add(s,u,n,"Name","$core$task_start","builtin:task_start",false,[],role)?
+        let call = get(u,n.children[0])
+        var operands = list.from_slice([callee])
+        for child in call.children { list.append(operands,lowered(s,u,child,depth+1,role)?)? }
+        return add(s,u,n,"Call","",t,false,list.snapshot(operands),role)
     }
     if k == "Unary" && text == "await" {
         let callee = add(s,u,n,"Name","$core$task_await","builtin:task_await",false,[],role)?

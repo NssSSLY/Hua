@@ -44,15 +44,22 @@ class NativeFiber;
 struct State {
     std::int64_t steps_left{100000000000};std::uint64_t step_limit{100000000000};
     unsigned depth{0},call_limit{128};
-    const SourceSpan* sites[160];
+    std::array<const SourceSpan*,160> sites{};
     hua::RuntimeContext* context{};
     std::ostream* output{};
     NativeFiber* fiber{};
+    void* module_data{};
     unsigned ticks{};
 };
 inline State state;
 inline thread_local State* active_task_state = nullptr;
 inline State& current_state() noexcept { return active_task_state ? *active_task_state : state; }
+struct TaskModuleScope {
+    void* previous;
+    explicit TaskModuleScope(void* data) : previous(std::exchange(current_state().module_data,data)) {}
+    ~TaskModuleScope(){current_state().module_data=previous;}
+};
+void check_global_write(const SourceSpan&);
 template<bool Tasks> inline State& execution_state() noexcept {
     if constexpr (Tasks) return current_state();
     else return state;
@@ -255,6 +262,7 @@ public:
         return h?h:1;
     }
     std::uint64_t hash()const{
+        if(p_->rc==StrRep::immortal)return p_->hash;
         if(!p_->hash)p_->hash=hash_text(p_->text);
         return p_->hash;
     }
@@ -1368,11 +1376,79 @@ template<class F> struct Deferred {
         f();
     }
 };
-// ---- entry
+// A deferred call may suspend on Windows. Drain after leaving the catch
+// handler, so the worker's C++ exception state does not cross a fiber switch.
+struct TaskDefers {
+    std::vector<std::function<void()>> calls;
+    unsigned base_depth = current_state().depth;
+    int unwinding = std::uncaught_exceptions();
+    template<class F> Unit add(F&& call) { calls.emplace_back(std::forward<F>(call)); return {}; }
+    ~TaskDefers() noexcept(false) {
+        if (!calls.empty() && std::uncaught_exceptions() == unwinding) drain({});
+    }
+    void drain(std::exception_ptr primary);
+};
+struct SyncDefers {
+    template<class F> auto add(F&& call) { return Deferred(std::forward<F>(call)); }
+    static void drain(std::exception_ptr primary) { if (primary) std::rethrow_exception(primary); }
+};
+template<bool Tasks> using Defers = std::conditional_t<Tasks,TaskDefers,SyncDefers>;
+
+// Only scalar leaves and these acyclic containers can cross this native
+// boundary. Build an independent typed tree before publishing the task:
+// the native string and container reference counts are not atomic.
+template<class T> requires std::is_arithmetic_v<T>
+T task_input(T value) { return value; }
+template<ExactName Name, class Rep>
+Exact<Name, Rep> task_input(Exact<Name, Rep> value) { return value; }
+inline Str task_input(const Str& value) { return Str(value.text()); }
+template<class T> Slice<T> task_input(const Slice<T>& value);
+template<class T, std::size_t N> Fixed<T, N> task_input(const Fixed<T, N>& value);
+template<class T> List<T> task_input(const List<T>& value);
+template<class K, class V> Map<K, V> task_input(const Map<K, V>& value);
+
+template<class T> Slice<T> task_input(const Slice<T>& value) {
+    std::vector<T> items;
+    items.reserve(static_cast<std::size_t>(value.length));
+    for (I i = 0; i < value.length; ++i) {
+        const auto& item = std::as_const(*value.storage)[static_cast<std::size_t>(value.start + i)];
+        items.push_back(task_input(item));
+    }
+    return capture_value(Slice<T>::of(std::move(items)));
+}
+template<class T, std::size_t N>
+Fixed<T, N> task_input(const Fixed<T, N>& value) {
+    return Fixed<T, N>(task_input(value.view));
+}
+template<class T> List<T> task_input(const List<T>& value) {
+    std::vector<T> items;
+    items.reserve(value.data->size());
+    for (const auto& item : std::as_const(*value.data)) items.push_back(task_input(item));
+    return capture_value(make_list<T>(std::move(items)));
+}
+template<class K, class V> Map<K, V> task_input(const Map<K, V>& value) {
+    auto result = new_map<K, V>();
+    for (const auto& [key, item] : value.data->items)
+        result.data->insert_or_assign(task_input(key), task_input(item));
+    return capture_value(std::move(result));
+}
+
+template<class T> std::optional<T> task_module_input(const std::optional<T>& slot) {
+    if(!slot)return std::nullopt;
+    return task_input(*slot);
+}
+template<bool Tasks,class Slot>
+decltype(auto) module_value(Slot& slot,const SourceSpan& site,const char* name) {
+    if constexpr(Tasks){
+        if(!slot)hua::runtime_error(site,"name `" + std::string(name) + "` is not initialized","E4001");
+        return *slot;
+    }else return (slot);
+}
 using TaskBody = std::function<Value()>;
 TaskHandle start_task(TaskBody body, const char* type, const SourceSpan& span);
 Value await_task(const TaskHandle&, const SourceSpan&);
-void task_wait(const char* name, std::vector<Value> args, const SourceSpan&);
+Value task_wait(const char* name, std::vector<Value> args, const SourceSpan&);
+I task_group_begin();
 int run_main(int argc,char** argv,const SourceSpan& main_site,Value (*body)(),bool tasks=false);
 }
 

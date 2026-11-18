@@ -1,7 +1,8 @@
-"""Exercise scalar Tasks through the Hua compiler and the native host frontend."""
+"""Exercise Task data through the Hua compiler and the native host frontend."""
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -41,7 +42,7 @@ fn main() {
 
 def run(exe, cwd, *args):
     return subprocess.run(
-        [exe, *args], cwd=cwd, timeout=30,
+        [exe, *args], cwd=cwd, timeout=30, env=dict(os.environ,HUA_TASK_WORKERS="1"),
         capture_output=True, text=True, encoding="utf-8",
     )
 
@@ -52,6 +53,24 @@ def verify(exe, compiler):
         for name, text, expected, modules in (
             ("demo", DEMO, "once\n42\n42\n", {}),
             ("scalars", SCALARS, "true 3 hua!\nping\n", {}),
+            ("containers", (Path(__file__).parent / "fixtures/n2-task-container-snapshot.hua").read_text(
+                encoding="utf-8"), "once before 5\n10 99 1 4\n", {}),
+            ("container-results", (Path(__file__).parent / "fixtures/n2-task-container-results.hua").read_text(
+                encoding="utf-8"), "8192 4096 17\nchanged task result\n", {}),
+            ("task-control", (Path(__file__).parent / "fixtures/n2-task-control.hua").read_text(
+                encoding="utf-8"), None, {}),
+            ("task-file", """import std.file as file
+import std.bytes as bytes
+fn worker() int {
+    let handle file.File = unwrap(file.open("task-data.txt","w+"))
+    unwrap(file.write_all(handle,bytes.from_text("hua")))
+    unwrap(file.seek(handle,0,"start"))
+    let content = unwrap(file.read_all(handle))
+    unwrap(file.close(handle))
+    return bytes.len(content)
+}
+fn main() { print(await spawn worker()) }
+""", "3\n", {}),
             ("imports", IMPORTS, "40 60\n", {
                 "left.hua": "pub async fn twice(x int) int { return x * 2 }\n",
                 "right.hua": "pub async fn twice(x int) int { return x * 3 }\n",
@@ -63,11 +82,14 @@ def verify(exe, compiler):
             for module, body in modules.items():
                 (work / module).write_text(body, encoding="utf-8")
             host = run(exe, work, "run", source)
-            assert (host.returncode, host.stdout, host.stderr) == (0, expected, ""), host
+            assert host.returncode == 0 and not host.stderr, host
+            if expected is not None:
+                assert host.stdout == expected, host
             built = run(exe, work, "run", compiler, "--execution-profile", "compiler", "--", source, output)
             assert built.returncode == 0, built
             receipt = json.loads(built.stdout)
-            assert receipt["status"] == "ok" and receipt["format"] == 6, receipt
+            expected_format = 29 if name == "task-file" else 6
+            assert receipt["status"] == "ok" and receipt["format"] == expected_format, receipt
             checked = run(exe, work, "check", output)
             assert checked.returncode == 0, checked
             for file in (source, *(work / module for module in modules)):
@@ -81,8 +103,11 @@ def verify(exe, compiler):
         for text, expected in (
             ("fn main() { print(await 42) }\n", "E3004@1:19"),
             ('async fn wrong() int { return "text" }\nfn main() {}\n', "E3004@"),
-            ("async fn wrong(xs []int) int { return 1 }\nfn main() {}\n", "E8201@"),
+            ("async fn wrong(xs []Buffer) int { return 1 }\nfn main() {}\n", "E8201@"),
+            ("async fn wrong(xs mut []int) {}\nfn main() {}\n", "E8201@"),
+            ("async fn wrong(xs [][]int) { xs[0][0]=1 }\nfn main() {}\n", "E3003@"),
             ("async fn main() {}\n", "E8201@"),
+            ("import std.task as task\nasync fn work() {}\nfn main() { task.timeout(work(),1) }\n", "E3004@"),
             ("let x = await 42\nfn main() {}\n", "E2004@"),
             ("fn main() { async fn nested() {} }\n", "E8201@"),
         ):
@@ -94,7 +119,7 @@ def verify(exe, compiler):
             assert receipt["status"] == "error" and expected in receipt["error"], receipt
             assert bad_output.read_bytes() == b"previous artifact"
 
-    print("Passed 3 positive and 6 negative scalar Task cases")
+    print("Passed 7 positive and 9 negative Task cases")
 
 
 if __name__ == "__main__":

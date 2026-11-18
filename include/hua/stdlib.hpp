@@ -19,17 +19,16 @@ struct RuntimeContext {
     std::shared_ptr<ManagedHeap> heap;
     std::uint64_t task_id{};std::shared_ptr<FileScope> files;
     const TypeRelations* type_relations{};
-    bool resumable{},in_task{},cleanup{},unwinding{},exiting{};
+    bool resumable{},in_task{},cleanup{},unwinding{},exiting{},task_worker_affine{};
 };
 struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; bool callback{};
-    // Dispatch cache: module_code(module), filled on first call (0 = not yet resolved).
-    mutable std::uint8_t module_id{}; };
+    std::uint8_t module_id{}; };
 // Small integer per standard module, so call dispatch compares bytes, not strings.
 inline constexpr std::string_view standard_modules[]={"alg","buffer","bytes","crypto","deque","encoding","error","file","fs","gc","heap","io","json","list","log","maps","math","os","path","process","random","sets","simd","strings","task","test","time"};
 constexpr std::uint8_t module_lookup(std::string_view name){for(std::size_t i=0;i<std::size(standard_modules);++i)if(standard_modules[i]==name)return static_cast<std::uint8_t>(i+1);return 255;}
 // Literal form: always folded at compile time.
 consteval std::uint8_t module_code(std::string_view name){return module_lookup(name);}
-inline std::uint8_t standard_module_id(const StandardFunction& f){if(!f.module_id)f.module_id=module_lookup(f.module);return f.module_id;}
+inline std::uint8_t standard_module_id(const StandardFunction& f){return f.module_id ? f.module_id : module_lookup(f.module);}
 struct StandardSignature { std::vector<std::string> parameters; std::string result; };
 StandardSignature standard_signature(const StandardFunction& function,const std::vector<std::string>& argument_types);
 std::string format_error(const ErrorValue& value);

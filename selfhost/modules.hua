@@ -319,6 +319,9 @@ fn reference(g mut Graph, e Environment, n ast.Node, name string, type_name bool
     }
     if target == "" {
         if type_name && catalog.primitive(name) { target = "builtin:type:"+name }
+        else if !type_name && (name=="$task_group_begin" || name=="$task_group_end") {
+            target = "builtin:core:"+unwrap(strings.slice(name,1,len(name)))
+        }
         else if !type_name && catalog.core(name) { target = "builtin:core:"+name }
     }
     if target == "" {

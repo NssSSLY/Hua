@@ -123,7 +123,7 @@ fn power(s State, op string) int {
     return 0
 }
 fn excluded(s State, t lexer.Token) bool {
-    if s.extended { return alg.contains(["interface","spawn","taskgroup","parallel","simd","unsafe","extern","@"],t.kind) }
+    if s.extended { return alg.contains(["interface","parallel","simd","unsafe","extern","@"],t.kind) }
     let kinds = ["import","struct","enum","interface","pub","async","await","spawn","taskgroup","parallel","simd","defer","unsafe","extern","match","for","nil","string","[", "]",".","?","@","&","|","^","~","<<",">>","++","--","..","..="]
     return alg.contains(kinds,t.kind)
 }
@@ -218,11 +218,14 @@ fn expression(s mut State, minimum int, multiline bool) Result<ast.NodeId> {
     if multiline { lines(s)? }
     var first = s.data[s.pos]
     var left ast.NodeId = ast.NodeId{pool:s.pool.identity,index:0}
-    if first.kind == "+" || first.kind == "-" || first.kind == "!" || (s.extended && (first.kind == "~" || first.kind == "await")) {
-        if first.kind == "await" && s.functions == 0 { return err(failure(first,"E2004","await requires a function scope")) }
+    if first.kind == "+" || first.kind == "-" || first.kind == "!" || (s.extended && (first.kind == "~" || first.kind == "await" || first.kind == "spawn")) {
+        if (first.kind == "await" || first.kind == "spawn") && s.functions == 0 { return err(failure(first,"E2004","await requires a function scope")) }
         take(s)?
         lines(s)?
         let child = expression(s,12,multiline)?
+        if first.kind == "spawn" && ast.kind(ast.get(s.pool,child)?.payload) != "Call" {
+            return err(failure(first,"E2002","spawn requires a function call"))
+        }
         left = node(s,ast.Payload.Unary(first.kind),first.start,s.last_end,[child])?
     } else { left = postfix(s,primary(s)?,multiline)? }
     while true {
@@ -352,7 +355,7 @@ fn statement(s mut State) Result<ast.NodeId> {
     var result ast.NodeId = ast.NodeId{pool:s.pool.identity,index:0}
     if excluded(s,t) { return err(unsupported(t)) }
     if s.extended && (t.kind == "let" || t.kind == "var" || t.kind == "const") { result = binding(s)? }
-    else if s.extended && alg.contains(["import","struct","enum","pub","for","match","defer"],t.kind) { result = extended_statement(s)? }
+    else if s.extended && alg.contains(["import","struct","enum","pub","for","match","defer","taskgroup"],t.kind) { result = extended_statement(s)? }
     else if t.kind == "let" || t.kind == "var" || t.kind == "const" {
         take(s)?
         let name = expect(s,"identifier")?
@@ -849,6 +852,22 @@ fn extended_statement(s mut State) Result<ast.NodeId> {
     if t.kind == "enum" { return enumeration(s,false) }
     if t.kind == "for" { return for_loop(s) }
     if t.kind == "match" { return match_statement(s) }
+    if t.kind == "taskgroup" {
+        take(s)?
+        if s.functions == 0 { return err(failure(t,"E2004","taskgroup requires function")) }
+        let body = ast.get(s.pool,block(s)?)?
+        let begin = node(s,ast.Payload.Name("$task_group_begin"),t.start,t.end,[])?
+        let start = node(s,ast.Payload.Call(),t.start,t.end,[begin])?
+        let name = "$group$"+str(t.start)
+        let binding = node(s,ast.Payload.Let(name),t.start,t.end,[start])?
+        let handle = node(s,ast.Payload.Name(name),t.start,t.end,[])?
+        let end = node(s,ast.Payload.Name("$task_group_end"),t.start,t.end,[])?
+        let finish = node(s,ast.Payload.Call(),t.start,t.end,[end,handle])?
+        let cleanup = node(s,ast.Payload.Defer(),t.start,t.end,[finish])?
+        var children = list.from_slice([binding,cleanup])
+        list.extend(children,body.children)?
+        return node(s,ast.Payload.Block(),t.start,body.span.end,list.snapshot(children))
+    }
     if t.kind == "defer" {
         take(s)?
         if s.functions == 0 { return err(failure(t,"E2004","defer requires function")) }

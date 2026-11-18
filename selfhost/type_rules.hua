@@ -98,9 +98,20 @@ pub fn shared(t string) bool {
     return strings.starts_with(t,"[") || strings.starts_with(t,"map<") || strings.starts_with(t,"Result<") || strings.starts_with(t,"List<") || t == "Buffer"
 }
 
-# The first selfhost task slice transports only scalar values.
-pub fn task_scalar(t string) bool {
-    return category(t) != "" || t == "bool" || t == "string"
+# Restrict this profile to data whose elements can be snapshotted recursively.
+pub fn task_payload(t string, depth int) bool {
+    if depth > 64 { return false }
+    if category(t) != "" || t == "bool" || t == "string" { return true }
+    if strings.starts_with(t,"[") { return task_payload(element(t),depth+1) }
+    if strings.starts_with(t,"List<") {
+        let ts = arguments(t,"List")
+        return len(ts) == 1 && task_payload(ts[0],depth+1)
+    }
+    if strings.starts_with(t,"map<") {
+        let ts = arguments(t,"map")
+        return len(ts) == 2 && alg.contains(["int","bool","string"],ts[0]) && task_payload(ts[1],depth+1)
+    }
+    return false
 }
 pub fn value_type_allowed(t string, allow_void bool) bool {
     if t == "void" { return allow_void }

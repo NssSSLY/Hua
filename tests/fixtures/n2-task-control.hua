@@ -1,0 +1,24 @@
+import std.task as task
+var setting = 5
+fn cleanup(value int) {
+    task.yield()
+    print("cleanup",value)
+}
+fn observe(delay int) int {
+    defer cleanup(delay)
+    task.sleep(delay)
+    return setting
+}
+fn main() {
+    taskgroup {
+        let slow = spawn observe(500)
+        let fast = spawn observe(1)
+        setting = 9
+        print(await fast,setting)
+        print(task.cancel(slow))
+        print(is_err(task.timeout(slow,100)),task.state(slow))
+    }
+    let left = spawn observe(1)
+    let right = spawn observe(2)
+    print(await task.all(left,right))
+}

@@ -65,6 +65,8 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
         if text == "void" && !allow_void { return err(fail(e,n,"E3004","void is not an ordinary value type")) }
         let resolved = target(m,e,n)
         if resolved == "builtin:std.json#Value" { return ok("Json") }
+        if resolved == "builtin:std.file#File" { return ok("std.file.File") }
+        if resolved == "builtin:std.file#IOFailure" { return ok("std.file.IOFailure") }
         if strings.starts_with(resolved,"builtin:type:") {
             if text == "List" || text == "map" || text == "Task" { return err(fail(e,n,"E3004","container requires type arguments")) }
             return ok(text)
@@ -90,7 +92,7 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
     }
     if k == "GenericType" {
         if text == "Task" {
-            if ts[0] != "void" && !rules.task_scalar(ts[0]) { return err(fail(e,n,"E8201","Task result is outside the scalar profile")) }
+            if ts[0] != "void" && !rules.task_payload(ts[0],0) { return err(fail(e,n,"E8201","Task result is outside the supported data profile")) }
             return ok("Task<"+ts[0]+">")
         }
         if text == "Result" {
@@ -163,7 +165,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
             if len(p.children) == 0 { return err(fail(e,p,"E8201","C04-T1 requires parameter annotations")) }
             let typ = typename(m,e,p.children[0])?
             let write = strings.ends_with(ast.payload_text(p.payload)," mut") || ast.kind(get(e,p.children[0]).payload) == "MutableType"
-            if asynchronous && (write || !rules.task_scalar(typ)) { return err(fail(e,p,"E8201","async parameter must be a readonly scalar")) }
+            if asynchronous && (write || !rules.task_payload(typ,0)) { return err(fail(e,p,"E8201","async parameter must be readonly and snapshot-compatible")) }
             list.append(parameters,Parameter{target:declaration(m,e,p),type_name:typ,writable:write})?
         } else {
             var values []string = []
@@ -173,7 +175,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
             else { result = "multi<"+strings.join(list.snapshot(results),",")+">" }
         }
     }
-    if asynchronous && result != "void" && !rules.task_scalar(result) { return err(fail(e,n,"E8201","async result is outside the scalar profile")) }
+    if asynchronous && result != "void" && !rules.task_payload(result,0) { return err(fail(e,n,"E8201","async result is outside the supported data profile")) }
     return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,asynchronous:asynchronous,writable:true})
 }
 # 有限单调迭代；能力推断引用 C03 的词法身份。
@@ -261,6 +263,24 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
     let parts = strings.split(name,"#")
     let module = parts[0]
     let method = parts[1]
+    if module == "builtin:std.task" && !alg.contains(["sleep","yield","worker_id"],method) {
+        let task = rules.arguments(arguments[0].type_name,"Task")
+        if len(task)!=1 { return err(fail(e,n,"E3004","standard task operation requires Task<T>")) }
+        var parameters = clone(s.parameters)
+        parameters[0] = arguments[0].type_name
+        if (method=="all" || method=="timeout") && task[0]=="void" {
+            return err(fail(e,n,"E3004","this operation requires a value task"))
+        }
+        if method=="all" || method=="race" {
+            parameters[1] = parameters[0]
+            s.result=parameters[0]
+            if method=="all" {
+                s.result="Task<[]"+task[0]+">"
+            }
+        }
+        if method=="timeout" { s.result="Result<"+task[0]+",string>" }
+        s.parameters=parameters
+    }
     if module == "builtin:std.alg" {
         let element = rules.element(arguments[0].type_name)
         if !alg.contains(["int","float","string"],element) || (method == "sum" && element == "string") { return err(fail(e,n,"E3004","algorithm requires supported scalar array")) }
@@ -305,6 +325,11 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
 }
 fn core(m mut Model, e Environment, n ast.Node, name string, args []Info) Result<Info> {
     let method = rules.cut(name,13,len(name))
+    if method=="task_group_begin" && len(args)==0 { return ok(info("int",false)) }
+    if method=="task_group_end" && len(args)==1 {
+        require(m,e,"int",args[0],get(e,n.children[1]))?
+        return ok(info("void",false))
+    }
     var arity = 1
     if alg.contains(["min","max","has","delete","unwrap_or"],method) { arity = 2 }
     if method == "clamp" { arity = 3 }
@@ -631,10 +656,25 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
     }
     if k == "Unary" {
         let x = expression(m,e,n.children[0])?
+        if text == "spawn" {
+            let call = get(e,n.children[0])
+            let callee_target = target(m,e,get(e,call.children[0]))
+            if !has(m.functions,callee_target) { return err(fail(e,n,"E8201","spawn requires a known function declaration")) }
+            let signature = unwrap(m.functions[callee_target])
+            for parameter in signature.parameters {
+                if parameter.writable || !rules.task_payload(parameter.type_name,0) {
+                    return err(fail(e,n,"E8201","spawn requires readonly snapshot-compatible parameters"))
+                }
+            }
+            if signature.result!="void" && !rules.task_payload(signature.result,0) {
+                return err(fail(e,n,"E8201","spawn result is outside the supported data profile"))
+            }
+            return ok(info("Task<"+signature.result+">",false))
+        }
         if text == "await" {
             let task = rules.arguments(x.type_name,"Task")
             if len(task) != 1 { return err(fail(e,n,"E3004","await requires Task<T>")) }
-            return ok(info(task[0],false))
+            return ok(info(task[0],true))
         }
         if text == "!" { require(m,e,"bool",x,n)?
             return ok(info("bool",false)) }

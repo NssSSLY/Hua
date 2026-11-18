@@ -20,7 +20,8 @@ std::filesystem::path path(const std::string& text,RuntimeContext* context){if(t
 void bounded(const std::string& text,const SourceSpan& s){if(text.size()>max_text)runtime_error(s,"standard library text exceeds 16 MiB","E4099");}
 }
 const std::vector<StandardFunction>& standard_functions() {
-    static const std::vector<StandardFunction> functions={
+    static const auto functions=[] {
+        std::vector<StandardFunction> entries={
         {"file","open",{"string","string"},"Result<std.file.File,std.error.Value>",false,false,8},
         {"file","read",{"std.file.File","int"},"Result<Bytes?,std.file.IOFailure>",false,false,8},
         {"file","write",{"std.file.File","Bytes"},"Result<int,std.file.IOFailure>",false,false,8},
@@ -395,7 +396,11 @@ const std::vector<StandardFunction>& standard_functions() {
         {"file","read_all",{"std.file.File"},"Result<Bytes,std.file.IOFailure>",false,false,29},
         {"file","read_exact",{"std.file.File","int"},"Result<Bytes?,std.file.IOFailure>",false,false,29},
         {"file","write_all",{"std.file.File","Bytes"},"Result<void,std.file.IOFailure>",false,false,29},
-    };return functions;
+        };
+        for(auto& entry:entries)entry.module_id=module_lookup(entry.module);
+        return entries;
+    }();
+    return functions;
 }
 std::string standard_name(const StandardFunction& f){return "$std$"+f.module+"$"+f.name;}
 const StandardFunction* standard_function(std::string_view name){

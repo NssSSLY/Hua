@@ -20,8 +20,11 @@ Value call_builtin(const char* name, const SourceSpan& span, std::vector<Value> 
     auto& running = current_state();
     return hua::invoke_builtin(name, args, span, *running.output, contextual, result_type, running.context);
 }
+static Value resumable_bridge(const BridgeInfo&,const SourceSpan&,std::vector<Value>);
 Value call_bridge(const BridgeInfo& site, const SourceSpan& span, std::initializer_list<Value> args) {
     auto& running = current_state();
+    if(running.fiber && hua::builtin_may_suspend(site.info,running.context))
+        return resumable_bridge(site,span,std::vector<Value>(args));
     return hua::invoke_builtin(site.info, site.name, std::vector<Value>(args), span, *running.output,
                                site.contextual, site.result_type, running.context);
 }
@@ -118,8 +121,8 @@ public:
 
     hua::Routine<Value> run() {
         for (;;) {
-            // Root runs on the entry thread. All child fibers use the single
-            // compute worker. Win32 TLS and C++ unwinding remain thread-affine.
+            // Root runs on the entry thread. Each scheduled fiber stays
+            // on the worker that created it, including after suspension.
             if (GetCurrentThreadId() != owner) std::terminate();
             {
                 BindState bind(running);
@@ -203,13 +206,63 @@ Value await_task(const TaskHandle& task, const SourceSpan& span) {
     fail(span, "native Task requires Windows", "E4103");
 #endif
 }
-void task_wait(const char* name, std::vector<Value> args, const SourceSpan& span) {
+Value task_wait(const char* name, std::vector<Value> args, const SourceSpan& span) {
 #ifdef _WIN32
     auto& running = current_state();
-    running.fiber->wait(hua::invoke_resumable(name, std::move(args), span, *running.output, {}, "void", running.context));
+    return running.fiber->wait(hua::invoke_resumable(name, std::move(args), span, *running.output, {}, "void", running.context));
 #else
     fail(span, "native Task requires Windows", "E4103");
 #endif
+}
+
+static Value resumable_bridge(const BridgeInfo& site,const SourceSpan& span,std::vector<Value> args){
+#ifdef _WIN32
+    auto& running=current_state();
+    return running.fiber->wait(hua::invoke_resumable(site.name,std::move(args),span,*running.output,
+                                                     site.contextual,site.result_type,running.context));
+#else
+    fail(span,"native Task requires Windows","E4103");
+#endif
+}
+
+void check_global_write(const SourceSpan& span) {
+    if (current_state().context->in_task)
+        fail(span,"cannot mutate immutable binding or read-only view","E4007");
+}
+
+I task_group_begin() {
+    return static_cast<I>(current_state().context->tasks->begin_group());
+}
+
+void TaskDefers::drain(std::exception_ptr primary) {
+    auto& running = current_state();
+    auto& context = *running.context;
+    struct Restore {
+        bool& flag;
+        bool previous;
+        Restore(bool& flag, bool value) : flag(flag), previous(std::exchange(flag,value)) {}
+        ~Restore() { flag=previous; }
+    };
+    Restore cleanup(context.cleanup,true);
+    Restore unwinding(context.unwinding,context.unwinding || bool(primary));
+    auto trace = running.sites;
+    auto depth = running.depth;
+    while (!calls.empty()) {
+        auto call = std::move(calls.back());
+        calls.pop_back();
+        running.depth = base_depth;
+        try { call(); }
+        catch (...) {
+            if (!primary) {
+                primary = std::current_exception();
+                trace = running.sites;
+                depth = running.depth;
+            }
+        }
+    }
+    running.sites = trace;
+    running.depth = depth;
+    if (primary) std::rethrow_exception(primary);
 }
 
 int run_main(int argc, char** argv, const SourceSpan& main_site, Value (*body)(), bool tasks) {
@@ -235,7 +288,7 @@ int run_main(int argc, char** argv, const SourceSpan& main_site, Value (*body)()
             state.depth = 1;
             if (tasks) {
 #ifdef _WIN32
-                hua::use_single_task_worker();
+                context->task_worker_affine = true;
                 native_tasks_enabled = true;
                 context->resumable = true;
                 try {

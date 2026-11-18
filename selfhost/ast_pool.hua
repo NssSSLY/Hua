@@ -188,7 +188,7 @@ fn shape(payload Payload, arity int) bool {
         GenericType(x)=>{return x != "" && arity >= 1}
         BindingList=>{return true}
         MatchArm=>{return arity == 3}
-        Unary(op)=>{return (op == "+" || op == "-" || op == "!" || op == "~" || op == "await") && arity == 1}
+        Unary(op)=>{return (op == "+" || op == "-" || op == "!" || op == "~" || op == "await" || op == "spawn") && arity == 1}
         SliceType=>{return arity == 1}
         MutableType=>{return arity == 1}
         Import(x)=>{return x != "" && arity <= 1}

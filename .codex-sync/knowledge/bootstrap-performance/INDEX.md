@@ -1,5 +1,13 @@
 # Hua自举性能项目记忆索引
 
+## Windows N2 Task 控制、多 worker 与 IOCP（2026-11-18）
+
+[本机回归、对照和自举验收](runs/2026-11-18-n2-windows-workers-iocp.md)。
+
+## 本机 SDK 移植与 N2.3 容器快照（2026-11-18）
+
+[装配、代际与三路径差分](runs/2026-11-18-n2-container-tasks.md)。
+
 ## P0 完整阶段测量与源码标准模块
 
 [完整自举 VM／原生阶段对照](runs/2026-11-18-full-selfhost-phase-profile.md) · [Windows SDK 源码标准模块](runs/2026-11-18-sdk-source-stdlib.md)
