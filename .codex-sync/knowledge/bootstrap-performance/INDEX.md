@@ -1,5 +1,21 @@
 # Hua自举性能项目记忆索引
 
+## P0 完整阶段测量与源码标准模块
+
+[完整自举 VM／原生阶段对照](runs/2026-11-18-full-selfhost-phase-profile.md) · [Windows SDK 源码标准模块](runs/2026-11-18-sdk-source-stdlib.md)
+
+## Hua 自举编译器标量异步（2026-11-18）
+
+[旧种子升级、两代产物和预算](runs/2026-11-18-selfhost-scalar-async.md)。
+
+## Windows 可搬移种子 SDK（2026-11-18）
+
+[搬移、产物与预算验收](runs/2026-11-18-windows-seed-sdk.md)。包内 C2、C3 逐字节一致。
+
+## N2.1–N2.2 Windows 单计算线程原生 Task（2026-11-18）
+
+[实施与实际核对](runs/2026-11-18-n2-single-worker.md)。
+
 ## Windows 跨语言基准（2026-11-18）
 
 [端到端、工作集、预热及构建记录](runs/2026-11-18-cross-language-benchmarks.md)。Hua VM、HUAB 和原生与 Lua、Python、Java、Go、C++ 同机七任务对照，AST 递归达到 60 秒即停止。

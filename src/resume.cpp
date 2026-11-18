@@ -26,6 +26,8 @@ struct Frame {
 };
 thread_local Frame* active_frame=nullptr;
 struct Active {Frame* previous;explicit Active(Frame* f):previous(active_frame){active_frame=f;}~Active(){active_frame=previous;}};
+// Set at startup by the Windows native Task entry, before the pool is constructed.
+bool single_task_worker = false;
 unsigned workers(){
     auto available=std::max(std::thread::hardware_concurrency(),1u);
 #ifdef _WIN32
@@ -35,7 +37,7 @@ unsigned workers(){
     cpu_set_t allowed;CPU_ZERO(&allowed);
     if(sched_getaffinity(0,sizeof(allowed),&allowed)==0&&CPU_COUNT(&allowed)>0)available=std::min(available,static_cast<unsigned>(CPU_COUNT(&allowed)));
 #endif
-    auto n=std::clamp(available,1u,8u);
+    auto n=single_task_worker ? 1u : std::clamp(available,1u,8u);
     if(auto p=std::getenv("HUA_TASK_WORKERS")){unsigned v{};auto end=p+std::char_traits<char>::length(p);auto r=std::from_chars(p,end,v);if(r.ec!=std::errc{}||r.ptr!=end||v<1||v>n)throw std::runtime_error("HUA_TASK_WORKERS must be 1..min(8, available CPUs)");n=v;}
     return n;
 }
@@ -122,7 +124,9 @@ BlockPool& blockers(){static BlockPool instance;return instance;}
 Routine<Value> lift(Routine<void> r){co_await std::move(r);co_return Value{};}
 }
 void enqueue_task(const std::shared_ptr<TaskState>& state,TaskResumeJob job,RuntimeContext child){
-    auto& pool=scheduler();(void)blockers();auto f=std::make_shared<Frame>();f->state=state;f->job=std::move(job);
+    auto& pool=scheduler();
+    if (!single_task_worker) (void)blockers();
+    auto f=std::make_shared<Frame>();f->state=state;f->job=std::move(job);
     f->context=std::move(child);f->context.heap=state->heap;
     f->root.emplace(execute_frame(f.get()));f->next=f->root->handle;
     // Entry waiters also share this condition; wake every class of waiter so a root
@@ -143,6 +147,7 @@ void Blocking::await_suspend(std::coroutine_handle<> h){
     blockers().submit({state,std::move(job)});
 }
 Value Blocking::await_resume(){if(state->error)std::rethrow_exception(state->error);return std::move(state->value);}
+void use_single_task_worker() { single_task_worker = true; }
 unsigned task_worker_count(){return scheduler().count;}
 void notify_task_scheduler()noexcept{scheduler().changed.notify_all();}
 Value sync_wait(Routine<Value> routine,RuntimeContext& context){

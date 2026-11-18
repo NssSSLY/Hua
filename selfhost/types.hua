@@ -22,6 +22,7 @@ pub struct Function { target string
     node int
     parameters []Parameter
     result string
+    asynchronous bool
     writable bool }
 pub struct Model { graph modules.Graph
     refs map[string]string
@@ -65,7 +66,7 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
         let resolved = target(m,e,n)
         if resolved == "builtin:std.json#Value" { return ok("Json") }
         if strings.starts_with(resolved,"builtin:type:") {
-            if text == "List" || text == "map" { return err(fail(e,n,"E3004","container requires type arguments")) }
+            if text == "List" || text == "map" || text == "Task" { return err(fail(e,n,"E3004","container requires type arguments")) }
             return ok(text)
         }
         if resolved == "" { return err(fail(e,n,"E3004","unresolved type")) }
@@ -75,7 +76,7 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
     var args = list.from_slice(empty)
     if k == "GenericType" && text == "List" && ast.payload_text(get(e,n.children[0]).payload) == "void" { return err(fail(e,n,"E3004","List<void> is invalid")) }
     if k == "GenericType" && text == "map" && ast.payload_text(get(e,n.children[1]).payload) == "void" { return err(fail(e,n,"E3004","map values cannot be void")) }
-    for i in 0..len(n.children) { list.append(args,typename_context(m,e,n.children[i],k == "GenericType" && text == "Result" && i == 0)?)? }
+    for i in 0..len(n.children) { list.append(args,typename_context(m,e,n.children[i],k == "GenericType" && (text == "Result" || text == "Task") && i == 0)?)? }
     let ts = list.snapshot(args)
     if k == "OptionalType" {
         if strings.starts_with(ts[0],"Result<") { return err(fail(e,n,"E3004","Optional<Result> is unsupported")) }
@@ -88,6 +89,10 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
         return ok("["+str(unwrap(size))+"]"+ts[0])
     }
     if k == "GenericType" {
+        if text == "Task" {
+            if ts[0] != "void" && !rules.task_scalar(ts[0]) { return err(fail(e,n,"E8201","Task result is outside the scalar profile")) }
+            return ok("Task<"+ts[0]+">")
+        }
         if text == "Result" {
             var error = "string"
             if len(ts) == 2 { error = ts[1] }
@@ -145,6 +150,10 @@ fn require(m mut Model, e Environment, expected string, actual Info, n ast.Node)
 }
 fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Function> {
     let params = get(e,n.children[0])
+    let asynchronous = strings.contains(ast.payload_text(n.payload)," async")
+    if asynchronous && target == unwrap(list.get(m.graph.units,0)).id+"#main" {
+        return err(fail(e,n,"E8201","async entry is outside the scalar profile"))
+    }
     var empty []Parameter = []
     var parameters = list.from_slice(empty)
     var result = "void"
@@ -154,6 +163,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
             if len(p.children) == 0 { return err(fail(e,p,"E8201","C04-T1 requires parameter annotations")) }
             let typ = typename(m,e,p.children[0])?
             let write = strings.ends_with(ast.payload_text(p.payload)," mut") || ast.kind(get(e,p.children[0]).payload) == "MutableType"
+            if asynchronous && (write || !rules.task_scalar(typ)) { return err(fail(e,p,"E8201","async parameter must be a readonly scalar")) }
             list.append(parameters,Parameter{target:declaration(m,e,p),type_name:typ,writable:write})?
         } else {
             var values []string = []
@@ -163,7 +173,8 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
             else { result = "multi<"+strings.join(list.snapshot(results),",")+">" }
         }
     }
-    return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,writable:true})
+    if asynchronous && result != "void" && !rules.task_scalar(result) { return err(fail(e,n,"E8201","async result is outside the scalar profile")) }
+    return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,asynchronous:asynchronous,writable:true})
 }
 # 有限单调迭代；能力推断引用 C03 的词法身份。
 fn capability(m mut Model, e Environment, id ast.NodeId, values map[string]bool) Result<bool> {
@@ -493,7 +504,7 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
         let args = list.snapshot(arguments)
         if strings.starts_with(callee.type_name,"builtin:std.") { return standard(m,e,n,callee.type_name,args) }
         if strings.starts_with(callee.type_name,"builtin:core:") { return core(m,e,n,callee.type_name,args) }
-        var f = Function{target:"",module:"",node:0,parameters:[],result:"",writable:false}
+        var f = Function{target:"",module:"",node:0,parameters:[],result:"",asynchronous:false,writable:false}
         if strings.starts_with(callee.type_name,"fn:") { f = unwrap(m.functions[rules.cut(callee.type_name,3,len(callee.type_name))]) }
         else if strings.starts_with(callee.type_name,"variant:") { f = unwrap(m.variants[rules.cut(callee.type_name,8,len(callee.type_name))]) }
         else { return err(fail(e,n,"E3004","value is not callable")) }
@@ -506,6 +517,7 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
                 if rules.element(expected) != rules.element(args[i].type_name) || (!strings.starts_with(expected,"[]") && strings.starts_with(args[i].type_name,"[]")) { return err(fail(e,get(e,n.children[i+1]),"E3004","mut array borrow requires identical layout")) }
             }
         }
+        if f.asynchronous { return ok(info("Task<"+f.result+">",false)) }
         return ok(info(f.result,f.writable))
     }
     if k == "Array" || k == "Pack" {
@@ -619,6 +631,11 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
     }
     if k == "Unary" {
         let x = expression(m,e,n.children[0])?
+        if text == "await" {
+            let task = rules.arguments(x.type_name,"Task")
+            if len(task) != 1 { return err(fail(e,n,"E3004","await requires Task<T>")) }
+            return ok(info(task[0],false))
+        }
         if text == "!" { require(m,e,"bool",x,n)?
             return ok(info("bool",false)) }
         let category = rules.category(x.type_name)
@@ -1008,7 +1025,7 @@ pub fn analyze(entry string) Result<Model> {
             var ps = list.from_slice(empty)
             for child in n.children { list.append(ps,Parameter{target:"",type_name:typename(m,e,child)?,writable:false})? }
             let dot = strings.index(symbol.name,".")
-            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:symbol.module+"#"+rules.cut(symbol.name,0,dot),writable:true}
+            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:symbol.module+"#"+rules.cut(symbol.name,0,dot),asynchronous:false,writable:true}
         } else if symbol.kind == "Enum" { m.symbols[symbol.target] = info("enum:"+symbol.target,false) }
     }
     infer(m,units)?
@@ -1017,7 +1034,7 @@ pub fn analyze(entry string) Result<Model> {
         var empty []flow.Parameter=[]
         var parameters=list.from_slice(empty)
         for p in f.parameters { list.append(parameters,flow.Parameter{target:p.target,type_name:p.type_name,writable:p.writable})? }
-        flow_functions[name]=flow.Function{target:f.target,module:f.module,node:f.node,parameters:list.snapshot(parameters),result:f.result}
+        flow_functions[name]=flow.Function{target:f.target,module:f.module,node:f.node,parameters:list.snapshot(parameters),result:f.result,asynchronous:f.asynchronous}
     }
     var flow_variants=map[string]string{}
     for name, f in m.variants { flow_variants[name]=f.result }

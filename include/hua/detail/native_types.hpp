@@ -5,6 +5,7 @@ namespace hn {
 // The function's cleanup has already run. A failed result conversion is
 // attributed to the call site, outside the returning frame.
 template<class Convert> auto complete_return_conversion(Convert& convert){
+    auto& state = current_state();
     const auto depth=state.depth;
     const auto* site=state.sites[depth-1];
     state.depth=depth-1;

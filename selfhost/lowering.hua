@@ -101,6 +101,11 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
     if k == "Const" || k == "Enum" || k == "Variant" || k == "Import" || k == "Program" || k == "Parameters" {
         return err(fail(u,n,"E8201","node outside C05 core"))
     }
+    if k == "Unary" && text == "await" {
+        let callee = add(s,u,n,"Name","$core$task_await","builtin:task_await",false,[],role)?
+        let operand = lowered(s,u,n.children[0],depth+1,role)?
+        return add(s,u,n,"Call","",t,false,[callee,operand],role)
+    }
     if k == "Match" {
         t = unwrap(s.model.facts[key(u,get(u,n.children[0]))]).type_name
     }
@@ -124,9 +129,36 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
     if (k == "Name" || k == "TypeName" || k == "StructLiteral") && ref != "" { text = runtime_name(s,ref) }
     if decl != "" && (k == "Function" || k == "Struct" || k == "Let" || k == "Var" || k == "Parameter" || k == "Name") {
         text = runtime_name(s,decl)
+        if k == "Function" && role == "async-body" {
+            text = "$async$"+text
+            t = "fn:"+text
+        }
         if k == "Parameter" && (strings.ends_with(ast.payload_text(n.payload)," mut") || (len(n.children)>0 && ast.kind(get(u,n.children[0]).payload)=="MutableType")) { text += " mut" }
     }
     return add(s,u,n,k,text,t,w,list.snapshot(children),role)
+}
+fn async_wrapper(s mut State, u modules.Unit, n ast.Node, f types.Function) Result<int> {
+    let name = runtime_name(s,f.target)
+    let body_name = "$async$"+name
+    let task = "Task<"+f.result+">"
+    var empty []int = []
+    var children = list.from_slice(empty)
+    var operands = list.from_slice(empty)
+    list.append(operands,add(s,u,n,"Name","$core$task_start","builtin:task_start",false,[],"source")?)?
+    list.append(operands,add(s,u,n,"Name",body_name,"fn:"+body_name,false,[],"source")?)?
+    for id in get(u,n.children[0]).children {
+        let p = get(u,id)
+        if ast.kind(p.payload) != "Parameter" { continue }
+        list.append(children,lowered(s,u,id,2,"source")?)?
+        let parameter = runtime_name(s,declaration(s,u,p))
+        list.append(operands,add(s,u,p,"Name",parameter,annotation(s,u,p).type_name,false,[],"source")?)?
+    }
+    let typ = add(s,u,n,"TypeName",task,"",false,[],"source")?
+    list.append(children,add(s,u,n,"ReturnTypes","","",false,[typ],"source")?)?
+    let start = add(s,u,n,"Call","",task,false,list.snapshot(operands),"source")?
+    let result = add(s,u,n,"Return","","",false,[start],"source")?
+    list.append(children,add(s,u,n,"Block","","",false,[result],"source")?)?
+    return add(s,u,n,"Function",name,"fn:"+name,false,list.snapshot(children),"source")
 }
 fn enum_fields(s mut State, u modules.Unit, n ast.Node, name string) Result<[]FieldInfo> {
     var empty []FieldInfo = []
@@ -210,7 +242,7 @@ pub fn verify(c Core) Result<void> {
     var depths = map[int]int{}
     for i in 0..list.len(c.nodes) {
         let n = unwrap(list.get(c.nodes,i))
-        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || !alg.contains(["source","enum-layout","enum-constructor"],n.role) { return err("E8203@1:1 invalid C05 node") }
+        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || !alg.contains(["source","enum-layout","enum-constructor","async-body"],n.role) { return err("E8203@1:1 invalid C05 node") }
         var depth = 1
         for child in n.children {
             if child<0 || child>=i { return err("E8203@1:1 invalid C05 child/order") }
@@ -310,6 +342,11 @@ pub fn lower(model types.Model) Result<Core> {
                 let k = ast.kind(n.payload)
                 if k == "Import" { continue }
                 if k == "Enum" { for value in enumeration(s,u,n)? { list.append(roots,value)? } }
+                else if k == "Function" && strings.contains(ast.payload_text(n.payload)," async") {
+                    let f = unwrap(model.functions[declaration(s,u,n)])
+                    list.append(roots,lowered(s,u,id,1,"async-body")?)?
+                    list.append(roots,async_wrapper(s,u,n,f)?)?
+                }
                 else { list.append(roots,lowered(s,u,id,1,"source")?)? }
             }
             list.append(s.core.initialization,Initializer{module:u.id,roots:list.snapshot(roots)})?

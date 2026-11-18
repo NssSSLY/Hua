@@ -38,7 +38,8 @@ pub struct Function { target string
     module string
     node int
     parameters []Parameter
-    result string }
+    result string
+    asynchronous bool }
 struct WriteArgument { destination string
     parameter bool
     writable bool }
@@ -718,6 +719,12 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         if k=="Index" { out.root.record_copy=false }
         if k=="Index" && len(rules.arguments(base.root.type_name,"map"))==2 { out.root.type_name=typ+"?" }
         return ok(out) }
+    if k=="Unary" && text=="await" {
+        let operand=expression(s,e,n.children[0])?
+        let task=rules.arguments(operand.root.type_name,"Task")
+        if len(task)==1 { return ok(value(task[0],false)) }
+        return ok(value("",false))
+    }
     if k=="Propagate" { var out=expression(s,e,n.children[0])?
         let ts=rules.arguments(out.root.type_name,"Result")
         if len(ts)==2 { out.root.type_name=ts[0] }
@@ -738,7 +745,11 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         if strings.starts_with(name,"variant:") { let variant=rules.cut(name,8,len(name))
             return ok(seeded(s,unwrap(s.variants[variant]),true,e.function+"!"+key(e.unit.id,n.id.index))) }
         if strings.starts_with(name,"fn:") { let fn_name=rules.cut(name,3,len(name))
-            if has(s.functions,fn_name) { return invoke(s,e,n,unwrap(s.functions[fn_name]),args) } }
+            if has(s.functions,fn_name) {
+                let f=unwrap(s.functions[fn_name])
+                if f.asynchronous { return ok(value("Task<"+f.result+">",false)) }
+                return invoke(s,e,n,f,args)
+            } }
         if len(args)>0 && alg.contains(["builtin:core:ok","builtin:core:err","builtin:core:unwrap","builtin:core:unwrap_err","builtin:core:unwrap_or","builtin:core:clone"],name) { var out=args[0]
             if name=="builtin:core:clone" { out=seeded(s,args[0].root.type_name,true,e.function+"!"+key(e.unit.id,n.id.index))
                 out.root.deep_owned=true

@@ -60,7 +60,7 @@ positive=[
 ]
 positive.pop()
 negative=['let x=[1,]\n','let x=map[string]int{"a" 1}\n','struct A{x}\n','import a as\n','for x 0..2{}\n','enum A{B(,)}\n','match x{1 print(1)}\n','let a,=1\n','fn f()(int,){}\n','x[]=1\n','"unterminated','let x [2]int=\n']
-excluded=['interface X{}\n','async fn f(){}\n','@test fn f(){}\n','unsafe{}\n','fn f<T>(x T) T{return x}\n','f<int>(1)\n','fn X.f(){}\n','fn f(){fn g(){}}\n','fn f(){struct X{}}\n','let x Task<int>=nil\n','let x ptr<int>=nil\n','let x Result<int,std.error.Value>=nil\n','let x Custom<int>=nil\n']
+excluded=['interface X{}\n','fn f(){async fn g(){}}\n','@test fn f(){}\n','unsafe{}\n','fn f<T>(x T) T{return x}\n','f<int>(1)\n','fn X.f(){}\n','fn f(){fn g(){}}\n','fn f(){struct X{}}\n','let x Task<ref<int>>=nil\n','let x ptr<int>=nil\n','let x Result<int,std.error.Value>=nil\n','let x Custom<int>=nil\n']
 def parser_case(name,text,phase='positive',save=True):
     global checks
     path=work/(name+'.hua');path.write_text(text,encoding='utf-8',newline='')

@@ -2,7 +2,7 @@
 # on the VM: same stdout, same stderr (diagnostic text, location, source excerpt and
 # "called from" trace) and same exit code. Programs outside the subset must be rejected
 # by `hua native` with exit code 2, never miscompiled.
-import concurrent.futures, pathlib, subprocess, sys, tempfile, shutil
+import concurrent.futures, os, pathlib, subprocess, sys, tempfile, shutil
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'tools'))
 import native_build
 hua = pathlib.Path(sys.argv[1]).resolve()
@@ -895,11 +895,93 @@ fn main() {
     print(work(9))
 }
 ''')
-reject('task', '''fn work(n int) int { return n * 2 }
+case('native_task_single_worker', '''import std.task as task
+fn wait_inner(child Task<int>) int { return await child }
+fn wait_outer(child Task<int>) int { return wait_inner(child) }
+async fn leaf(value int, delay int, worker string) int {
+    task.sleep(delay)
+    task.yield()
+    print("leaf", value, task.worker_id() == worker)
+    return value * 2
+}
+async fn parent() int {
+    let worker = task.worker_id()
+    let first = leaf(21, 1, worker)
+    let second = leaf(7, 0, worker)
+    print("second", wait_outer(second))
+    print("first", wait_outer(first), wait_outer(first))
+    return 9
+}
 fn main() {
-    let t = spawn work(21)
+    print("root", await parent())
+}
+''')
+case('native_task_scalar_snapshot', '''import std.task as task
+fn bridge(value string) string { return str(value) + "!" }
+fn worker(value string, amount f64, enabled bool) string {
+    task.yield()
+    if enabled { print(amount)
+        return bridge(value) }
+    return "unused"
+}
+fn main() {
+    var label = "before"
+    let child = spawn worker(label, f64(1.5), true)
+    label = "after"
+    print(bridge(label), await child, await child)
+}
+''')
+case('native_task_async_entry_void', '''import std.task as task
+async fn report() { task.sleep(1)
+    print("child")
+}
+async fn main() {
+    let child = report()
+    await child
+    print("entry")
+}
+''')
+case('native_task_completion_registration', '''import std.task as task
+async fn fast(n int) int { return n + 1 }
+async fn parent() {
+    for i in 0..80 {
+        let child = fast(i)
+        if i % 2 == 0 { task.yield() }
+        print(await child, await child)
+    }
+}
+fn main() { await parent() }
+''')
+case('native_task_failed_trace', '''import std.task as task
+fn fail_inside(zero int) int { return 10 // zero }
+async fn worker(zero int) int { task.sleep(1)
+    return fail_inside(zero)
+}
+fn wait_inside(child Task<int>) int { return await child }
+fn main() { print(wait_inside(worker(0))) }
+''')
+reject('native_task_container', '''fn work(items []int) int { return len(items) }
+fn main() {
+    let t = spawn work([1, 2])
     print(await t)
 }
+''')
+reject('native_task_global', '''let value = 42
+async fn work() int { return value }
+fn main() { print(await work()) }
+''')
+reject('native_task_defer', '''fn done() { print("done") }
+async fn work() {
+    defer done()
+}
+fn main() { await work() }
+''')
+reject('native_task_blocking', '''import std.file as file
+async fn work() {
+    let handle = file.open("must-not-create", "w")
+    print(handle)
+}
+fn main() { await work() }
 ''')
 case('methods', '''import std.buffer as buffer
 struct Box { n int
@@ -1178,7 +1260,8 @@ fn main() {
 ''')
 
 def run(command):
-    p = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=120)
+    p = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=30,
+                       env=dict(os.environ, HUA_TASK_WORKERS="1"))
     return p.returncode, p.stdout, p.stderr
 def check(item):
     name, source = item

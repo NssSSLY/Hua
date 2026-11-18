@@ -549,7 +549,7 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
         block(s,n.children[len(n.children)-1],false)?
         constant(s,n,nil_scalar())?
         simple(s,n,22,"")?
-        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:unwrap_or(s.published[n.module+":"+str(n.origin)],false),writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
     } }
     return ok(s.image)
 }

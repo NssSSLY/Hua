@@ -58,6 +58,7 @@
     },
     "compiler_executable": {
       "format": 7,
+      "sdk_source_loader_format": 17,
       "native_abi": 1,
       "producer": "C++ host first generation; Hua C07 encoder implemented; continuous generations pending C08"
     },
@@ -152,11 +153,12 @@
         "for/range/by",
         "match/variant payload bindings",
         "multi-return/binding/assignment",
-        "defer call and Result propagation"
+        "defer call and Result propagation",
+        "top-level async fn and pub async fn, function-scope await, Task<T> syntax"
       ],
       "excluded": [
         "interface/user generics/method/nested declarations",
-        "async/Task/unsafe/attributes/ptr/ref",
+        "spawn/taskgroup/parallel/SIMD/unsafe/attributes/ptr/ref",
         "catch/structured Error/external modules"
       ],
       "semantic_checks": false
@@ -234,16 +236,18 @@
       "const folding",
       "unannotated value-returning functions",
       "incomplete inferred binding types",
-      "interfaces/methods/user generics/async/unsafe/FFI",
+      "interfaces/methods/user generics/unsafe/FFI",
+      "async entry and non-scalar async arguments or results",
       "non-decimal or out-of-signed64 integer match patterns"
     ],
+    "scalar_async": "Top-level functions only. Input arguments are readonly numeric, bool or string. Result adds void. A call yields Task<T>, and await yields T.",
     "artifact": "typed facts consumed by C05-L1 / C06-BC1 / C07-HUAB1",
     "array_extent": "Source grammar: 0 or [1-9][0-9]* only; no leading zeroes, separators or base prefixes. Legacy valid HUAB metadata is reader-only compatibility; extent 0..1000000.",
     "void_contexts": {
       "permitted": [
         "single no-value function return",
         "Result success type",
-        "Task success type in production; Task remains outside T1"
+        "Task success type for scalar async"
       ],
       "rejected": [
         "ordinary binding",
@@ -267,7 +271,7 @@
     "representation": "typed VM core tree; ordered children, logical symbols, flattened signatures, Hua enum layout/constructors; no instructions",
     "captures": "none: SB1 rejects nested declarations",
     "failure": "no input execution; C01 exit/publication unchanged",
-    "artifact": "non-executable core consumed by C06-BC1; C07-HUAB1 encodes complete HUAB6/7"
+    "artifact": "non-executable core consumed by C06-BC1; C07-HUAB1 encodes complete HUAB6/7/17"
   },
   "bytecode": {
     "profile": "C06-BC1",
@@ -530,10 +534,12 @@
     "bytecode_profile": "C06-BC1",
     "formats": [
       6,
-      7
+      7,
+      17
     ],
     "native_abi": 1,
     "source_order": "lexicographic logical module ids",
+    "sdk_source_identity": "@sdk/src/std/alg_integer.hua",
     "declaration_order": "lexicographic lowered names",
     "external_modules": 0,
     "publication": "Hua encodes and stages; independent existing HUAB reader before supervisor atomic replacement",

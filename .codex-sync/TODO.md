@@ -1,12 +1,18 @@
 # 待办与下一次选择
 
-## 当前性能待办（2026-11-18）
+## 当前待办 · Hua 自身工具链与发行（2026-11-18）
 
-- **原生发布**：N1 的 Windows 自举复验和同步动态边界已完成。下一阶段 N2，从 Windows 的任务调度与恢复开始，再经 N3 发布和增量构建、N4 带类型 IR 与原生自举、N5 扩展。[原生发布路线](../docs/VM与自举性能改造分析.md#native-release-route-20261114)
-- **自举提速**：先记录完整输入的原生／VM 阶段时间和 C04 工作量，再做调用点精确失效、来源按需投影。按测量决定 VM 复制／GC 或 HUAB 编码的后续切片。[自举提速路线](../docs/VM与自举性能改造分析.md#selfhost-performance-plan)
-- 其他平台按用户决定暂缓。通用 Reader/Writer、自举标准库签名同步及发行覆盖仍为独立待办。
+已完成第 1 项。Windows huaBin 在仓库外完成搬移、样例、缺依赖及 C2/C3 验收。[记录](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)
 
-下方是历次交接记录，当前性能排序以上方两条路线为准。
+第 2 项标量 async/await 已通过旧种子重建与代际验收。[记录](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
+
+P0 剩余两项已验收。[源码标准模块](knowledge/bootstrap-performance/runs/2026-11-18-sdk-source-stdlib.md) · [完整分阶段实测](knowledge/bootstrap-performance/runs/2026-11-18-full-selfhost-phase-profile.md)
+
+1. 后续性能工作根据实测优先细分 C04 函数体重访、摘要变化、来源展开和合并。改动先验正确性，再比较真实输入。
+2. P1 N2.3 按任务合同与 Hua 前端联验，提前做 N4 Hua 原生生成器小切片，N3 补发布和缓存。N2.4 多核、N2.5 IOCP 各自验收。
+3. P2 本地包及可选 C ABI/Python 适配交付；跨平台暂缓。完整步骤、依赖和退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
+
+以下为按日期保存的既有任务和交接。
 
 ## 当前主线（2026-11-05收尾）：HUA-D038 P1整数/双曲交付
 
@@ -117,4 +123,4 @@
 - 补齐完全未知和未注解高阶签名、异签名复合值、混合声明函数容器和剩余绑定方法。
 - 核对隐式捕获中的 File 保活和 clone 合同，再完成 Windows N1 放行。
 
-- 原生发布路线从 N2 Windows 任务调度与恢复开始。自举提速路线从完整负载分阶段归因开始。
+- 原生发布路线从 N2.3 完整任务合同继续。自举提速路线从完整负载分阶段归因开始。

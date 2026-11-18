@@ -11,6 +11,7 @@ pub fn signature(target string) Signature? {
     if target == "builtin:std.path#dirname" { return Signature{parameters:["string"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.path#ext" { return Signature{parameters:["string"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.path#relative" { return Signature{parameters:["string","string"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.fs#canonical" { return Signature{parameters:["string"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#stat" { return Signature{parameters:["string"],result:"Result<Json,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#rename" { return Signature{parameters:["string","string"],result:"Result<bool,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#replace" { return Signature{parameters:["string","string"],result:"Result<bool,string>",mutates:false,writable:false} }

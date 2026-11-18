@@ -1,5 +1,9 @@
 # Hua项目背景
 
+2026-11-18 用户确认现阶段以 Hua 自身扩展语法、标准库和产物生成能力为主，逐步收缩 C++ 实现职责。Windows huaBin 已按可搬移 SDK 交付，仓库外样例、缺依赖和 C2/C3 验收通过。[证据](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)实现、测量与 N2/N3/N4 的次序见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。标量 async/await 已通过旧种子重建及两代验收。P0 已完成源码标准模块接入与完整阶段归因。C04 是后续性能工作的首要热点。[验收](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
+
+2026-11-18 原生发布进入 N2.3。Windows 第一个 Task 里程碑采用单计算线程和标量跨 Task 边界，当前验收与独立的自举工作见 CURRENT_STATE 和 TODO。
+
 2026-11-05收尾：用户确认的整数/双曲24接口已交付，since22，26模块332函数；详见CURRENT_STATE和2026-11-04-p1-math-arithmetic运行记录。上一批6接口保持。
 
 2026-11-04用户确认并实现HUA-D038 P1 Set对称差＋math五个位工具，since21，26模块308函数；功能验收通过，07_strings源模式约6%性能保留，详见当前状态和运行记录。

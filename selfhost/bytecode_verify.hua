@@ -37,7 +37,7 @@ fn intrinsic(text string) bool {
         let parts = strings.split(rules.cut(n,5,len(n)),"$")
         return len(parts)==2 && is_some(signatures.signature("builtin:std."+parts[0]+"#"+parts[1]))
     }
-    return catalog.core(n)
+    return n=="task_start" || n=="task_await" || catalog.core(n)
 }
 fn valid_type(c Catalog, t string, depth int) bool {
     if depth>64 || !small(t,true) { return false }
@@ -55,10 +55,10 @@ fn valid_type(c Catalog, t string, depth int) bool {
         if len(raw)>0 && is_err(rules.extent(raw)) { return false }
         return valid_type(c,rules.cut(t,end+1,len(t)),depth+1)
     }
-    for name in ["Result","List","map","multi"] {
+    for name in ["Result","List","Task","map","multi"] {
         let parts = rules.arguments(t,name)
         if len(parts)==0 { continue }
-        if (name=="List" && len(parts)!=1) || ((name=="Result" || name=="map") && len(parts)!=2) || (name=="multi" && len(parts)<2) { return false }
+        if ((name=="List" || name=="Task") && len(parts)!=1) || ((name=="Result" || name=="map") && len(parts)!=2) || (name=="multi" && len(parts)<2) { return false }
         for p in parts { if !valid_type(c,p,depth+1) { return false } }
         return true
     }
@@ -243,7 +243,7 @@ pub fn verify(image bc.Image) Result<Verification> {
         nodes[site.node] = true
         if site.node==-1 {
             if site.origin!=-1 || site.role!="initializer" || site.start!=0 || site.end!=0 || site.line!=1 || site.column!=1 || site.module!=image.entry { return err("E6002@1:1 C06 invalid initializer site") }
-        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor"],site.role) { return err("E6002@1:1 C06 invalid source origin") }
+        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor"],site.role) && site.role!="async-body" { return err("E6002@1:1 C06 invalid source origin") }
     }
     var c = Catalog{globals:map[string]bool{},structures:map[string]bool{},functions:map[string]bool{}}
     for st in list.snapshot(image.structures) {

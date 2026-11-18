@@ -123,7 +123,7 @@ fn power(s State, op string) int {
     return 0
 }
 fn excluded(s State, t lexer.Token) bool {
-    if s.extended { return alg.contains(["interface","async","await","spawn","taskgroup","parallel","simd","unsafe","extern","@"],t.kind) }
+    if s.extended { return alg.contains(["interface","spawn","taskgroup","parallel","simd","unsafe","extern","@"],t.kind) }
     let kinds = ["import","struct","enum","interface","pub","async","await","spawn","taskgroup","parallel","simd","defer","unsafe","extern","match","for","nil","string","[", "]",".","?","@","&","|","^","~","<<",">>","++","--","..","..="]
     return alg.contains(kinds,t.kind)
 }
@@ -218,7 +218,8 @@ fn expression(s mut State, minimum int, multiline bool) Result<ast.NodeId> {
     if multiline { lines(s)? }
     var first = s.data[s.pos]
     var left ast.NodeId = ast.NodeId{pool:s.pool.identity,index:0}
-    if first.kind == "+" || first.kind == "-" || first.kind == "!" || (s.extended && first.kind == "~") {
+    if first.kind == "+" || first.kind == "-" || first.kind == "!" || (s.extended && (first.kind == "~" || first.kind == "await")) {
+        if first.kind == "await" && s.functions == 0 { return err(failure(first,"E2004","await requires a function scope")) }
         take(s)?
         lines(s)?
         let child = expression(s,12,multiline)?
@@ -337,6 +338,14 @@ fn function(s mut State) Result<ast.NodeId> {
     s.functions -= 1
     return node(s,ast.Payload.Function(name.text),first.start,s.last_end,[signature,body])
 }
+fn async_function(s mut State) Result<ast.NodeId> {
+    let modifier = expect(s,"async")?
+    if s.blocks != 0 { return err(unsupported(modifier)) }
+    let id = function(s)?
+    let old = ast.get(s.pool,id)?
+    ast.replace(s.pool,id,ast.Payload.Function(ast.payload_text(old.payload)+" async"),ast.span(s.pool,s.source,modifier.start,old.span.end)?,old.children)?
+    return ok(id)
+}
 fn statement(s mut State) Result<ast.NodeId> {
     enter(s)?
     let t = s.data[s.pos]
@@ -358,6 +367,7 @@ fn statement(s mut State) Result<ast.NodeId> {
         if t.kind == "const" { payload = ast.Payload.Const(name.text) }
         result = node(s,payload,t.start,s.last_end,list.snapshot(children))?
     } else if t.kind == "fn" { result = function(s)? }
+    else if s.extended && t.kind == "async" { result = async_function(s)? }
     else if t.kind == "if" { result = conditional(s)? }
     else if t.kind == "while" {
         take(s)?
@@ -460,7 +470,7 @@ fn compound_type(s mut State) Result<ast.NodeId> {
     } else {
         let name = expect(s,"identifier")?
         var text = name.text
-        if text == "ptr" || text == "ref" || text == "Task" { return err(unsupported(name)) }
+        if text == "ptr" || text == "ref" { return err(unsupported(name)) }
         var empty []ast.NodeId = []
         var types = list.from_slice(empty)
         if text == "map" {
@@ -472,13 +482,13 @@ fn compound_type(s mut State) Result<ast.NodeId> {
             while s.data[s.pos].kind == "." { take(s)?
                 text += "."+expect(s,"identifier")?.text }
             if s.data[s.pos].kind == "<" {
-                if text != "Result" && text != "List" { return err(unsupported(s.data[s.pos])) }
+                if text != "Result" && text != "List" && text != "Task" { return err(unsupported(s.data[s.pos])) }
                 take(s)?
                 list.append(types,compound_type(s)?)?
                 while s.data[s.pos].kind == "," { take(s)?
                     list.append(types,compound_type(s)?)? }
                 expect(s,">")?
-                if (text == "Result" && list.len(types) > 2) || (text == "List" && list.len(types) != 1) { return err(failure(name,"E2006","incorrect type argument count")) }
+                if (text == "Result" && list.len(types) > 2) || ((text == "List" || text == "Task") && list.len(types) != 1) { return err(failure(name,"E2006","incorrect type argument count")) }
                 if text == "Result" && list.len(types) == 2 {
                     let e = ast.get(s.pool,list.get(types,1)?)?
                     if ast.kind(e.payload) != "TypeName" || ast.payload_text(e.payload) != "string" { return err(unsupported(name)) }
@@ -825,8 +835,9 @@ fn extended_statement(s mut State) Result<ast.NodeId> {
         var result = ast.NodeId{pool:s.pool.identity,index:0}
         if s.data[s.pos].kind == "struct" { result = structure(s,true)? }
         else if s.data[s.pos].kind == "enum" { result = enumeration(s,true)? }
-        else if s.data[s.pos].kind == "fn" {
-            result = function(s)?
+        else if s.data[s.pos].kind == "fn" || s.data[s.pos].kind == "async" {
+            if s.data[s.pos].kind == "async" { result = async_function(s)? }
+            else { result = function(s)? }
             let old = ast.get(s.pool,result)?
             ast.replace(s.pool,result,ast.Payload.Function(ast.payload_text(old.payload)+" pub"),old.span,old.children)?
         } else { return err(failure(s.data[s.pos],"E2002","pub requires function/struct/enum")) }

@@ -93,13 +93,19 @@ fn needs_seven(t string) bool {
 }
 fn required_format(image bc.Image) int {
     var format=6
-    for s in list.snapshot(image.structures) { for f in s.fields { if needs_seven(f.type_name) { format=7 } } }
+    for s in list.snapshot(image.structures) { for f in s.fields { if needs_seven(f.type_name) { format=max(format,7) } } }
     for f in list.snapshot(image.functions) {
-        for p in f.parameters { if needs_seven(p.type_name) { format=7 } }
-        for t in f.returns { if needs_seven(t) { format=7 } }
-        for op in list.snapshot(f.code.instructions) { if needs_seven(op.type_name) { format=7 } }
+        for p in f.parameters { if needs_seven(p.type_name) { format=max(format,7) } }
+        for t in f.returns { if needs_seven(t) { format=max(format,7) } }
+        for op in list.snapshot(f.code.instructions) {
+            if needs_seven(op.type_name) { format=max(format,7) }
+            if op.op==1 && op.text=="$core$$std$fs$canonical" { format=max(format,17) }
+        }
     }
-    for op in list.snapshot(image.initializer.instructions) { if needs_seven(op.type_name) { format=7 } }
+    for op in list.snapshot(image.initializer.instructions) {
+        if needs_seven(op.type_name) { format=max(format,7) }
+        if op.op==1 && op.text=="$core$$std$fs$canonical" { format=max(format,17) }
+    }
     return format
 }
 pub fn encode(image bc.Image, model types.Model) Result<Artifact> {

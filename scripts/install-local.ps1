@@ -53,4 +53,4 @@ if ($AddToUserPath) {
     Write-Host 'User PATH configured. Reopen terminals and VS Code to see it.'
 }
 Write-Host "Hua installed in $taskBin"
-Write-Host 'HUA_HOME identifies the installation; it does not change module import lookup.'
+Write-Host 'Use the full Hua SDK to compile programs that import source standard modules.'

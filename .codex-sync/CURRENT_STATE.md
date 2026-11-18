@@ -1,5 +1,11 @@
 # 当前状态
 
+2026-11-18 用户确认现阶段以 Hua 自身扩展语法、标准库和产物生成能力为主，逐步收缩 C++ 实现职责。Windows huaBin 已按可搬移 SDK 交付，仓库外样例、缺依赖和 C2/C3 验收通过。[证据](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)实现、测量与 N2/N3/N4 的次序见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。标量 async/await 已通过旧种子重建及两代验收。P0 已完成源码标准模块接入与完整阶段归因。C04 是后续性能工作的首要热点。[验收](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
+
+## 2026-11-18 N2.1–N2.2 Windows 原生 Task
+
+原生状态按任务保存，Windows 纤程复用 VM 的等待、定时和收拢协议。固定一个后台计算线程，支持顶层标量函数的 async、spawn、await、sleep、yield 和异步 main。92 项差分、15 项生成前拒绝通过。N1/N2 同步预热循环 52.237／52.161 ms，递归 9.389／9.309 ms。单线程八个 50 ms 等待从串行 510.812 ms 降至并发 77.089 ms。既有 VM 清理输出断言在并行编译下于 N1、N2 均有失败，N2 独立复验通过。N2.3 的数据快照和完整任务合同仍待。见[本轮证据](knowledge/bootstrap-performance/runs/2026-11-18-n2-single-worker.md)。
+
 ## 2026-11-18 Windows 跨语言基准
 
 同机比较 Hua 源码 VM、HUAB、原生、AST 以及 Lua、CPython、Java、Go、C++。端到端计入 406 个样本，预热内核计入 80 个样本，校验值一致。AST 在 fib(30) 达到 60 秒限额，首次即终止并跳过后续 AST 项。原生预热递归 8.61 ms，HUAB 103.56 ms；30 万项整数容器原生 27.86 ms／10.8 MiB，HUAB 589.60 ms／58.9 MiB。数据与证据见[基准报告](knowledge/bootstrap-performance/runs/2026-11-18-cross-language-benchmarks.md)。

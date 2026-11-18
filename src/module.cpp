@@ -4,6 +4,8 @@
 #include "hua/parser.hpp"
 #include "hua/value.hpp"
 #include "hua/runtime.hpp"
+#include "hua/json.hpp"
+#include <cstdlib>
 #include <algorithm>
 #include <cwctype>
 #include <fstream>
@@ -22,6 +24,18 @@ std::string key(const std::filesystem::path& p) {
 #endif
 }
 [[noreturn]] void error(const SourceSpan& s,const std::string& reason,std::string code="E5001") {throw Diagnostic(std::move(code),s,reason);}
+JsonData::Pointer json_member(const JsonData::Pointer& value, const std::string& name) {
+    if (!value) return {};
+    const auto* object = std::get_if<JsonData::Object>(&value->data);
+    if (!object) return {};
+    const auto found = object->find(name);
+    return found == object->end() ? nullptr : found->second;
+}
+bool json_text_equals(const JsonData::Pointer& value, std::string_view text) {
+    if (!value) return false;
+    const auto* string = std::get_if<std::string>(&value->data);
+    return string && *string == text;
+}
 std::string dotted(const Node& n) {
     if(n.kind==N::Name)return n.text;
     if(n.kind==N::Member){auto path=dotted(*n.children[0]);if(!path.empty())return path+"."+n.text;}
@@ -58,8 +72,8 @@ std::filesystem::path ModuleLoader::resolve(const std::string& name,const Source
     }
     error(site,"cannot resolve module `"+name+"`; searched "+utf8(file)+" and "+utf8(base/"package.hua"));
 }
-ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,const SourceSpan& site,bool entry) {
-    auto cache_key=key(path);
+ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,const SourceSpan& site,bool entry,const std::string& sdk_id) {
+    auto cache_key=sdk_id.empty() ? key(path) : sdk_id;
     if(auto found=cache_.find(cache_key);found!=cache_.end()) {
         if(found->second->state==Module::State::Loading) {
             std::string chain;for(auto module:loading_){if(!chain.empty())chain+=" -> ";chain+=utf8(module->path.filename());}
@@ -76,6 +90,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
     bytes_+=static_cast<std::size_t>(size);std::string text(static_cast<std::size_t>(size),'\0');input.seekg(0);
     if(!text.empty() && !input.read(text.data(),size))error(site,"failed to read complete source file",entry?"E0001":"E5001");
     auto owned=std::make_unique<Module>();owned->path=path;owned->prefix=entry?"":"$"+std::to_string(modules_.size())+"$";
+    if (!sdk_id.empty()) owned->prefix="$sdk$std$alg_integer$";
     bool native=path.extension()==".huam",wasm=path.extension()==".wasm";
     std::string binary;std::vector<ExternalExport> wasm_exports;
     if(wasm) {
@@ -83,7 +98,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
         text="# generated WASM interface\n";
         for(const auto& e:wasm_exports){text+="pub fn "+e.name+"(";for(std::size_t i=0;i<e.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i)+" "+e.parameters[i];}text+=") "+e.result+" {}\n";}
     }
-    owned->source=std::make_unique<Source>(utf8(path),std::move(text));auto& module=*owned;
+    owned->source=std::make_unique<Source>(sdk_id.empty() ? utf8(path) : sdk_id,std::move(text));auto& module=*owned;
     modules_.push_back(std::move(owned));cache_.emplace(cache_key,&module);loading_.push_back(&module);
     if(native) {
         if(module.source->line_text(1)!="HUA_NATIVE 1")error(module.source->span(0,1),"native manifest requires HUA_NATIVE 1 header","E7002");
@@ -122,6 +137,8 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
             if(declarations)error(n->span,"imports must precede all declarations and statements","E5004");
             auto binding=n->children.empty()?n->text:n->children[0]->text;
             if(module.imports.contains(binding))error(n->span,"duplicate import namespace `"+binding+"`","E5004");
+            if (!sdk_id.empty() && !(n->text=="std" || n->text.starts_with("std.")))
+                error(n->span,"SDK source modules can only import standard modules");
             if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
             else {try{auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}catch(const Diagnostic& error){auto reported=error;reported.add_context(n->span,"imported from");throw reported;}}
         }else {
@@ -142,7 +159,60 @@ static std::string source_type(const std::string& type){
     auto kv=type_arguments(type,"map");
     return kv.size()==2?"map["+source_type(kv[0])+"]"+source_type(kv[1]):type;
 }
+ModuleLoader::Module& ModuleLoader::sdk_standard(const SourceSpan& site) {
+    namespace fs = std::filesystem;
+    const std::string module = "std.alg_integer";
+    const std::string relative = "src/std/alg_integer.hua";
+    const std::string id = "@sdk/" + relative;
+    if (auto found = cache_.find(id); found != cache_.end()) {
+        if (found->second->state == Module::State::Loading)
+            error(site, "cyclic module import: " + module, "E5002");
+        return *found->second;
+    }
+#ifdef _WIN32
+    const auto* configured = _wgetenv(L"HUA_HOME");
+#else
+    const auto* configured = std::getenv("HUA_HOME");
+#endif
+    if (!configured || !*configured)
+        error(site, "std.alg_integer requires HUA_HOME set to a Hua SDK root");
+
+    const fs::path root(configured);
+    if (!root.is_absolute()) error(site, "HUA_HOME must be an absolute SDK root");
+    std::error_code ec;
+    const auto canonical_root = fs::canonical(root, ec);
+    if (ec) error(site, "invalid Hua SDK root");
+
+    const auto manifest_path = canonical_root / "manifest.json";
+    auto manifest_status = fs::symlink_status(manifest_path, ec);
+    if (ec || !fs::is_regular_file(manifest_status))
+        error(site, "cannot read Hua SDK manifest.json");
+    const auto bytes = fs::file_size(manifest_path, ec);
+    if (ec || bytes > 1024 * 1024)
+        error(site, "invalid size for Hua SDK manifest.json");
+
+    std::ifstream manifest_file(manifest_path, std::ios::binary);
+    std::string text(static_cast<std::size_t>(bytes), '\0');
+    if (!manifest_file.read(text.data(), static_cast<std::streamsize>(bytes)))
+        error(site, "cannot read Hua SDK manifest.json");
+    const auto decoded = json_decode(text);
+    const auto& result = hua::cget<ResultValue>(decoded.data);
+    if (!result.ok) error(site, "invalid JSON in Hua SDK manifest.json");
+    const auto& manifest = hua::get<JsonValue>(result.payload->data).data;
+    if (!json_text_equals(json_member(manifest, "schema"), "hua.sdk.v1") ||
+        !json_text_equals(json_member(json_member(manifest, "source_modules"), module), relative) ||
+        !json_text_equals(json_member(json_member(json_member(manifest, "files"), relative), "role"),
+                          "stdlib_source"))
+        error(site, "Hua SDK manifest does not register std.alg_integer");
+
+    const auto path = (canonical_root / relative).make_preferred();
+    const auto resolved = fs::canonical(path, ec);
+    if (ec || key(path) != key(resolved) || !fs::is_regular_file(resolved, ec) || ec)
+        error(site, "cannot read registered SDK source: " + relative);
+    return visit(resolved, site, false, id);
+}
 ModuleLoader::Module& ModuleLoader::standard(const std::string& name,const SourceSpan& site) {
+    if (name == "std.alg_integer") return sdk_standard(site);
     auto id="builtin:"+name;if(auto found=cache_.find(id);found!=cache_.end())return *found->second;
     if(!standard_module(name))error(site,"unknown standard module `"+name+"`");
     if(modules_.size()>=128)error(site,"module graph limit exceeded","E5005");

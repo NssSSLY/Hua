@@ -20,6 +20,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -36,26 +37,52 @@ using I=std::int64_t;using F=double;
 using hua::SourceSpan;using hua::Value;
 struct Unit { bool operator==(const Unit&)const{return true;} };
 struct Nil {};
+struct TaskHandle { Value value; };
 
 // ---- execution state: budget, call depth and the call-site stack used for traces
+class NativeFiber;
 struct State {
     std::int64_t steps_left{100000000000};std::uint64_t step_limit{100000000000};
     unsigned depth{0},call_limit{128};
     const SourceSpan* sites[160];
     hua::RuntimeContext* context{};
+    std::ostream* output{};
+    NativeFiber* fiber{};
+    unsigned ticks{};
 };
 inline State state;
+inline thread_local State* active_task_state = nullptr;
+inline State& current_state() noexcept { return active_task_state ? *active_task_state : state; }
+template<bool Tasks> inline State& execution_state() noexcept {
+    if constexpr (Tasks) return current_state();
+    else return state;
+}
+void task_poll(State&, const SourceSpan&);
+void task_loop(State&);
 [[noreturn]] void step_limit_exceeded();
 [[noreturn]] void depth_limit_exceeded(const SourceSpan&);
-inline void step(){if(--state.steps_left<0)[[unlikely]]step_limit_exceeded();}
+template<bool Tasks=false> inline void step() {
+    if (--execution_state<Tasks>().steps_left < 0) [[unlikely]] step_limit_exceeded();
+}
+template<bool CountSteps, bool Tasks>
+inline void loop_step() {
+    if constexpr (CountSteps) step<Tasks>();
+    if constexpr (Tasks) task_loop(execution_state<Tasks>());
+}
 // A call from `site`: counted, depth-limited, and recorded for "called from" traces. The
 // depth is restored by the caller on normal return only, so a diagnostic still sees the
 // whole chain when it reaches main.
-template<bool CountSteps=true> inline unsigned enter(const SourceSpan& site){
-    const unsigned d=state.depth;if(d>=state.call_limit)[[unlikely]]depth_limit_exceeded(site);
-    state.sites[d]=&site;state.depth=d+1;if constexpr(CountSteps)step();return d;
+template<bool CountSteps=true, bool Tasks=false> inline unsigned enter(const SourceSpan& site) {
+    auto& running = execution_state<Tasks>();
+    if constexpr (Tasks) task_poll(running, site);
+    const unsigned depth = running.depth;
+    if (depth >= running.call_limit) [[unlikely]] depth_limit_exceeded(site);
+    running.sites[depth] = &site;
+    running.depth = depth + 1;
+    if constexpr (CountSteps) step<Tasks>();
+    return depth;
 }
-inline void leave(unsigned d){state.depth=d;}
+template<bool Tasks=false> inline void leave(unsigned depth) { execution_state<Tasks>().depth = depth; }
 
 // ---- small-object pool: strings, boxes and list/map bodies are allocated and freed
 // constantly; size-class free lists avoid the system allocator for blocks up to 256 bytes.
@@ -73,13 +100,22 @@ struct Pool {
     void give(void* p,std::size_t size){const std::size_t c=(size+granule-1)/granule-1;auto* f=static_cast<Free*>(p);f->next=heads[c];heads[c]=f;}
 };
 inline Pool pool;
-inline void* pool_new(std::size_t size){return size<=Pool::classes*Pool::granule?pool.take(size):(::operator new(size));}
-inline void pool_delete(void* p,std::size_t size){if(size<=Pool::classes*Pool::granule)pool.give(p,size);else ::operator delete(p);}
+// Task executables use the thread-safe allocator for these untracked objects.
+// The flag is selected before either the entry or a worker runs user code.
+inline bool native_tasks_enabled = false;
+inline void* pool_new(std::size_t size) {
+    if (!native_tasks_enabled && size <= Pool::classes * Pool::granule) return pool.take(size);
+    return ::operator new(size);
+}
+inline void pool_delete(void* p, std::size_t size) {
+    if (!native_tasks_enabled && size <= Pool::classes * Pool::granule) pool.give(p, size);
+    else ::operator delete(p);
+}
 struct Pooled {
     static void* operator new(std::size_t size){return pool_new(size);}
     static void operator delete(void* p,std::size_t size){pool_delete(p,size);}
 };
-// ---- reference counting for one thread (the prototype has no tasks)
+// ---- untracked objects are confined to a single Task or the synchronous entry
 template<class T> inline constexpr bool tracks_native_edges=false;
 template<class T> inline constexpr bool tracks_native_edges<std::vector<T>> = tracks_native_edges<T>;
 template<class T,bool Tracked=tracks_native_edges<T>> class Ref;
@@ -183,18 +219,25 @@ template<class R,class T> struct FieldPlace {
     void write(T value,const SourceSpan&) const {read()=std::move(value);}
 };
 
-struct StrRep:Pooled { std::uint32_t rc; std::string text; std::uint64_t hash{}; StrRep(std::uint32_t count,std::string t):rc(count),text(std::move(t)){} };
+struct StrRep:Pooled {
+    static constexpr std::uint32_t immortal = 1u << 30;
+    std::uint32_t rc;
+    std::string text;
+    std::uint64_t hash{};
+    StrRep(std::uint32_t count, std::string value);
+};
 class Str {
     StrRep* p_;
-    static StrRep* empty_rep(){static StrRep e(1u<<30,{});return &e;}
-    void drop(){if(p_&&--p_->rc==0)delete p_;}
+    static StrRep* empty_rep(){static StrRep e(StrRep::immortal,{});return &e;}
+    static void retain(StrRep* p) { if (p && p->rc != StrRep::immortal) ++p->rc; }
+    void drop() { if (p_ && p_->rc != StrRep::immortal && --p_->rc == 0) delete p_; }
 public:
-    Str():p_(empty_rep()){++p_->rc;}
+    Str():p_(empty_rep()){}
     explicit Str(std::string text):p_(new StrRep{1,std::move(text)}){}
-    explicit Str(StrRep* literal):p_(literal){++p_->rc;}
-    Str(const Str& o):p_(o.p_){++p_->rc;}
+    explicit Str(StrRep* literal):p_(literal){retain(p_);}
+    Str(const Str& o):p_(o.p_){retain(p_);}
     Str(Str&& o)noexcept:p_(o.p_){o.p_=nullptr;}
-    Str& operator=(const Str& o){if(p_!=o.p_){++o.p_->rc;drop();p_=o.p_;}return *this;}
+    Str& operator=(const Str& o){if(p_!=o.p_){retain(o.p_);drop();p_=o.p_;}return *this;}
     Str& operator=(Str&& o)noexcept{if(this!=&o){drop();p_=o.p_;o.p_=nullptr;}return *this;}
     ~Str(){drop();}
     const std::string& text()const{return p_->text;}
@@ -217,6 +260,9 @@ public:
     }
     bool operator<(const Str& o)const{return p_->text<o.p_->text;}
 };
+inline StrRep::StrRep(std::uint32_t count, std::string value)
+    : rc(count), text(std::move(value)), hash(count == immortal ? Str::hash_text(text) : 0) {}
+
 // The semantic model identifies a function value's declaration in its type.
 template<class Tag,bool Nested> struct FunctionValue {};
 template<class Tag> struct FunctionValue<Tag,true> {
@@ -730,6 +776,7 @@ inline Value to_value(F v){return Value(v);}
 inline Value to_value(bool v){return Value(v);}
 inline Value to_value(const Str& v){return Value(v.text());}
 inline Value to_value(Unit){return Value{};}
+inline Value to_value(const TaskHandle& task) { return task.value; }
 inline Value to_value(std::nullopt_t){return Value{};}
 inline Value to_value(const Rng& rng){return Value(hua::RngValue{rng.data,rng.writable});}
 template<class Tag> Value to_value(const Opaque<Tag>& v){return v.v;}
@@ -993,11 +1040,20 @@ template<class K,class V> struct From<Map<K,V>> {
 Value call_builtin(const char* name,const SourceSpan& span,std::vector<Value> args,const std::vector<bool>& contextual,const char* result_type);
 // One bridged call site: the builtin is resolved once and its metadata kept, and the
 // argument vector is reused, so a call costs the boxing of its arguments and nothing else.
-struct Bridge {
-    std::string name,result_type;std::vector<bool> contextual;const hua::BuiltinInfo* info;std::vector<Value> args;bool busy{};
-    Bridge(const char* n,std::initializer_list<bool> flags,const char* result):name(n),result_type(result),contextual(flags),info(&hua::builtin_info(name)){}
+struct BridgeInfo {
+    const std::string name, result_type;
+    const std::vector<bool> contextual;
+    const hua::BuiltinInfo& info;
+    BridgeInfo(const char* name, std::initializer_list<bool> flags, const char* result)
+        : name(name), result_type(result), contextual(flags), info(hua::builtin_info(this->name)) {}
 };
-Value call_bridge(Bridge& site,const SourceSpan& span,std::initializer_list<Value> args);
+struct Bridge : BridgeInfo {
+    using BridgeInfo::BridgeInfo;
+    std::vector<Value> args;
+    bool busy{};
+};
+Value call_bridge(Bridge& site, const SourceSpan& span, std::initializer_list<Value> args);
+Value call_bridge(const BridgeInfo& site, const SourceSpan& span, std::initializer_list<Value> args);
 void print(const SourceSpan& span,std::vector<Value> args);
 [[noreturn]] void fail(const SourceSpan& span,const char* message,const char* code);
 // The VM evaluates the operator on boxed operands: used for every case the inline
@@ -1313,7 +1369,11 @@ template<class F> struct Deferred {
     }
 };
 // ---- entry
-int run_main(int argc,char** argv,const SourceSpan& main_site,Value (*body)());
+using TaskBody = std::function<Value()>;
+TaskHandle start_task(TaskBody body, const char* type, const SourceSpan& span);
+Value await_task(const TaskHandle&, const SourceSpan&);
+void task_wait(const char* name, std::vector<Value> args, const SourceSpan&);
+int run_main(int argc,char** argv,const SourceSpan& main_site,Value (*body)(),bool tasks=false);
 }
 
 #include "hua/detail/native_types.hpp"

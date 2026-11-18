@@ -1,5 +1,9 @@
 # 已确定决定与当前方案
 
+2026-11-18 用户确认现阶段以 Hua 自身扩展语法、标准库和产物生成能力为主，逐步收缩 C++ 实现职责。Windows huaBin 已按可搬移 SDK 交付，仓库外样例、缺依赖和 C2/C3 验收通过。[证据](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)实现、测量与 N2/N3/N4 的次序见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。标量 async/await 已通过旧种子重建及两代验收。P0 已完成源码标准模块接入与完整阶段归因。C04 是后续性能工作的首要热点。[验收](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
+
+2026-11-18 用户批准 N2.1–N2.2。采用 Windows 纤程承载原生栈，等待和结果交付复用 VM TaskRuntime。首片使用一个固定计算线程和标量跨 Task 边界。N2.3 再扩展快照、清理与公开取消／超时，[当前范围](../docs/运行时与扩展设计.md#native-task-single-worker)。
+
 2026-11-04用户明确确认下一批24接口按推荐实施；2026-11-05收尾。checked返回Result<int,string>，wrapping按64位补码，saturating钳制；pow指数非负、0**0=1，checked负指数为Err MATH_DOMAIN，其余为E4003；双曲函数沿用Result<float,string>及有限值。普通算术与除法规则保持。
 
 2026-11-04用户选择标准库其余P1主线并确认首批6接口按推荐实施；64位补码，旋转次数0–63、越界E4003，Set按键存在。已完成本批功能验收，性能保留按运行记录；S2-2候选暂不展开。

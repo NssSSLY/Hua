@@ -98,6 +98,10 @@ pub fn shared(t string) bool {
     return strings.starts_with(t,"[") || strings.starts_with(t,"map<") || strings.starts_with(t,"Result<") || strings.starts_with(t,"List<") || t == "Buffer"
 }
 
+# The first selfhost task slice transports only scalar values.
+pub fn task_scalar(t string) bool {
+    return category(t) != "" || t == "bool" || t == "string"
+}
 pub fn value_type_allowed(t string, allow_void bool) bool {
     if t == "void" { return allow_void }
     if strings.ends_with(t,"?") { return value_type_allowed(optional(t),false) }

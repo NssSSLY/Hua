@@ -245,6 +245,22 @@ struct Emitter {
         return code;
     }
     // The C++ type of a Hua type.
+    bool uses_tasks{};
+    const Node* deferred_in_task_program{};
+    const Node* blocking_in_task_program{};
+
+    bool task_scalar(const std::string& type) {
+        return type == "int" || type == "float" || type == "bool" || type == "string" ||
+               (hua::numeric_spec(type) && type != "@integer");
+    }
+
+    void enable_tasks([[maybe_unused]] const Node& at) {
+#ifndef _WIN32
+        no(at, "native Task requires Windows");
+#endif
+        uses_tasks = true;
+    }
+
     std::string ct(const std::string& t,const Node& at){
         if(t=="@dynamic")return "hn::DynamicValue";
         if(t=="@function")return "hn::DynamicFunction";
@@ -267,6 +283,14 @@ struct Emitter {
             if(is_interface(sig.self))return "hn::BoundInterface<"+ct(sig.self,at)+">";
             return "hn::FunctionValue<hn::"+mangle("FT_",name)+","+(m.nested.contains(fn->second)?"true":"false")+">";
         }
+        if(t.starts_with("Task<")){
+            const auto types = type_arguments(t, "Task");
+            if (types.size() != 1 || (types[0] != "void" && !task_scalar(types[0])))
+                no(at, "native Task result type " + t);
+            enable_tasks(at);
+            return "hn::TaskHandle";
+        }
+        if(t.find("Task<") != std::string::npos) no(at, "native Task handle inside " + t);
         if(t=="std.random.Rng")return "hn::Rng";
         if(t=="int")return "hn::I";if(t=="float")return "hn::F";if(t=="bool")return "bool";if(t=="string")return "hn::Str";if(t=="void")return "hn::Unit";
         if(auto exact=exact_type(t);!exact.empty())return exact;
@@ -839,9 +863,9 @@ struct Emitter {
         }
         const auto callee=indirect?"static_cast<const "+ct(from,at)+"*>(function.data)->invoke":mangle("hf_",sig.name);
         const auto call=callee+"("+args+(interface?",site":"")+")";
-        const std::string enter="const auto depth=hn::enter<NATIVE_COUNT_STEPS>(site);";
-        const auto result=enter+(sig.result.empty()?call+";hn::leave(depth);return hn::dynamic_scalar(hn::Value(hua::VoidValue{}));":
-            "auto result="+call+";hn::leave(depth);return "+dynamic_pack("std::move(result)",sig.result,at,true)+";");
+        const std::string enter="const auto depth=hn::enter<NATIVE_COUNT_STEPS, NATIVE_TASKS>(site);";
+        const auto result=enter+(sig.result.empty()?call+";hn::leave<NATIVE_TASKS>(depth);return hn::dynamic_scalar(hn::Value(hua::VoidValue{}));":
+            "auto result="+call+";hn::leave<NATIVE_TASKS>(depth);return "+dynamic_pack("std::move(result)",sig.result,at,true)+";");
         std::string code="({auto "+target+"="+value+";";
         std::string data=nested?target+".data,std::move("+target+".owner)":"nullptr,{}";
         std::string identity=quoted(from);
@@ -1287,6 +1311,56 @@ struct Emitter {
         return code+"return "+fallback+";})()";
     }
     // A call; as a statement its value (if any) is dropped.
+    std::string task_start(const Node& call_node, const std::string& site) {
+        enable_tasks(call_node);
+        const auto& target = *call_node.children[1];
+        const auto& type = ty(target);
+        if (!type.starts_with("fn:") || target.kind != N::Name || find(target.text, target))
+            no(target, "native Task requires a direct function name");
+        const auto* function = m.functions.at(type.substr(3));
+        const auto sig = signature(*function);
+        if (m.nested.contains(function) || !sig.self.empty() || sig.any_mut)
+            no(target, "native Task requires a top-level function with readonly scalar parameters");
+        const bool returns_task = sig.result.starts_with("Task<");
+        if ((!sig.result.empty() && !returns_task && !task_scalar(sig.result)) ||
+            !std::all_of(sig.types.begin(), sig.types.end(), [&](const auto& type) { return task_scalar(type); }))
+            no(target, "native Task boundary requires scalar parameters and result");
+        if (given) no(call_node, "deferred Task creation");
+        need(function);
+        std::string code = "({";
+        std::string bindings;
+        std::string captures;
+        std::string args;
+        for (std::size_t i = 0; i < sig.types.size(); ++i) {
+            const auto& input = *call_node.children[i+2];
+            const auto& parameter = sig.types[i];
+            const auto raw = fresh("task_input");
+            const auto native = fresh("task_arg");
+            const auto saved = fresh("task_value");
+            code += "auto " + raw + "=" + expr(input) + ";";
+            bindings += "auto " + native + "=" + coerce(raw, ty(input), parameter, input, true) + ";";
+            if (i) { captures += ","; args += ","; }
+            if (!returns_task && parameter == "string") {
+                captures += saved + "=" + native + ".text()";
+                args += "hn::Str(std::move(" + saved + "))";
+            } else {
+                captures += saved + "=" + native;
+                args += returns_task ? native : saved;
+            }
+        }
+        code += bindings;
+        const auto invoke = mangle("hf_", sig.name) + "(" + args + ")";
+        if (returns_task) {
+            const auto depth = fresh("task_depth");
+            return code + "auto " + depth + "=hn::enter<NATIVE_COUNT_STEPS, NATIVE_TASKS>(" + site +
+                   ");auto task=" + invoke + ";hn::leave<NATIVE_TASKS>(" + depth + ");task;})";
+        }
+        const auto body = sig.result.empty() ? invoke + ";return hn::Value{};" :
+                                                "return hn::to_value(" + invoke + ");";
+        return code + "hn::start_task([" + captures + "]() mutable {" + body + "}," +
+               quoted(sig.result.empty() ? "void" : sig.result) + ".c_str()," + site + ");})";
+    }
+
     const std::string* deferred_callee{};
     std::string call(const Node& n,bool statement){
         const auto& callee=*n.children[0];
@@ -1406,7 +1480,7 @@ struct Emitter {
                 list+=!sig.mut[i]&&(is_fixed(parameter)||is_interface(parameter))?"std::move("+a+")":a;
             }
             auto d=fresh("d");
-            const auto enter="const unsigned "+d+"=hn::enter<NATIVE_COUNT_STEPS>("+span(n.span)+");";
+            const auto enter="const unsigned "+d+"=hn::enter<NATIVE_COUNT_STEPS, NATIVE_TASKS>("+span(n.span)+");";
             s+=indirect?bindings+enter:enter+bindings;
             if(auto slot=stack_call_slots.find(&n);slot!=stack_call_slots.end()){
                 if(!list.empty())list+=",";
@@ -1414,12 +1488,31 @@ struct Emitter {
             }
             const auto invoked=indirect?indirect_call(kind,sig,target,list,n):
                 mangle("hf_",sig.name)+"("+list+(is_interface(sig.self)?","+span(n.span):"")+")";
-            if(sig.result.empty())return s+invoked+";hn::leave("+d+");hn::Unit{};})";
-            auto r=fresh("r");return s+"auto "+r+"="+invoked+";hn::leave("+d+");std::move("+r+");})";
+            if(sig.result.empty())return s+invoked+";hn::leave<NATIVE_TASKS>("+d+");hn::Unit{};})";
+            auto r=fresh("r");return s+"auto "+r+"="+invoked+";hn::leave<NATIVE_TASKS>("+d+");std::move("+r+");})";
         }
         if(!kind.starts_with("builtin:"))no(n,"callee of kind `"+kind+"`");
         const std::string name=kind.substr(8);const auto s=span(n.span);
         auto a=[&](std::size_t i){return given?(*given)[i]:expr(arg(i));};
+        if (name == "task_start") return task_start(n, s);
+        if (name == "task_await") {
+            enable_tasks(n);
+            const auto awaited = "hn::await_task(" + a(0) + "," + s + ")";
+            const auto& type = ty(n);
+            if (type.empty() || type == "void") return "(" + awaited + ",hn::Unit{})";
+            return "hn::from_value<" + ct(type, n) + ">(" + awaited + ")";
+        }
+        if (name == "$std$task$sleep" || name == "$std$task$yield") {
+            enable_tasks(n);
+            const auto values = count ? "hn::to_value(" + a(0) + ")" : "";
+            return "(hn::task_wait(" + quoted(name) + ".c_str(),{" + values + "}," + s + "),hn::Unit{})";
+        }
+        if (name.starts_with("$std$task$") && name != "$std$task$worker_id")
+            no(n, "native Task builtin " + name);
+        if (name.starts_with("$std$file$") || name.starts_with("$std$fs$") ||
+            name.starts_with("$std$io$") || name.starts_with("$std$process$") ||
+            name == "$std$os$exit")
+            blocking_in_task_program = &n;
         static const std::set<std::string> needs_static_argument{
             "delete","is_ok","is_err","is_some","is_none","unwrap","unwrap_err","unwrap_or"};
         if(count&&needs_static_argument.contains(name)&&ty(arg(0))=="@dynamic")
@@ -1554,7 +1647,7 @@ struct Emitter {
             if(i){list+=",";flags+=",";}list+="hn::to_value("+a(i)+")";flags+=contextual_literal(arg(i))?"true":"false";}
         const auto site=fresh("site");
         const std::string boxed="hn::call_bridge("+site+","+s+",{"+list+"})";
-        const std::string head="({static hn::Bridge "+site+"(\""+name+"\",{"+flags+"},\""+out+"\");";
+        const std::string head="({static std::conditional_t<NATIVE_TASKS,const hn::BridgeInfo,hn::Bridge> "+site+"(\""+name+"\",{"+flags+"},\""+out+"\");";
         if(statement||out=="void"||out.empty())return head+boxed+";hn::Unit{};})";
         return head+"hn::from_value<"+ct(out,n)+">("+boxed+");})";
     }
@@ -1620,12 +1713,13 @@ struct Emitter {
         auto target=fresh("callback");
         code+="auto "+target+"="+expr(*n.children.back())+";";
         const auto depth=fresh("depth");
-        return code+"hn::"+name+"("+arguments+"[&](auto&&... args){const auto "+depth+"=hn::enter<NATIVE_COUNT_STEPS>("+site+");auto result="+
-               mangle("hf_",sig.name)+"("+(nested?target+",":"")+"std::forward<decltype(args)>(args)...);hn::leave("+depth+");return result;},"+site+");})";
+        return code+"hn::"+name+"("+arguments+"[&](auto&&... args){const auto "+depth+"=hn::enter<NATIVE_COUNT_STEPS, NATIVE_TASKS>("+site+");auto result="+
+               mangle("hf_",sig.name)+"("+(nested?target+",":"")+"std::forward<decltype(args)>(args)...);hn::leave<NATIVE_TASKS>("+depth+");return result;},"+site+");})";
     }
     // Defer: arguments evaluated now (into the guard), the call run at block exit.
     const std::vector<std::string>* given{};
     void defer(const Node& n){
+        deferred_in_task_program = &n;
         const auto& c=*n.children[0];if(c.kind!=N::Call)no(n,"defer of a non-call");
         const auto& callee=*c.children[0];if(callee.kind!=N::Name)no(n,"deferred method or expression call");
         std::vector<std::string> args;std::string capture,callee_snapshot;
@@ -1710,7 +1804,7 @@ struct Emitter {
         case N::If:{
             line("if("+condition(*n.children[0])+")");statement_block(*n.children[1]);
             if(n.children.size()==3){line("else");statement_block(*n.children[2]);}break;}
-        case N::While:{line("while(true){if constexpr(NATIVE_COUNT_STEPS)hn::step();if(!("+condition(*n.children[0])+"))break;");statement_block(*n.children[1]);line("}");break;}
+        case N::While:{line("while(true){hn::loop_step<NATIVE_COUNT_STEPS, NATIVE_TASKS>();if(!("+condition(*n.children[0])+"))break;");statement_block(*n.children[1]);line("}");break;}
         case N::For:loop(n);break;
         case N::Match:match(n);break;
         case N::Defer:defer(n);break;
@@ -2000,20 +2094,20 @@ struct Emitter {
             line("hn::I "+c+"="+expr(*iterable.children[0])+";hn::I "+e+"="+expr(*iterable.children[1])+";hn::I "+st+"="+(iterable.children.size()==3?expr(*iterable.children[2]):std::string("1"))+";bool "+done+"=false;");
             line("if("+st+"==0)hn::fail("+span(iterable.span)+",\"range step cannot be zero\",\"E4005\");");
             const bool inclusive=iterable.text=="..=";
-            line("while(!"+done+"&&("+st+">0?("+c+(inclusive?"<=":"<")+e+"):("+c+(inclusive?">=":">")+e+"))){if constexpr(NATIVE_COUNT_STEPS)hn::step();const hn::I "+name+"="+c+";");
+            line("while(!"+done+"&&("+st+">0?("+c+(inclusive?"<=":"<")+e+"):("+c+(inclusive?">=":">")+e+"))){hn::loop_step<NATIVE_COUNT_STEPS, NATIVE_TASKS>();const hn::I "+name+"="+c+";");
             line(std::string("if(")+(inclusive?"("+c+"=="+e+")||":"")+"("+st+">0&&"+c+">std::numeric_limits<hn::I>::max()-"+st+")||("+st+"<0&&"+c+"<std::numeric_limits<hn::I>::min()-"+st+"))"+done+"=true;else "+c+"+="+st+";");
             scopes.back()[n.children[0]->text]=Local{name,"int"};
         }else{
             const auto& t=ty(iterable);
             if(is_sequence(t)){
                 const auto element=element_type(t);auto sl=fresh("sl"),ix=fresh("ix");
-                line("auto "+sl+"="+sequence_expr(iterable)+";for(hn::I "+ix+"=0;"+ix+"<"+sl+".length;++"+ix+"){if constexpr(NATIVE_COUNT_STEPS)hn::step();");
+                line("auto "+sl+"="+sequence_expr(iterable)+";for(hn::I "+ix+"=0;"+ix+"<"+sl+".length;++"+ix+"){hn::loop_step<NATIVE_COUNT_STEPS, NATIVE_TASKS>();");
                 if(count==2){auto i=fresh(n.children[0]->text);line("const hn::I "+i+"="+ix+";");scopes.back()[n.children[0]->text]=Local{i,"int"};}
                 auto v=fresh(n.children[count-1]->text);line("const "+ct(element,n)+" "+v+"=(*"+sl+".storage)[static_cast<std::size_t>("+sl+".start+"+ix+")];");
                 scopes.back()[n.children[count-1]->text]=Local{v,element};
             }else if(is_map(t)){
                 const auto parts=map_parts(t);auto mp=fresh("mp"),snap=fresh("snap"),kv=fresh("kv");
-                line("auto "+mp+"="+expr(iterable)+";std::vector<std::pair<"+ct(parts[0],n)+","+ct(parts[1],n)+">> "+snap+"("+mp+".data->begin(),"+mp+".data->end());for(const auto& "+kv+":"+snap+"){if constexpr(NATIVE_COUNT_STEPS)hn::step();");
+                line("auto "+mp+"="+expr(iterable)+";std::vector<std::pair<"+ct(parts[0],n)+","+ct(parts[1],n)+">> "+snap+"("+mp+".data->begin(),"+mp+".data->end());for(const auto& "+kv+":"+snap+"){hn::loop_step<NATIVE_COUNT_STEPS, NATIVE_TASKS>();");
                 auto k=fresh(n.children[0]->text);line("const "+ct(parts[0],n)+" "+k+"="+kv+".first;");scopes.back()[n.children[0]->text]=Local{k,parts[0]};
                 if(count==2){auto v=fresh(n.children[1]->text);line("const "+ct(parts[1],n)+" "+v+"="+kv+".second;");scopes.back()[n.children[1]->text]=Local{v,parts[1]};}
             }else no(n,"loop over `"+t+"`");
@@ -2363,11 +2457,19 @@ struct Emitter {
             need(main->second);
         }
         while(!queue.empty()){auto fn=queue.front();queue.pop_front();function(*fn);}
+        if (uses_tasks) {
+            if (deferred_in_task_program) no(*deferred_in_task_program, "defer in a native Task program");
+            if (blocking_in_task_program) no(*blocking_in_task_program, "blocking builtin in a native Task program");
+            for (const auto& child : tree.children)
+                if (child->kind == N::Let || child->kind == N::Var)
+                    no(*child, "module runtime bindings in a native Task program");
+        }
         const auto main_site=span(main!=m.functions.end()?main->second->span:tree.span);
         std::ostringstream o;
         o<<"// Generated by `hua native`. Do not edit.\n#include \"hua/native_rt.hpp\"\nnamespace hn {\n";
         o<<"#ifndef HUA_NATIVE_COUNT_STEPS\n#define HUA_NATIVE_COUNT_STEPS 1\n#endif\n"
-          <<"static constexpr bool NATIVE_COUNT_STEPS=HUA_NATIVE_COUNT_STEPS!=0;\n";
+          <<"static constexpr bool NATIVE_COUNT_STEPS=HUA_NATIVE_COUNT_STEPS!=0;\n"
+          <<"static constexpr bool NATIVE_TASKS="<<(uses_tasks?"true":"false")<<";\n";
         o<<"static const hua::SourceSpan SP[]={\n";
         for(const auto& s:spans)o<<"    {"<<quoted(s.file_id)<<","<<s.start_offset<<","<<s.end_offset<<","<<s.line<<","<<s.column<<"},\n";
         o<<"};\n";
@@ -2384,8 +2486,9 @@ struct Emitter {
         o<<"static Value entry(){\n"<<global_init;
         if(main==m.functions.end())o<<"    return Value{};\n";
         else if(main_sig.result.empty())o<<"    hf_main();return Value{};\n";
+        else if(main_sig.result.starts_with("Task<"))o<<"    return await_task(hf_main(),"<<main_site<<");\n";
         else o<<"    return to_value(hf_main());\n";
-        o<<"}\n}\nint main(int argc,char** argv){return hn::run_main(argc,argv,hn::"<<main_site<<",&hn::entry);}\n";
+        o<<"}\n}\nint main(int argc,char** argv){return hn::run_main(argc,argv,hn::"<<main_site<<",&hn::entry,hn::NATIVE_TASKS);}\n";
         return o.str();
     }
 };

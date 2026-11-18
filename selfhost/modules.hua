@@ -117,9 +117,9 @@ fn collect(g mut Graph, u Unit) Result<void> {
     return ok()
 }
 # No canonical API exists in SB1: inspect every dependency component and fail closed on symlinks.
-fn inspect(g Graph, relative string, site ast.Node, source string) Result<string> {
+fn inspect(base string, relative string, site ast.Node, source string) Result<string> {
     let parts = strings.split(relative,"/")
-    var current = g.root
+    var current = base
     for i in 0..len(parts) {
         current = path.join([current,parts[i]])?
         let info = fs.stat(current)
@@ -134,17 +134,57 @@ fn inspect(g Graph, relative string, site ast.Node, source string) Result<string
 fn resolve(g Graph, name string, site ast.Node, source string) Result<string> {
     let relative = strings.replace(name,".","/")
     for candidate in [relative+".hua",relative+"/package.hua"] {
-        let p = inspect(g,candidate,site,source)?
+        let p = inspect(g.root,candidate,site,source)?
         if p != "" { return ok(p) }
     }
     for candidate in [relative+".huam",relative+"/package.huam",relative+".wasm",relative+"/package.wasm"] {
-        if inspect(g,candidate,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
+        if inspect(g.root,candidate,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
     }
     return err(error(source,site,"E5001","cannot resolve module "+name))
 }
-fn visit(g mut Graph, filename string, site ast.Node, parent string) Result<string> {
+fn std_source(site ast.Node, source string) Result<string> {
+    let configured = os.getenv("HUA_HOME")?
+    if is_none(configured) { return err(error(source,site,"E5001","std.alg_integer requires HUA_HOME set to a Hua SDK root")) }
+    let requested = path.normalize(unwrap(configured))?
+    if cache_key(path.join([os.cwd()?,requested])?) != cache_key(requested) {
+        return err(error(source,site,"E5001","HUA_HOME must be an absolute SDK root"))
+    }
+    let resolved = fs.canonical(requested)
+    if is_err(resolved) { return err(error(source,site,"E5001","invalid Hua SDK root")) }
+    let root = path.normalize(unwrap(resolved))?
+    let manifest = inspect(root,"manifest.json",site,source)?
+    if manifest == "" { return err(error(source,site,"E5001","cannot read Hua SDK manifest.json")) }
+    let info = fs.stat(manifest)?
+    if json.as_int(json.get(info,"size_bytes")?)? > 1048576 {
+        return err(error(source,site,"E5001","invalid size for Hua SDK manifest.json"))
+    }
+    let parsed = json.decode(fs.read_text(manifest)?)
+    if is_err(parsed) { return err(error(source,site,"E5001","invalid JSON in Hua SDK manifest.json")) }
+    let value = unwrap(parsed)
+    let relative = "src/std/alg_integer.hua"
+    let schema = json.get(value,"schema")
+    let modules = json.get(value,"source_modules")
+    let files = json.get(value,"files")
+    let invalid = error(source,site,"E5001","Hua SDK manifest does not register std.alg_integer")
+    if is_err(schema) || is_err(modules) || is_err(files) { return err(invalid) }
+    let registered = json.get(unwrap(modules),"std.alg_integer")
+    let file = json.get(unwrap(files),relative)
+    if is_err(registered) || is_err(file) { return err(invalid) }
+    let role = json.get(unwrap(file),"role")
+    if is_err(role) || unwrap_or(json.as_string(unwrap(schema)),"") != "hua.sdk.v1" ||
+        unwrap_or(json.as_string(unwrap(registered)),"") != relative ||
+        unwrap_or(json.as_string(unwrap(role)),"") != "stdlib_source" { return err(invalid) }
+    let found = inspect(root,relative,site,source)?
+    if found != "" {
+        let actual = fs.canonical(found)
+        if is_ok(actual) && cache_key(path.normalize(unwrap(actual))?) == cache_key(found) { return ok(found) }
+    }
+    return err(error(source,site,"E5001","cannot read registered SDK source: "+relative))
+}
+fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id string) Result<string> {
     let normalized = path.normalize(filename)?
-    let key = cache_key(normalized)
+    var key = cache_key(normalized)
+    if sdk_id != "" { key = sdk_id }
     for unit in list.snapshot(g.units) {
         if unit.key == key {
             if alg.contains(list.snapshot(g.active),unit.id) { return err(error(parent,site,"E5002","cyclic module import "+unit.id)) }
@@ -162,8 +202,11 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string) Result<stri
     if size > per_file || g.total_bytes+size > g.limits.source_bytes_total { return err(error(parent,site,"E5005","module byte budget")) }
     let raw = fs.read_text(normalized)
     if is_err(raw) { return err(error(parent,site,"E8204",unwrap_err(raw))) }
-    let id = path.relative(normalized,g.root)?
-    if id == ".." || strings.starts_with(id,"../") { return err(error(parent,site,"E8302","source outside project root")) }
+    var id = sdk_id
+    if id == "" {
+        id = path.relative(normalized,g.root)?
+        if id == ".." || strings.starts_with(id,"../") { return err(error(parent,site,"E8302","source outside project root")) }
+    }
     var parsed Result<parser.Tree> = err("uninitialized")
     if g.limits.compiler { parsed = parser.parse_compiler(unwrap(raw),id) }
     else { parsed = parser.parse_extended(unwrap(raw),id) }
@@ -191,10 +234,19 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string) Result<stri
             }
         }
         var target = ""
-        if strings.starts_with(name,"std.") || name == "std" {
+        if sdk_id != "" && !(strings.starts_with(name,"std.") || name == "std") {
+            return err(error(id,n,"E5001","SDK source modules can only import standard modules"))
+        }
+        if name == "std.alg_integer" {
+            let loaded = unit_index(g,"@sdk/src/std/alg_integer.hua")
+            var source = ""
+            if loaded >= 0 { source = list.get(g.units,loaded)?.path }
+            else { source = std_source(n,id)? }
+            target = visit(g,source,n,id,"@sdk/src/std/alg_integer.hua")?
+        } else if strings.starts_with(name,"std.") || name == "std" {
             if !catalog.module(name) { return err(error(id,n,"E8201","standard module is outside SB1")) }
             target = "builtin:"+name
-        } else { target = visit(g,resolve(g,name,n,id)?,n,id)? }
+        } else { target = visit(g,resolve(g,name,n,id)?,n,id,"")? }
         list.append(g.edges,Edge{source:id,target:target,namespace:ns,node:n.id.index})?
     }
     list.pop(g.active)?
@@ -393,7 +445,7 @@ fn analyze_impl(entry string, limits Limits) Result<Graph> {
     # A validated empty source supplies the entry error location before the actual parse.
     let seed = parser.parse_extended("",path.basename(normalized)?)?
     let site = ast.get(seed.pool,seed.root)?
-    visit(g,normalized,site,path.basename(normalized)?)?
+    visit(g,normalized,site,path.basename(normalized)?,"")?
     for u in list.snapshot(g.units) { collect(g,u)? }
     for id in list.snapshot(g.order) {
         let index = unit_index(g,id)

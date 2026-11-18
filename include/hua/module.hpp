@@ -31,9 +31,10 @@ private:
     NodePtr linked_;
     std::size_t bytes_{};
     std::shared_ptr<ExternalRegistry> external_;
-    Module& visit(const std::filesystem::path& path, const SourceSpan& site, bool entry = false);
+    Module& visit(const std::filesystem::path& path, const SourceSpan& site, bool entry = false, const std::string& sdk_id = {});
     std::filesystem::path resolve(const std::string& name, const SourceSpan& site) const;
     NodePtr link(Module& module);
+    Module& sdk_standard(const SourceSpan& site);
     Module& standard(const std::string& name,const SourceSpan& site);
 };
 }
