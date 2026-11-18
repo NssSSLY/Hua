@@ -20,7 +20,7 @@ Hua是小核心、静态类型的脚本语言：C++20宿主（Lexer/Parser/语�
 **权威入口**（共10份活文档，见docs/文档目录.md）：
 - 进度/能力：docs/项目概览与进度.md
 - 任务/优先级/唯一下一方案：docs/设计决策与未决事项.md（design-backlog，固定HUA-D编号）
-- 性能分析、A–G路线与按步骤工作日志：docs/VM与自举性能改造分析.md（第0节日志，0.3节下一步，第9节路线）
+- 原生发布与自举性能：docs/VM与自举性能改造分析.md（0.3 节为 N2–N5 与自举提速，附当前证据和验收方法，历史过程在 knowledge/bootstrap-performance/）
 - 语言合同：docs/语言设计与类型规则.md；运行时：docs/运行时与扩展设计.md；接口：docs/标准库与内建接口.md
 - 构建/运行/在另一台电脑接续：docs/开发与运行指南.md#resume-on-another-computer
 - 逐项学习与确认：docs/语言百科与设计核对.md（固定条目ID，用户确认栏不改）

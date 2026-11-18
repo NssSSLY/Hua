@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "checkpoint_id": "2026-11-18_024539_cdfdb707",
+  "project_id": "aab00f84-5a35-48b3-973b-4ccd29e3d31c",
+  "created_at": "2026-11-18T02:45:39+00:00",
+  "goal": "整理 VM 与自举性能改造分析",
+  "summary": "原生发布 N2 至 N5 和完整自举提速合并为两条待办路线，正文保留 Windows 基线、主要证据及实施验收。旧原文按字节归入项目记忆。本轮为文档整理。",
+  "decisions": [
+    "两条路线在性能文档 0.3 节维护。其他平台验收暂缓。"
+  ],
+  "modified_files": [
+    "\".codex-sync/knowledge/bootstrap-performance/originals/2026-11-18-VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\"",
+    "\"docs/VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\"",
+    "\"docs/\\346\\226\\207\\346\\241\\243\\347\\233\\256\\345\\275\\225.md\"",
+    ".codex-sync/CURRENT_STATE.md",
+    ".codex-sync/DECISIONS.md",
+    ".codex-sync/PROJECT_CONTEXT.md",
+    ".codex-sync/TODO.md",
+    ".codex-sync/checkpoints/2026-11-18_020303_5798ecbb.json",
+    ".codex-sync/checkpoints/2026-11-18_020303_5798ecbb.md",
+    ".codex-sync/history/2026-11-18_020303_5798ecbb.jsonl",
+    ".codex-sync/knowledge/bootstrap-performance/INDEX.md",
+    ".codex-sync/knowledge/bootstrap-performance/runs/2026-11-18-n1-windows-acceptance.md",
+    ".codex-sync/project.json",
+    "src/native.cpp",
+    "tests/native_backend_tests.py"
+  ],
+  "git_branch": "perf/vm-register-r1",
+  "git_head": "f39222158e64a846ea26217ad9f26fb28b96e2c9",
+  "git_status": [
+    " M .codex-sync/CURRENT_STATE.md",
+    " M .codex-sync/DECISIONS.md",
+    " M .codex-sync/PROJECT_CONTEXT.md",
+    " M .codex-sync/TODO.md",
+    " M .codex-sync/knowledge/bootstrap-performance/INDEX.md",
+    " M .codex-sync/project.json",
+    " M \"docs/VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\"",
+    " M \"docs/\\346\\226\\207\\346\\241\\243\\347\\233\\256\\345\\275\\225.md\"",
+    " M src/native.cpp",
+    " M tests/native_backend_tests.py",
+    "?? .codex-sync/checkpoints/2026-11-18_020303_5798ecbb.json",
+    "?? .codex-sync/checkpoints/2026-11-18_020303_5798ecbb.md",
+    "?? .codex-sync/history/2026-11-18_020303_5798ecbb.jsonl",
+    "?? \".codex-sync/knowledge/bootstrap-performance/originals/2026-11-18-VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\"",
+    "?? .codex-sync/knowledge/bootstrap-performance/runs/2026-11-18-n1-windows-acceptance.md"
+  ],
+  "git_diff_summary": [
+    ".codex-sync/CURRENT_STATE.md: +8/-0",
+    ".codex-sync/DECISIONS.md: +2/-0",
+    ".codex-sync/PROJECT_CONTEXT.md: +1/-1",
+    ".codex-sync/TODO.md: +5/-6",
+    ".codex-sync/knowledge/bootstrap-performance/INDEX.md: +8/-0",
+    ".codex-sync/project.json: +1/-1",
+    "\"docs/VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\": +61/-860",
+    "\"docs/\\346\\226\\207\\346\\241\\243\\347\\233\\256\\345\\275\\225.md\": +1/-1",
+    "src/native.cpp: +45/-0",
+    "tests/native_backend_tests.py: +108/-1"
+  ],
+  "recent_commits": [
+    "f392221 perf(native): optimize closures and indirect calls",
+    "a4eec89 docs: record native release route decision",
+    "686589d feat(native): 本地后端扩展到完整自举编译器，输出与VM逐字节一致",
+    "1acece5 feat(native): 本地后端原型——带类型语法树直接生成C++（hua native）",
+    "69f53f4 perf(vm): 寄存器VM第二阶段（Value寄存器）、Tagged值联合体、GC共享盒修复与分配优化"
+  ],
+  "todos": [
+    "原生发布路线从 N2 Windows 任务调度与恢复开始。自举提速路线从完整负载分阶段归因开始。"
+  ],
+  "blockers": []
+}

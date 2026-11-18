@@ -1,902 +1,113 @@
 # VM与自举性能改造分析
 
-本文同时是性能改造的**工作日志**：第0节记录每一步做了什么、结果如何、下一步做什么；第1–8节是最初的分析与方案（保留原文，结论被实测修正时在第0节说明）。
+更新于 2026-11-18。本文维护原生发布路线、自举提速计划和支持排序的实测结论。两条路线分别验收，目前都从 Windows 出发。完整实验过程见[项目记忆索引](../.codex-sync/knowledge/bootstrap-performance/INDEX.md)。
 
-**文档职责（2026-10-22用户确认为docs第10份活文档）**：本文维护VM与自举性能的分析、方案和按步骤的结论性工作日志；完整逐轮过程、失败/撤回证据与运行身份在[项目记忆](../.codex-sync/knowledge/bootstrap-performance/INDEX.md)，当前能力与总状态在[项目概览](项目概览与进度.md)，项目级优先级在[设计决策](设计决策与未决事项.md)。
+## 0. 当前进度
 
-最初分析更新：2026-10-20。依据：项目文档、`.codex-sync`最新直接自举记录（2026-10-20-direct-selfhost-trace）、以及对 `src/vm.cpp`、`src/value.cpp`、`src/runtime.cpp`、`src/tasks.cpp`、`include/hua/value.hpp`、`include/hua/vm.hpp`、`selfhost/capabilities.hua` 的代码阅读。本文是外部审阅意见，**没有修改任何源码，也没有新的实测**；所有“预计”数字都是估算，需要用下文的基准验证。
+### 0.1 当前状态
 
-## 0. 当前进度与下一步（工作日志）
+- **原生发布路线**进入 N2 并发与异步。N3 发布部署、N4 统一带类型 IR 与原生自举、N5 扩展能力依次排在后面。
+- **自举提速路线**待做完整负载分阶段归因。先确定 C04 的重复分析、摘要展开和合并成本，再做调用点精确失效与按需查询。VM 内存成本和归档成本由测量结果决定是否进入实施。
 
-### 0.1 当前状态（随每一步更新）
+### 0.2 最近的 Windows 验收基线
 
-| 项 | 状态 |
-|---|---|
-| 当前步骤 | 2026-10-29按用户授权实施值复制第一优先改造；长字符串、叶记录字段体和不可变Result载荷共享已接入。63项回归通过，完整A07/C04通过（192.57秒）；实测见0.2本轮条目，不能据此宣称显著加速自举。 |
-| 下一步 | 见0.3 |
-| 自举 | Windows（2026-10-23，P4-S1源码，另一台机器）：C2 207.8秒、C3 202.8秒、12.81亿步，C2=C3逐字节相同；600秒余量约65%。各次计时的机器与时段见0.2对应步骤，不跨机比较 |
-| compiler配置 | 已改为墙钟600秒为主，步数上限提高到1000亿（只防死循环），见0.2 步骤1 |
-| 微基准 | `perf/` 已建立；Windows结果 `perf/results/win-step2.json`、`win-step3a.json`；`perf/ab_bench.py` 交替A/B对比 |
-| 已同步到本地 | 步骤1、2的代码、`perf/`、本文档（2026-10-21）；2026-10-22已在Windows上重新构建全部目标 |
+N1 的 Windows 完整自身复验和同步动态操作审查已完成。87 项原生／VM 差分与 12 项拒绝检查通过。下表来自 2026-11-18 的验收，输入均为完整自举编译器入口 [selfhost/archive_main.hua](../selfhost/archive_main.hua)。
 
-### 0.2 已完成步骤
+| 环节 | 墙钟时间 |
+|---|---:|
+| 宿主生成完整编译器 C++ | 78.187 秒 |
+| Clang 编译并链接原生编译器 | 163.438 秒 |
+| 宿主构建 VM 种子 HUAB | 76.275 秒 |
+| 已构建的原生编译器编译自身，输出 HUAB | **48.969 秒** |
+| VM 加载种子编译同一输入，输出 C2 HUAB | **308.588 秒** |
+| VM 加载 C2 再编译同一输入，输出 C3 HUAB | 319.607 秒 |
 
-#### 步骤1（2026-10-20）：compiler配置改为墙钟为主，建立微基准与基线
+原生和 VM 跑的是同一套 Hua 编译器逻辑。原生程序由带类型 AST 生成的 C++ 经 Clang 构建，运行时关闭计步。VM 执行种子中的字节码，使用 compiler 预算配置。48.969／308.588 秒各为一次墙钟实测，约 6.30 倍，包含运行与产物写出，各自的种子／可执行文件准备时间单列。
 
-**compiler配置**
-- `include/hua/execution.hpp`：新增 `compiler_step_limit = 100000000000`（1000亿），`--execution-profile compiler` 使用它；default配置的100万步、128层调用、GC间隔不变。
-- `selfhost/contract.json`：`compiler_budget.execution_steps` 改为 100000000000；`supervisor_seconds` 仍为600，由 `tools/hua_frontend.py` 按此墙钟终止进程。
-- 同步修改断言旧值的8个测试：`tests/selfhost_{budget,pipeline_budget,archive_budget,archive,type,bytecode,lowering,scale}_tests.py`。
-- `tests/tools/` 下的历史诊断脚本、各 `*_probe.cpp` 里写死的5亿是旧实验的记录参数，没有改。
+原生产物、C2 和 C3 逐字节一致。HUAB 格式 7、ABI 1，4,195,418 字节、62,599 条指令。C2 执行 1,132,389,837 个预算步，峰值调用深度 52。两条执行路径相差 259.619 秒，目前缺少各阶段及运行时热点的同期归因。N4 仍需完成由 Hua 源码生成原生编译器的闭环。[Windows 验收记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-18-n1-windows-acceptance.md)
 
-**微基准（`perf/`）**
+### 0.2.1 Windows 跨语言基准（2026-11-18）
 
-| 文件 | 测什么 |
-|---|---|
-| `perf/bench/01_loop.hua` | 纯分发：while循环加一 |
-| `perf/bench/02_arith.hua` | 范围for＋整数运算 |
-| `perf/bench/03_calls.hua` | 递归fib(27)：调用/返回 |
-| `perf/bench/04_struct_pass.hua` | 含字符串/切片/嵌套struct/map的记录按值传入与返回 |
-| `perf/bench/05_map_ops.hua` | map[string]bool 插入/查询/遍历 |
-| `perf/bench/06_map_merge.hua` | 复刻C04 `same_flags`/`merge_view` 写法 |
-| `perf/bench/07_strings.hua` | 路径字符串拼接/split（C04来源路径写法） |
-| `08_real_type_rules` / `09_real_ast_pool` | 真实负载：自举编译器（HUAB）完整编译 `selfhost/type_rules.hua`、`selfhost/ast_pool.hua` |
+同机对照 Lua 5.4.7、CPython 3.12.0、Java 25.0.2、Go 1.27.1 与 Clang 23.1.2 的 C++。七组端到端用例包括空程序、循环、递归、Map、文本、整数容器和 4 MiB 文件。每格 7 次，所有计入统计的输出校验通过。
 
-每个基准都有 `.expect`（期望stdout；真实负载的期望是含CRC32和字节数的编译回执），输出不一致即判为语义回归。真实负载清单在 `perf/workloads.json`。
+- **递归 fib(30)**：Hua HUAB 115.42 ms、原生 24.76 ms，Lua 79.12 ms、Python 266.67 ms、Java 111.61 ms、Go 20.92 ms、C++ 15.60 ms。AST 首次达到 60 秒即终止，保留已完成样本并跳过后续 AST 项。
+- **预热递归**：三次不同参数计算中，Hua HUAB 103.56 ms、Hua 原生 8.61 ms、Lua 75.23 ms、Python 209.76 ms、Java 5.67 ms、Go 5.60 ms、C++ 3.34 ms。
+- **30 万项整数容器**：HUAB 589.60 ms／58.9 MiB，原生 27.86 ms／10.8 MiB。后续 VM 剖析可用此例分离值、List 调用与分配成本。自举性能仍以完整输入归因为准。
 
-运行方式（Windows）：
+[完整时间、峰值工作集、编译数据与边界](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-18-cross-language-benchmarks.md)
 
-```powershell
-cmake --build tests/build --target hua
-python perf/run_bench.py --hua tests/build/hua.exe --save perf/results/win-baseline.json   # 首次会用被测hua构建 perf/results/compiler.huab，约2分钟
-python perf/run_bench.py --hua tests/build/hua.exe --compare perf/results/win-baseline.json # 之后每次改动对比
-```
-
-`--only 03` 只跑名字含03的基准；`--no-real` 跳过真实负载；`--repeat` 默认3次取中位数。
-
-**基线（Linux云环境，clang 18 Release，2 vCPU；只用于前后对比，绝对值不等于Windows）**
-
-| 基准 | 步数 | 墙钟(s) | ns/步 |
-|---|---:|---:|---:|
-| 01_loop | 33,000,014 | 1.829 | 55.4 |
-| 02_arith | 26,000,016 | 1.466 | 56.4 |
-| 03_calls | 7,309,647 | 0.651 | 89.1 |
-| 04_struct_pass | 11,000,054 | 2.585 | 235.0 |
-| 05_map_ops | 13,930,211 | 1.702 | 122.2 |
-| 06_map_merge | 4,715,929 | 0.790 | 167.6 |
-| 07_strings | 7,350,016 | 1.276 | 173.6 |
-| 08_real_type_rules | 6,499,608 | 1.860 | 286.2 |
-| 09_real_ast_pool | 35,414,673 | 9.267 | 261.7 |
-
-**这组数据修正了最初分析的两点：**
-1. 最简单的指令也要约55ns/步（正常解释器5–10ns），而真实编译负载约260–290ns/步，与Windows完整自举测得的≈290ns/步一致。**慢的大头不在分发循环本身，而在struct复制、map、字符串、内建调用这些“重”指令**（04/06/07是01的3–4倍）。所以P1第1–3项（分发循环）预计只能带来有限收益，P1第4项（类型检查去字符串）和P2（COW、map）更关键。
-2. 一个空 `while` 循环每轮要11条字节码（Load/Constant/Binary/JumpFalse/EnterScope/LocateName/Constant/Store/Pop/LeaveScope/Jump）。指令数本身偏多，循环体每轮进出作用域也有成本。
-
-**另一个发现：宿主C++前端检查自举编译器源码要约2分钟。** `hua check selfhost/archive_main.hua` 在Linux上120秒（Windows文档里的“实验宿主准备120秒”是同一件事）。这不影响自举本身（自举跑的是HUAB），但让每次“从源码构建编译器”的开发循环很慢。记为待查项（sema.cpp），不在当前主线。
-
-#### 步骤2（2026-10-20/21）：P1 VM热路径第1–3项——安全点批量化、空drain跳过、调用/返回/内建去协程
-
-**改了什么（语义不变）**
-- `src/vm.cpp` dispatch：步数上限仍逐步精确判断（E4099位置不变）；取消检查与协作让出改为每256步一次（`poll_interval`），以前是每步一次 `co_await Yield{}` + `task_checkpoint`；共享的原子步数计数改为本地累加、批量刷新。
-- File pump仍逐步检查，但只在确实创建过资源时才进入（`ResourceDomain::created_flag()`，`file_pump_pending`）。
-- `LeaveScope`/`Unwind`：环境里没有defer时不再创建 `drain` 协程帧。
-- 普通Hua函数调用：`enter_function` 改为同步函数，不再为每次调用创建协程帧；外部调用、task_start、parallel_map、可能挂起的内建仍走原协程路径。
-- 返回：返回帧链上没有defer时走同步 `complete_return`，不再创建 `finish_return` 协程帧，也不再复制整个Frame。
-- 内建调用：不可能挂起的内建（`builtin_may_suspend` 判定）直接同步调用 `invoke_builtin`，不再经过按值复制参数的协程 `invoke_resumable`。
-- `Yield` 增加权重参数，保持“每1024个安全点tick让出一次”的原有节奏。
-
-**结果（Linux，同一台机器，墙钟中位数）**
-
-| 基准 | 步数（不变） | 基线(s) | 步骤2(s) | 加速 |
-|---|---:|---:|---:|---:|
-| 01_loop | 33,000,014 | 1.829 | 1.181 | 1.55x |
-| 02_arith | 26,000,016 | 1.466 | 1.093 | 1.34x |
-| 03_calls | 7,309,647 | 0.651 | 0.340 | 1.91x |
-| 04_struct_pass | 11,000,054 | 2.585 | 1.716 | 1.51x |
-| 05_map_ops | 13,930,211 | 1.702 | 1.058 | 1.61x |
-| 06_map_merge | 4,715,929 | 0.790 | 0.578 | 1.37x |
-| 07_strings | 7,350,016 | 1.276 | 0.852 | 1.50x |
-| 08_real_type_rules | 6,499,608 | 1.860 | 1.471 | 1.27x |
-| 09_real_ast_pool | 35,414,673 | 9.267 | 7.738 | 1.20x |
-
-所有基准输出、步数与基线一致；真实负载生成的HUAB回执（CRC/字节数）一致。
-
-**回归测试（Linux，完整CTest 83项）**：65项通过，没有任何基线通过的测试变为失败（比基线多出的一项 `task_resume_migration` 在基线那次运行中失败、本次通过，属于计时相关的测试）。其余18项在基线上也失败：多数是 `selfhost_*` 在Linux上超过测试自带的180秒监督，以及依赖Windows路径/工具的测试，与本改动无关。**Windows上需要你按第0.4节命令重跑一次完整CTest确认。**
-
-**结论**：调用密集的代码约2倍，真实编译负载只有1.2–1.3倍。剖析（callgrind，type_rules负载）显示剩余时间主要在：值复制 `copy_value` 约19%（其中按值传struct参数约9%）、内建/标准库调用约20%（其中每次调用都按参数类型重建标准库签名、复制参数）、`enter_function`/`complete_return` 约23%、malloc/free约14%、`enforce_type` 字符串类型检查约6%。分发循环本身已不是主要成本。
-
-#### P0（2026-10-21）：不限步数完整自举——C04能收敛，但编译器拒绝了自己的源码
-
-**怎么测的**：步骤2的Linux构建（clang Release），`hua run compiler.huab --execution-profile compiler -- selfhost/archive_main.hua out.huab`，compiler配置步数上限1000亿，外部墙钟上限1小时。编译器HUAB由宿主C++前端从当前 `selfhost/archive_main.hua` 构建（3,622,439字节）。
-
-| 项 | 结果 |
-|---|---|
-| 总步数 | 1,201,844,881（约12亿；旧合同5亿步的2.4倍） |
-| 墙钟 | 780.8秒（Linux 2 vCPU，比600秒上限多约30%） |
-| 峰值内存 | 约596MiB |
-| 调用深度峰值 | 52/128 |
-| 结束阶段 | **types阶段报错**：`E3003@744:102 [capabilities.hua] read-only location`，没有生成HUAB |
-
-**这次测量回答了两个问题：**
-1. **C04会收敛。** 去掉5亿步上限后，C04分析在约12亿步内跑完了全部14个模块（之前担心的“不收敛/指数爆炸”没有出现）。所以P4（C04算法改造）不再是阻塞项，降为后续优化。
-2. **出现了一个之前被5亿步上限掩盖的正确性问题：Hua写的C04把编译器自己源码中合法的代码判成了“只读位置写入”。** 宿主C++语义分析接受同一份源码，所以这是Hua C04的误报。出错位置是 `capabilities.hua` 第744行 `out.root.writable=true`，其中 `out` 来自 `var out=args[0]`（`args` 是只读切片参数），赋值复制出的 `var` 本应可写。这一项必须先修好，否则VM再快也无法得到自举产物。
-
-**时间上的含义**：12亿步×约650ns/步（Linux上步骤2构建的真实负载）≈780秒。要进入600秒，需要每步再快约1.3倍以上；后面还有lowering/字节码/编码阶段没有跑到，所以实际需要的余量更大。
-
-#### P0修复（2026-10-21/22，Windows）：三处C04误报，自举首次成功
-
-**改了什么**：只改 `selfhost/capabilities.hua`，每处都按宿主C++检查器（`src/sema.cpp`）的同一规则修正，修改前都先用小例确认“宿主接受、C04拒绝”。
-
-| 自举停在 | 原因 | 修改 |
-|---|---|---|
-| `744:102 read-only location` | Member表达式清掉了 `record_copy`（C++只对Index清）；`field_fact` 缺省投影没对“复制记录的记录成员”做 `copy_view`；`list.snapshot` 签名结果为空串，丢了元素类型 | 只在Index清；缺省投影补同一规则；snapshot结果按只读 `[]T` 播种 |
-| `1033:33 read-only location` | `for k, v in m` 两个绑定都用了值类型，键被当成只读记录 | 绑定类型与C++一致（键/索引在前，单绑定遍历map为键） |
-| `666:13 callee writes through a read-only member/view` | 空map字面量没有元素路径事实，第一次mut调用的写效果在实例化时被保守标为只读，第二次调用被拒 | 空map字面量生成默认元素形状（同C++ `fields()`） |
-
-后两处在原始C04上同样复现，原先被更早的错误或5亿步上限掩盖。
-
-**验证**：`tests/data/a07_completion_cases.json` 新增10例（含3个反例，确认共享成员/循环值绑定仍判只读）；`ctest -R ^capability_c04$`（AST/VM/HUAB/SB1＋类型oracle＋prepared执行）通过。
-
-| 完整自举（Windows，同一构建） | 结果 | 步数 | 墙钟 |
-|---|---|---:|---:|
-| 修复第1处后 | 停在1033:33 | 1,298,882,609 | 379.0秒 |
-| 修复第1、2处后 | 停在666:13 | 1,500,506,817 | 466.3秒 |
-| 三处全部修复 | **status ok**，4,182,995字节HUAB | 1,735,764,055 | **555.6秒** |
-| gen2：自身产物再编译自身 | ok，与gen1**逐字节相同** | 1,735,764,055 | 542.9秒 |
-
-另外，宿主构建的编译器与自身产物分别编译 `selfhost/type_rules.hua`，两份HUAB逐字节相同。过程记录：[.codex-sync/knowledge/…/2026-10-21-c04-false-positives-selfhost.md](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-21-c04-false-positives-selfhost.md)。
-
-**含义**：自举已不被阻塞，但600秒只剩约44秒余量；每步约320ns（Windows，含全部阶段）。下面的性能工作现在的目标是拉开余量。
-
-**测试工具注意**：改了selfhost源码后要先删 `tests/build/a07-c04/analyzer.huab`，否则C04测试的HUAB/SB1模式复用旧分析器，报“analyzer reports differ”。
-
-#### Windows完整CTest回归（2026-10-22）
-
-同一构建、默认参数顺序执行83项：**71通过、12失败**（36.7分钟）。没有基线二进制可整体对照（步骤2前的hua.exe已被重新构建覆盖），因此逐项定因；对照对象是 `tests/artifacts/build-bo11-body-20261019-r3/hua.exe`（10-19冻结运行时）和改动前的 `capabilities.hua`（scratch副本）。
-
-| 失败项 | 原因 | 与步骤1/2、C04修复的关系 |
-|---|---|---|
-| capability_instantiation | 测试从 `capabilities.hua` 抽取固定函数列表组成独立程序；`field_fact` 新调用了 `record`/`copy_view` | **由C04修复引起，已修**：抽取列表加入这两个函数及 `type_rules` 导入，复测通过 |
-| selfhost_ast_pool | `clone` 81层嵌套期望E4007，实得E4099（AST/VM、hua/probe四路一致） | 早已存在：10-16、10-19二进制同为E4099，10-14及更早才是E4007 |
-| selfhost_frontend_extended | 不限时跑完后断言失败：`compiler_main.hua` 在C02-P2扩展解析中报E8201@14:11（期望E8202） | 早已存在：10-19二进制输出逐字相同；测试10-11、该行10-15改动 |
-| selfhost_lowering | 放宽单命令时限后跑到断言：`callable_arrays` 的 `capability_passes`=4，校验上限为函数数+2=3 | 早已存在：原始C04源码和10-19二进制同为4 |
-| compiler_entry、selfhost_types、selfhost_bytecode、selfhost_archive、type_contract、array_size_syntax | 宿主C++前端 `check/build` 自举入口要36–39秒，超过测试固定的单命令30秒；放宽到60秒后，array_size_syntax通过，其余转为耗尽900秒套件时限（compiler_entry写死30秒） | 早已存在：新/旧二进制、新/旧C04源码的check时间相同（36–39秒）；宿主前端不经过VM |
-| selfhost_parser | 超过CTest 180秒；不限时跑完**通过**（88例/922检查，404秒） | 单次调用耗时与10-19二进制相同（interpret约1.5秒） |
-| capability_provenance | 超过600秒；每例4条分析路径，每次约29秒 | 新二进制/改后源码28.9秒、改前源码30.6秒、10-19二进制28.6秒，相同 |
-
-**结论**：没有发现步骤1/2或C04修复让原本能通过的测试失败；唯一由本轮引起的 capability_instantiation 已修。未能确认的部分：selfhost_types/bytecode/archive、type_contract、capability_provenance 在测试自带的60秒/900秒上限内跑不完，后段检查本轮没有执行到。这些时限是本机宿主前端速度问题，与VM改动无关，记为待办（测试时限或宿主sema速度，见第0.2步骤1“宿主前端约2分钟”）。
-
-#### 步骤3a（2026-10-22，Windows）：先剖析，再做四项语义不变的热路径修改
-
-**Windows基线与测量方法**
-- 第一次保存的 `win-step2.json` 受后台负载影响（如03_calls 1.516秒，同一二进制安静时0.442秒），已用步骤3前的同一二进制重测覆盖。单次 `run_bench.py` 结果会漂移5–10%，改动前后对比改用新增的 `perf/ab_bench.py`：同一基准内两个构建交替运行取中位数。
-- 新增Windows原生剖析工具 `tests/tools/native_profile/`（见tests/目录说明.md）。原有主线程采样器在本机只得到ntdll帧，新变体每次采样最忙线程。
-
-**剖析结论（真实负载：自举编译器编译ast_pool.hua，4096样本）**：内建调用32%（其中标准库23.5%、list等11%），`copy_value` 约19–32%，`operator new` 13%，GC回收约9%，`enter_function` 13%；自身时间约26%在系统模块（ntdll/ucrtbase，主要是Windows堆分配/释放）。`invoke_standard` 每次都给全部参数生成类型字符串并重建签名、参数向量逐个扩容；`enforce_type` 对精确匹配也要解析类型字符串。
-
-**改了什么（语义不变）**
-- `enforce_type`（src/value.cpp）：值与期望类型精确一致时直接返回——bool/int/string、有限的float、名字相同的struct/PlainRecord；这些情况原通用路径也是原样返回（float非有限值仍走原路径报错）。
-- `invoke_standard`（src/stdlib.cpp）：签名只在alg/simd/task/list模块依赖实参类型，且只依赖首参类型（simd另看个数）；其余模块直接用声明，不再为每个参数生成类型字符串；参数向量预留容量。
-- VM调用（src/vm.cpp、include/hua/vm.hpp）：调用参数向量改为小池借还（租约式，外部函数重入也安全），不再每次调用分配。
-- `copy_value(Value&&)`：共享struct先转复制路径，不再先做一次注定失败的打包尝试（原来共享struct会尝试打包两次）。
-- 试过并撤回：调用时把参数移入 `copy_value(Value&&)`。真实负载无可测收益（A/B 0.99x），04_struct_pass反而慢约7–13%。
-
-**结果（Windows，同一机器，`run_bench.py` 5次中位数；A/B交替结果一致）**
-
-| 基准 | 步数（不变） | 步骤2(s) | 步骤3a(s) | 加速 |
-|---|---:|---:|---:|---:|
-| 01_loop | 33,000,014 | 0.957 | 0.838 | 1.14x |
-| 02_arith | 26,000,016 | 1.059 | 0.986 | 1.07x |
-| 03_calls | 7,309,647 | 0.442 | 0.373 | 1.19x |
-| 04_struct_pass | 11,000,054 | 1.765 | 1.643 | 1.07x |
-| 05_map_ops | 13,930,211 | 1.045 | 0.926 | 1.13x |
-| 06_map_merge | 4,715,929 | 0.581 | 0.538 | 1.08x |
-| 07_strings | 7,350,016 | 0.896 | 0.767 | 1.17x |
-| 08_real_type_rules | 6,502,585 | 0.973 | 0.900 | 1.08x |
-| 09_real_ast_pool | 35,427,791 | 4.787 | 4.373 | 1.09x |
-
-（Linux与Windows的绝对值不可比；08/09步数与Linux基线略有差异，因为编译器HUAB由修复C04后的源码构建。）
-
-**完整自举**：474.3秒（步骤3前555.6秒，-14.6%），1,735,764,055步不变，产物与此前gen1逐字节相同（sha256 55ec7f09…9881）。
-
-**回归**：此前通过的72项CTest（含已修的capability_instantiation）全部通过，596秒；其余11项为已定因的早已存在问题，未重跑。
-
-#### 第9节A/B阶段（2026-10-22，Windows）：测量基础与调度/内建快路径
-
-**A阶段（测量基础）——已完成**
-- 内部计数并入 `HUA_INTERNAL_PROFILE`（普通构建零开销）：指令直方图、Load/Constant值种类、`copy_value` 按种类、内建按名计数（`include/hua/performance.hpp`、`src/vm.cpp`、`src/value.cpp`）。`hua_performance_probe`/`hua_memory_probe` 新增 `--mix`，步数上限改用compiler配置（原写死5亿），`hua_memory_probe` 在汇总行输出本机分配次数/字节。构建：`tests/build-profile`（`-DHUA_INTERNAL_PROFILE=ON -DBUILD_TESTING=OFF`）。
-- `perf/count_bench.py`：每个基准的步数、分配/步、指令前四与内建前三（结果 `perf/results/win-counts-*.json`）。
-- `perf/reference/0X_*.py` 与 `perf/reference_bench.py`：与微基准算法相同、输出与 `.expect` 相同的CPython 3.12参照，同机交替计时。Lua未安装（需下载许可），暂未提供。
-- **同机参照结果（步骤3a构建）**：Hua比CPython 3.12慢4.3–10.4倍（01_loop 7.3x、02_arith 5.9x、03_calls 6.6x、04_struct_pass 4.3x、05_map_ops 5.4x、06_map_merge 10.4x、07_strings 6.4x），见 `perf/results/win-reference-step3a.json`。
-
-**B阶段（调度与内建快路径）——已完成以下各项，HUAB不变、步数不变**
-1. 激活租约控制块复用：每次进入作用域/调用的 `shared_ptr` 控制块改由每线程小空闲表分配（`LeaseAllocator`，线程退出后的释放直接归还系统）。01_loop分配/步0.091→0。
-2. 内建名驻留：`Callable::builtin` 改为 `BuiltinName`（进程级驻留表），加载函数值不再复制字符串。
-3. 内建按调用点解析：`builtin_info(name)` 一次算出核心内建编号、标准函数与可挂起分类（与 `builtin_may_suspend` 同一规则）；`invoke_builtin` 的55处名字比较改为编号比较，并省去对每个非标准内建的 `numeric_spec(name)` 解析；VM按调用点缓存（键为驻留名指针）。
-4. 运算符快路径：同类型int比较、int `+ - * // %`（溢出、除零、MIN/-1仍走原路径报错）、bool与string比较、bool `!` 原地计算；其余走 `binary_value`/`unary_value`。
-5. 加载时融合 `!`＋JumpFalse/JumpTrue：只在“第二步不会让出、无待处理文件pump、不超步数上限”时融合，并按两步计数；计数构建证实9个负载的指令直方图与步骤3a**完全相同**，`fused_steps` 记录融合次数（09为129,593次；多数 `!` 不直接接条件跳转，融合机会比预估少）。
-6. 调用点缓存被调函数布局：每次调用的3次哈希查找（function_layout、functions.find、code_layout）改为按调用点缓存。
-- 未做（留到后续）：Load＋Member、Constant＋Binary融合；Callable整体瘦身（目前只驻留了名字）；Member的 `len` 预标记（实测成本很小）。
-
-**结果**
-| 基准 | 步数（不变） | 步骤3a(s) | B阶段(s) | 加速 | 分配/步 3a→B |
-|---|---:|---:|---:|---:|---|
-| 01_loop | 33,000,014 | 0.838 | 0.744 | 1.13x | 0.091→0.000 |
-| 02_arith | 26,000,016 | 1.069 | 0.936 | 1.14x | 0.231→0.154 |
-| 03_calls | 7,309,647 | 0.427 | 0.374 | 1.14x（布局缓存另+1.06x） | 0.218→0.087 |
-| 04_struct_pass | 11,000,054 | 1.907 | 1.816 | 1.05x | 1.037→0.982 |
-| 05_map_ops | 13,930,211 | 1.065 | 0.809 | 1.32x | 0.121→0.075 |
-| 06_map_merge | 4,715,929 | 0.637 | 0.568 | 1.12x | 0.590→0.539 |
-| 07_strings | 7,350,016 | 0.860 | 0.697 | 1.23x | 0.429→0.388 |
-| 08_real_type_rules | 6,502,585 | 0.989 | 0.967 | 1.02x | 0.453→0.411 |
-| 09_real_ast_pool | 35,427,791 | 4.836 | 4.640 | 1.04x | 0.406→0.366 |
-
-（`perf/ab_bench.py` 交替7次中位数；第3/6项前的数字是第1–5项累计，布局缓存单独A/B。）
-
-**完整自举**：产物与此前逐字节相同、1,735,764,055步不变。同一时段对照：步骤3a二进制519.7秒、B阶段508.3秒（约-2%，各一次，处于机器噪声量级）；本机整体比测得474.3秒时慢，绝对时间不可与之前直接比较。**回归**：此前通过的72项CTest全部通过（685秒）。
-
-**为什么B阶段对完整自举收益小（修正第9.2节对B的预估）**：完整自举主要时间在C04阶段，那里的剖析（前120秒，37,306个样本）为：GC回收约24.5%（`collect_records` 内的 `std::function` 访问器、`weak_ptr` lock/release、地址索引）、`copy_value` 约30%、内建约31.5%（其中 `json_encode` 7.6%，来自C04用 `json.encode(a)==json.encode(b)` 比较字段表）；`binary_value` 只有0.5%、名字查找2.3%。B阶段针对的分发/查找成本在这里本来就小。据此调整后续顺序：先做**D2（GC侵入式跟踪、无环对象不入环检测）**与**F1的聚合相等**（直接替换 `json_encode` 比较），再做C阶段。
-
-#### D2（GC机制）＋F1（结构相等）＋Lua参照（2026-10-22，Windows）
-
-**Lua参照**：从lua.org官方源码（5.4.7，sha256与官方公布值一致）用本仓库llvm-mingw静态构建到 `.tools/lua-5.4.7/src/lua.exe`（未入库，步骤见开发指南），`perf/reference/0X_*.lua` 输出与 `.expect` 一致。同机（B阶段构建）Hua对比：CPython 3.12慢3.9–9.6倍、Lua 5.4慢2.5–26.7倍（01_loop 23.9x、02_arith 26.7x、03_calls 13.1x、04_struct_pass 4.8x、05_map_ops 4.0x、06_map_merge 9.3x、07_strings 2.5x），`perf/results/win-reference-stageB.json`。
-
-**完整自举里的GC实测**（计数构建，`hua_performance_probe`）：一次自举4,381次回收、累计访问存活对象4.44亿次、边4.53亿条，GC计时157秒/585秒（27%），平均每个存活对象约354ns。分代时间表（7次小回收＋1次全量）与工作量记账由 `gc_generation_tests` 固定，因此D2本轮只改机制、不改策略与结果：
-1. `HeapVisitor` 由 `std::function` 改为非拥有的函数引用（每条边少一次类型擦除调用）。
-2. 每次回收的地址索引、边表、入边计数、标记位与工作栈改为堆内复用（`ManagedHeap::Scratch`），不再每次分配/释放数MB；固定的候选对象在任何退出路径都释放。`gc_allocation_contract` 改为“逐个注入分配失败直到回收完成”，验证的性质（失败不丢根、之后可恢复）不变。
-- 未做：不追踪无环对象（会改变 `std.gc.collect()` 的返回计数，属于合同变化）；小/全量回收时间表调整（被测试固定）。
-
-**F1结构相等**：`==`/`!=` 对struct（含打包记录）、枚举、Map、Slice/数组、List、Result、Optional、Bytes按内容递归比较（`src/value.cpp`，AST与VM共用；规则见[语言规则](语言设计与类型规则.md#structural-equality)）。两个检查器原本就允许同类型 `==`，以前运行时报E4008；函数、Task、File、Buffer、Json、Error仍报E4008。新增 `tests/runtime/236_aggregate_equality.hua`、`237_function_equality_unsupported.hua` 与 `binary_collection_tests.py` 的List/Bytes/枚举CLI用例。C04的 `same_flags`/`same_view`/`same_fields` 改为一行 `a==b`（替代逐项循环与 `json.encode` 序列化比较）。
-
-**完整自举（同一时段、同一机器，各一次）**
-
-| 运行 | 编译器（C1） | 步数 | 墙钟 | 产物 |
-|---|---|---:|---:|---|
-| B阶段二进制 | 旧C1（修改前源码构建） | 1,734,695,450 | 470.1秒 | sha 3e6f9297… |
-| D2＋F1二进制 | 旧C1 | 1,734,695,450 | 434.8秒（**-7.5%，D2**） | 与上行逐字节相同 |
-| D2＋F1二进制 | 新C1（F1源码构建） | 1,570,130,785（**-9.5%**） | 343.5秒（**合计-27%**） | 与上两行逐字节相同 |
-| D2＋F1二进制 | C2编译自身得C3 | — | 355.7秒 | **C2=C3逐字节相同** |
-
-（被编译的是F1后的源码，所以产物与此前的55ec7f09不同：4,171,764字节、CRC32 990536577。新旧C1对同一源码产出相同字节，说明C04改写不改变编译结果。）
-
-**交接前复核（同日）**：`capabilities.hua` 一处注释日期由误写的10-23更正为10-22。HUAB记录源码身份，注释改动也会改变产物字节，因此在更正后的源码上重做：宿主构建新C1 → C2（341.1秒）→ C3（369.1秒），步数仍为1,570,130,785，**C2=C3逐字节相同**（4,171,764字节、CRC32 559473999、sha256 454c7f77…，记录在本机 `tests/build-selfhost-f1/summary-datefix.json`）。
-
-**回归**：此前通过的72项CTest全部通过（614秒，含 `capability_c04` 对新C04源码的四路对照、运行时fixture与GC合同测试）。`perf/results/compiler.huab`（本地，不入库）已删除，下次 `run_bench.py` 会用当前源码重建。
-
-#### P4-S1（2026-10-23，Windows另一台机器）：C04摘要轮次按被调用方优先访问
-
-**改动**：`selfhost/capabilities.hua` 新增 `callee_first`：把探测期记录的 `s.dependents`（被调用方→调用方）反转成调用边，用显式栈做DFS后序（不受128层调用限制），根与边都按函数键序遍历，结果确定。`analyze` 第1轮仍按函数键序（此时才记录调用边），从第2轮起每轮开头重算顺序并按它访问dirty函数体。
-
-**为何语义不变**：32轮上限、未收敛保守回退、最终验证循环（仍按键序，首错选择不变）都不变，只改变各轮内的访问次序。原因：`functions` 是map，原来按函数名字母序遍历，helper的新摘要要等下一轮才传到调用方；递归簇（statement/expression/expression_body/analyze）在后几轮每轮只多几十到一百多条来源，却每次完整重算约7400万步的函数体。
-
-**同输入A/B（同一机器、同一时段、各一次）**：两份C1都由宿主从源码构建，再编译同一份未改动的 `selfhost/archive_main.hua`。
-
-| C1 | 步数 | 墙钟 | CPU | 产物 |
-|---|---:|---:|---:|---|
-| 改动前源码 | 1,570,130,785 | 228.6秒 | 227.5秒 | 4,171,764字节、CRC32 559473999（与0.2上一步记录相同） |
-| P4-S1源码 | 1,276,390,981（**-18.7%**） | 184.3秒（**-19.4%**） | 183.0秒 | 与上行逐字节相同 |
-
-**完整自举（P4-S1源码）**：宿主构建C1（19.2秒，3,642,190字节）→ C2 207.8秒 → C3 202.8秒，均为1,281,255,218步、peak_calls 52；**C2=C3逐字节相同**（4,195,418字节、62,599条指令、CRC32 3424058752、sha256 f73869fa…，记录在本机 `tests/build-selfhost-s1/summary.json`）。比A/B中的12.76亿步多约490万步，是因为被编译的源码本身多了 `callee_first`。
-
-**正确性**：`capability_c04_tests.py` 134例/713检查通过；新旧分析器对195个C04/A07输入的报告中192个逐字节相同，3个只有内部计数 `stats.work` 变小（960→899、831→808、333→309），事实、状态、错误与 `capability_passes` 全部相同（用户已接受该类差异）；实例化（4例）与元数据隔离（3例/279断言）通过。另一份基于旧基线的诊断对capabilities.hua能力事实逐条导出比较：17,825条中35条标量事实来源变少（新为旧的子集），所有可写性标志与首错相同，用户已接受。
-
-**回归**：此前通过的72项CTest中71项通过（388.8秒）。`archives_extensions` 失败与本改动无关（不含P4-S1时同样失败）：其“把第16字节写为0”的变异在本机是空操作——HUAB记录源码路径，本机测试产物3,872字节，载荷长度0x0F00的低字节本来就是0，文件未变而被正常执行；归入HUA-D037测试脆弱性。
-
-**过程与旧基线上的诊断**（逐函数体步骤、来源流、超5亿步测量、已撤回的候选A）保存在分支 `bo11-capability-diagnostics-20261023` 的 `.codex-sync/knowledge/bootstrap-performance/` 下；本机运行记录见 [P4-S1记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-23-p4-s1-callee-first.md)。
-
-#### CPython对齐阶段（2026-10-23起，Windows本机）
-
-目标与分步见9.6。每步验收：`perf/ab_bench.py` 交替A/B（步数与 `.expect` 一致）、`perf/reference_bench.py` 同时段对照、72项CTest、宿主构建的C1编译自身得到的C2与已记录产物逐字节相同且步数不变。
-
-**P1（帧与绑定的小开销）**：`src/vm.cpp` 退休的激活按作用域形状各留最多16个备用（替代全局64项按形状线性查找）；`IterNext` 直接按名字绑定，不再为每次迭代复制336字节的Instruction；函数参数槽位在调用点布局缓存中预先算好；分发循环内联判断待处理的文件事件。对 `hua-d2f1.exe`（D2+F1构建）A/B：01_loop 1.02x、02_arith 1.45x、03_calls 1.07x、04 1.05x、05 1.12x、06 1.10x、07 1.06x、08 1.01x、09 1.04x。`vm_slots` 的有界复用测试改为检查同一性质（每形状≤16、热形状不被冷形状挤占）。
-
-**P2（空作用域省略）**：剖析01_loop每轮11条指令中有一对空的ENTER_SCOPE/LEAVE_SCOPE。加载时（`code_layout`）标出“作用域布局不声明任何名字、且函数体内没有Defer”的EnterScope；执行时这类作用域只记一位（帧内 `scope_depth`/`elided_scopes`，64层以内），不创建Environment；LeaveScope/Unwind仍按原数量逐层弹出逻辑作用域。若运行时仍有布局未预测到的绑定落在被省略的作用域里（例如 `vm_slots` 的dictionary_fallback），`bind_named`/BindMulti先补建该层Environment，名字可见性与生命周期与原来一致。同时把每次EnterScope/IterNext的 `std::map` 查找改为按指令下标的指针表。字节码、HUAB与步数不变。
-
-| 基准 | P2/P1 A/B | Hua/CPython（P2，同时段） | Hua/Lua |
-|---|---:|---:|---:|
-| 01_loop | 1.40x | 3.90x | 16.8x |
-| 02_arith | 1.01x | 3.79x | 18.9x |
-| 03_calls | 1.04x | 4.84x | 12.5x |
-| 04_struct_pass | 1.00x（11次复测；5次时0.89x为噪声） | 3.78x | 4.4x |
-| 05_map_ops | 1.04x | 3.21x | 3.3x |
-| 06_map_merge | 1.08x | 9.12x | 8.7x |
-| 07_strings | 1.04x | 5.27x | 2.5x |
-
-结果文件 `perf/results/win-parity-p2-ab.json`、`win-reference-parity-p2.json`。72项CTest：并行（-j 8）首轮 `capability_c04`、`capability_prepared_supervisor`、`bytecode_verifier_metadata` 失败，删除旧 `tests/build/a07-c04/analyzer.huab` 后单独重跑三项全部通过（属既有的产物缓存与并行负载时限问题），其余69项通过。自举回归：宿主构建C1后编译当前 `selfhost/archive_main.hua`，C2为4,195,418字节、回执CRC32 3424058752（与0.2“P4-S1”记录的C2=C3产物一致），1,281,255,218步、peak_calls 52（步数与记录相同）；本机墙钟298.3秒（与另一台机器的207.8秒不可比）。
-
-**P3（局部变量轻量位置）**：操作数栈项增加 `LocalRef`（绑定指针＋所属Environment，24字节），`LocateName` 不再构造400字节的ValueLocation、不再复制类型字符串；`Store` 对 `LocalRef` 直接在绑定上做复合运算（整数先走 `fast_binary`）、`enforce_type` 后写回，步骤与原ValueLocation路径相同；`StoreMulti` 遇到 `LocalRef` 时转换为原ValueLocation。字段/下标位置仍走ValueLocation，但从栈上取出时改为移动而非复制。所属Environment仍随栈项保活，`vm_slots` 的“离开作用域后写入旧位置”用例行为不变。字节码、HUAB与步数不变。
-
-| 基准 | P3/P2 A/B | Hua/CPython（P3，同时段） | Hua/Lua |
-|---|---:|---:|---:|
-| 01_loop | 1.18x | 3.50x | 13.7x |
-| 02_arith | 1.06x | 3.52x | 17.4x |
-| 03_calls | 1.05x | 4.93x | 13.7x |
-| 04_struct_pass | 0.97x／0.98x（7次／11次，两次都略慢；该基准此前也测出0.89x噪声，判为持平边缘） | 3.66x | 4.5x |
-| 05_map_ops | 0.94x→复测1.02x（11次） | 3.09x | 3.1x |
-| 06_map_merge | 1.00x | 7.57x | 8.6x |
-| 07_strings | 1.00x | 4.81x | 2.3x |
-| 08_real_type_rules | 1.08x | — | — |
-| 09_real_ast_pool | 1.01x | — | — |
-
-结果文件 `perf/results/win-parity-p3-ab.json`、`win-reference-parity-p3.json`。72项CTest：并行（-j 4）首轮70项通过，`capability_c04`（177秒）与 `task_resume_public` 失败，单独重跑均通过（与P2相同的并行负载现象）。自举回归：P3构建的C1编译自身得到的C2与P2逐字节相同（4,195,418字节、回执CRC32 3424058752），1,281,255,218步不变。首次单跑墙钟343.2秒（P2单跑298.3秒）；随后用同一份C1交替计时 P2/P3/P2/P3 为341.3/321.5/300.2/295.7秒，P3每对都更快（-5.8%、-1.5%），单跑差异来自机器状态。
-
-**P4（标量快路径）**：剖析（`tests/build-prof`，01_loop）显示分发循环自身约45%，其余是 `optional<Value>` 临时值与variant构造/析构。改动均在 `src/vm.cpp`：`int_binary_into` 把int/int的 `+ - * // % < <= > >= == !=` 结果直接写回左操作数（溢出、零除、MIN/-1等仍走原路径报错，校验通过后才写入）；Constant/Load对bool/int/float直接构造栈项；JumpFalse/JumpTrue与Pop对普通值不再经过 `pop()` 搬出（Pop仍对struct做枚举完整性检查）；`LocalRef` 上 `int op= int` 且绑定类型为 `int` 时原地计算（此时 `enforce_type`/`copy_value` 本来就是恒等）。不加新指令、不融合，HUAB与步数不变。边界脚本（负数整除/取余、`/` 真除法、比较、`MIN//1`、`+=` 溢出E4002、字符串/浮点/布尔复合赋值）P3与P4输出逐字节相同。
-
-| 基准 | P4/P3 A/B（9次） | Hua/CPython（P4，同时段） | Hua/Lua |
-|---|---:|---:|---:|
-| 01_loop | 1.43x | 2.40x | 8.8x |
-| 02_arith | 1.17x | 3.26x | 16.4x |
-| 03_calls | 1.23x | 4.09x | 10.9x |
-| 04_struct_pass | 1.03x | 3.60x | 4.1x |
-| 05_map_ops | 1.07x | 2.95x | 3.0x |
-| 06_map_merge | 1.01x | 9.71x | 8.3x |
-| 07_strings | 1.00x | 5.21x | 2.5x |
-| 08_real_type_rules | 1.01x | — | — |
-| 09_real_ast_pool | 1.05x | — | — |
-
-注意噪声：本轮一次构建失败时误把P3与自身A/B，9项差异达0.96x–1.14x，说明单项±5%以内（偶发到14%）不能当作结论，需复测。结果文件 `perf/results/win-parity-p4-ab.json`、`win-reference-parity-p4.json`。72项CTest（-j 4）全部通过。自举回归：同一份C1交替计时 P3/P4/P3/P4 为300.6/300.3/313.5/284.6秒（第二对-9.2%，第一对持平），四次均1,281,255,218步；P3、P4产生的C2与P2的sha256均为f73869fa…（与0.2“P4-S1”记录的C2=C3产物相同）。自举负载以复制、内建与GC为主，标量快路径收益有限，属预期。
-
-**调用路径（2026-10-23，Windows另一台机器）**：剖析（`tests/build-prof`，fib(32)，8,106万步）中 `complete_return` 含子调用31.0%、`enter_function` 23.8%；其中两项是每次调用的固定浪费：长字符串复制6.2%（帧按值保存调用点 `SourceSpan`，其 `file_id` 是源码路径），以及 `function_layout` 的哈希查找5.9%（返回时为取返回类型重新查表）。改动只在 `include/hua/vm.hpp` 的 `Frame` 和 `src/vm.cpp`：(A) 帧缓存被调函数的 `FunctionLayout*`，`complete_return` 不再查表；(B) 从分发循环的Call进入时，帧只保存指向调用指令span的指针（该指令与帧的 `code` 同在已加载字节码内，寿命相同），其他入口（defer执行、`main` 入口）仍保存自有副本；错误span与“called from”上下文统一经 `site_span()` 读取，内容不变。不改指令、HUAB与步数。改后剖析中这两项消失，`complete_return` 降到26.4%。另试过(D)“分发调用时把实参移动而非复制进形参”（`copy_value` 对共享值仍会复制，语义不变），A+B与A+B+D对照15次全部0.99–1.02x，无可测收益，已撤回。
-
-| 基准 | 调用路径/P4 A/B（9次交替） | Hua/CPython 3.14.3（改前→改后） | Hua/Lua 5.4.7（改前→改后） |
-|---|---:|---:|---:|
-| 01_loop | 1.00x | 3.23x→2.01x | 13.3x→12.3x |
-| 02_arith | 0.99x | 4.22x→4.01x | 15.9x→17.9x |
-| 03_calls | **1.15x** | **4.31x→3.70x** | **12.2x→10.3x** |
-| 04_struct_pass | 1.02x | 5.41x→5.39x | 4.6x→4.7x |
-| 05_map_ops | 1.00x | 3.41x→3.44x | 3.3x→3.3x |
-| 06_map_merge | 1.00x | 8.46x→10.61x | 7.7x→8.9x |
-| 07_strings | 1.03x | 6.31x→5.64x | 3.0x→2.4x |
-| 08_real_type_rules | 1.02x | — | — |
-| 09_real_ast_pool | 1.02x | — | — |
-
-本机参照是CPython 3.14.3（比此前记录所用的3.12快）与按开发指南构建的Lua 5.4.7（sha256与官方一致），倍数只在本机改前/改后之间比较，不与P1–P4表中的3.12倍数对照。参照两列是先后两次独立运行（各7次），不是交替测量，01与06的大幅变化是参照运行之间的波动（同一项A/B为1.00x），以A/B列为准；03_calls在两种参照下方向一致。结果文件 `perf/results/win-parity-calls-ab.json`、`win-reference-parity-calls.json`。72项CTest中71项通过，`archives_extensions` 为HUA-D037已登记的本机测试问题（与P4-S1时相同，不涉及本改动）。自举回归：宿主构建的C1编译自身得到的C2与记录逐字节相同（sha256 f73869fa…，4,195,418字节），1,281,255,218步不变，195.2秒。剩余调用成本主要是每次调用新建激活环境的 `shared_ptr` 与删除器里 `weak_ptr` 的原子操作（合计约17%），以及按名字绑定形参；前者要先证明环境不会比帧竞技场活得更久（`run()` 会替换竞技场，现在由 `weak_ptr` 兜底），后者属P5槽位化局部变量。
-
-**分发循环瘦身（2026-10-23，Windows另一台机器）**：先剖析（`tests/build-prof`，01_loop放大到3000万次迭代），分发循环自身50%，逐行定位：循环条件、pc越界检查与取336字节Instruction约16%；轮询计数、每步 `pump_pending`（两层指针加原子读）、步数计数与上限比较约14%；内联的 `shared_ptr` 计数6.7%。四项各自单独构建、单独A/B（11次交替，基线为调用路径构建）：
-
-| 项 | 改动 | 01_loop | 02_arith | 处理 |
-|---|---|---:|---:|---|
-| (a) | `LocalRef` 去掉 `shared_ptr<Environment>` owner，只留绑定指针；`StoreMulti` 用帧当前环境作Location的owner | 1.05x | 1.03x | **保留** |
-| (b) | 每步 `pump_pending` 改为按（上下文、文件作用域）缓存标志指针，两者仍每步比较 | 0.87x | 0.95x | 撤回（协程里的“局部变量”在堆上的协程帧中，缓存反而增加访存与分支） |
-| (c) | 步数上限在 `dispatch()` 入口读一次 | 0.99x | 1.00x | 撤回（无收益） |
-| (d) | 帧缓存指令数组首地址与条数，取指与跳转越界检查不再经 `code->instructions` | 1.01x | 1.01x | 撤回（在±5%噪声内） |
-
-(a)为何语义不变：`LocateName` 经帧当前环境链解析绑定，绑定所在作用域包住整条赋值语句，右侧求值只会进出更内层的作用域，所以在 `Store`/`StoreMulti` 消费该栈项之前，帧的环境链一直让绑定存活；迟到绑定（`materialize_scope`）只新建子环境；`Unwind` 与错误会在读取之前丢弃该栈项；绑定存储不搬移（槽位为定长数组，map节点稳定）；GC不扫描 `LocalRef`。每步的文件泵检查、步数计数与上限检查保持原样。
-
-| 基准 | 最终A/B（9次交替） | Hua/CPython 3.14.3（改前→改后） | Hua/Lua 5.4.7（改前→改后） |
-|---|---:|---:|---:|
-| 01_loop | **1.09x** | 3.09x→2.92x | 13.2x→12.5x |
-| 02_arith | **1.04x** | 4.17x→4.12x | 15.6x→15.5x |
-| 03_calls | 0.98x | 3.62x→3.69x | 10.1x→10.5x |
-| 04_struct_pass | 1.00x | 5.29x→5.23x | 4.7x→4.6x |
-| 05_map_ops | 1.01x | 3.36x→3.29x | 3.2x→3.2x |
-| 06_map_merge | 1.01x | 10.53x→10.43x | 8.8x→8.7x |
-| 07_strings | 1.01x | 5.68x→5.54x | 2.4x→2.4x |
-| 08_real_type_rules | 1.00x | — | — |
-| 09_real_ast_pool | 1.01x | — | — |
-
-03_calls的0.98x在噪声内（fib不给局部变量赋值，不走LocalRef）。参照两列为先后两次独立运行（各7次），以A/B为准。结果文件 `perf/results/win-parity-dispatch-ab.json`、`win-reference-parity-dispatch.json`。72项CTest中71项通过，`archives_extensions` 为HUA-D037已登记的本机问题。自举回归：C2与记录逐字节相同（sha256 f73869fa…），1,281,255,218步，204.9秒。结论：逐指令固定开销里能在现有结构内拿到的只有refcount这一项；其余来自协程帧、336字节Instruction与144字节Value的variant构造析构，需要P7（紧凑指令）与P6（紧凑Value）。
-
-#### C07正式闭环补验（2026-10-30，当前本机）
-
-执行现有脚本一次，补齐当前源码的完整自身、独立reader、无源码编译器行为和示例源码移走执行证据；生产代码与预算不变。14模块291088字节，210.844秒、1281255218步、peak_calls 52，峰值约973.0MiB；C2为4195418字节/62599指令，SHA256 f73869fa…，600秒余量64.86%。C07关闭；C08不重跑、C09及D036/D037独立待办。不以不同机器/时段历史数字宣称本轮加速。[记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-30-c07-acceptance.md)。
-
-#### N1 带类型调用与标准库覆盖（2026-11-17）
-
-调用按语言顺序求值，多值经带类型返回包传递。已证明局部使用的闭包以栈上环境保存快照。同步算法回调直接调用已知函数，List 保留重入修改检测。补齐 Deque、Heap、Set、随机及 File 热路径所需的操作。发布验收编译时去掉计步。
-
-本地生成基线支持 102/132 项标准库基准。实施后发布模式 132/132 项标准库基准和 7/7 项核心基准通过 VM 对照。22/27 个示例文件输出相符。同期日志时间戳和示例计时按字段核对。修复五个实测慢项后，循环拼接 58.43→7.89 ms，Map 查询和删除 80.83→11.92 ms，文本搜索 68.73→15.86 ms；五项同机复测均快于 VM。N1 尚有精确数值、固定数组、接口、复杂捕获和写目标覆盖待验收。[本轮记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-17-n1-native-coverage.md)。
-
-#### N1 同步语言示例（2026-11-17）
-
-精确数值的常用路径使用带类型标量。固定数组按值复制，切片与 mut 借用共享存储，接口按具体结构分派。综合同步示例通过，原生差分 47 个一致、1 个 Task 正确拒绝。50 万次数组访问、精确转换和接口调用专项负载由 VM 到本地为 503.5 ms → 10.2 ms（49.36×）。下一项是复杂闭包与多重赋值目标。[本轮记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-17-n1-sync-language.md)。
-
-#### N1 闭包、函数值和赋值位置（2026-11-17）
-
-字段和元素多重赋值按原目标存储、有序求值、转换、容量预检和有序写入执行。复杂同步捕获复用带类型的环境，可能成环的容器接入现有回收器；同签名动态函数以原生类型传参，异签名标量调用在边界检查。局部字段保活点 61→30。复用递归元素类型的空 Slice 存储后，完整自举本地 A/B 中位数为 18.51→18.69 秒，产物和历史 VM 逐字节一致。60 项原生差分及发布矩阵 132 项标准库与 7 项核心基准通过。动态复合签名和 File 捕获边界待补；详见[本轮记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-17-n1-lifetimes-and-places.md)。
-
-#### N1 高阶参数、动态复合值与 File 捕获（2026-11-17）
-
-动态调用保留复合值和写入原对象的能力；未注解回调维持实际参数和返回检查。函数 Slice 保留声明类型检查，绑定方法保活原接收者，File 检查覆盖隐式捕获及后续共享写入。78 个原生差分通过，发布矩阵 132 标准库、7 核心和 23 示例通过。同机三个原有热点 A/B 的差异在约 1.1% 内，完整自举留作放行复验。[本轮记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-17-n1-dynamic-arguments.md)。
-
-#### N1 短命闭包与带类型间接调用（2026-11-17）
-
-证明闭包和小型函数 Slice 只在当前块使用后，可改用调用方栈存储。短命专项堆环境 60 万→0，函数 Slice 堆 backing 30 万→0，耗时 51.512→1.860 ms。带类型间接调用借用安全句柄，并直接分派两个足够小的已知目标，耗时 8.394→0.424 ms。真正逃逸仍由堆保活。84 项原生差分及发布矩阵通过。完整自举留作放行复验。[本轮记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-17-n1-short-closures-and-calls.md)。
-
-
-
+<a id="03-下一步"></a>
 
 ### 0.3 下一步
 
 <a id="native-release-route-20261114"></a>
 
-#### 路线重定：本地后端成为发布主路径（2026-11-14，用户确认）
+#### 原生发布路线 · N2 到 N5
 
-**根因与结论。** Hua慢的根本原因是编译器已知的静态类型在运行时边界被丢弃：VM每个操作约26–240ns，带类型原生代码约0.2–3ns。VM上的微优化最多缩小几成（D6 Rc实测1.00×，已撤回）。本地后端（`hua native`，带类型链接AST→C++→clang）已证明根本解法：自举编译器编译真实源码快7–9×（type_rules 0.042s对0.355s，ast_pool 0.163s对1.484s，自编译18–26s对166–186s），C2产物、输出与诊断与VM逐字节一致；核心基准均快于CPython/Lua；标准库基准102/132可本地编译且输出一致，中位1.9×，3项低于1.0×（以上为2026-11提交1acece5/686589d时的实测）。这与[原始规范](history/原始语言规范_零点一版.md)“开发走VM、发布走AOT→native/WASM”的架构一致。
+沿用 2026-11-14 已确认的路线。发布后端通过带类型 AST 生成 C++，使用随发行包提供的 Clang／lld。原生发布默认关闭计步，可选在循环回边及调用处检查预算。VM 继续承担快速开发、语义对照、带预算的沙箱及嵌入。其他平台验收暂缓，N2 优先 Windows。
 
-**用户已确认的决策（2026-11-14）。**
-
-1. 后端形式：生成C++，发行包内附带clang/lld；不自研机器码后端，不直接调用LLVM API。
-2. 步数合同：步数限制是VM沙箱特性；发布（本地）模式默认不计步，可选在循环回边/调用处检查预算，其数值不承诺与VM相同。
-3. 并发：线程池上的栈式协程（fiber）M:N调度；IO事件循环自建（Windows IOCP、Linux epoll），挂在同一调度器；跨Task一律深拷贝（D6）保证无共享可变状态。
-4. 文档：本轮只记路线；项目概览等状态文档暂不更新（概览中“VM约273ns/步”等数字已过时，待用户决定统一更新时机）。
-
-**VM的定位。** 保留为开发/快速启动、差分对照基准（oracle）、带步数预算的沙箱（compiler执行配置）与嵌入宿主；不再投入VM微优化。
-
-**分阶段路线（按顺序，每阶段独立验收）。**
-
-| 阶段 | 内容 | 验收 |
+| 阶段 | 实施顺序与交付 | 验收 |
 |---|---|---|
-| N1 语言覆盖 | 函数值与闭包、回调型内建（alg.map/fold/sorted_by等）、多重绑定、deque/heap/random/文件句柄、本地List上的修改型内建；热点标准库改为带类型实现，避免经桥接整体装箱（`maps.get_or`曾由10.3s降到16ms）；修掉低于1.0×的基准 | 132个基准、全部示例与自举测试集本地编译，输出/诊断/退出码与VM逐字节一致；测试语料中不再出现unsupported |
-| N2 并发与异步 | fiber M:N调度、spawn/await、事件循环与IO | spawn/await语义与VM一致；多核并行实测 |
-| N3 发布与部署 | `hua build --release`单文件exe；附带clang+lld；运行时预编译库；按模块拆编译单元，以模块哈希增量缓存（HUA-D021）；wasmtime按需链接 | hello world构建＜2秒、体积约1MB级；自举编译器增量构建明显短于当前约1分钟 |
-| N4 统一带类型IR | AST→带类型IR→{字节码,C++}（HUA-D009）；逃逸分析消除COW计数、边界检查消除、跨模块内联；VM也获得类型；C++生成器移入selfhost完成G3原生闭环 | IR两路输出与现状逐字节一致；Hua编译器由自身编译为原生程序 |
-| N5 设想能力 | 嵌入C API（VM）、稳定C ABI扩展、WASM（clang wasm32-wasi）、HTTP/JSON/网络、parallel/SIMD、AI/Agent运行时 | 每族独立合同与验收 |
+| **N2 并发与异步** | 线程池上的栈式协程，采用 M:N 调度。先接 Hua 的任务创建、`await`、取消及超时，再接 Windows IOCP 与同一调度器的事件循环。跨 Task 传递按已定规则做深快照，资源按现行所有权及在途保活规则处理。 | 与 VM 对照返回值、错误、取消和超时。覆盖单次恢复、迟到完成、资源清理、等待不占用计算线程，实测多核并行。 |
+| **N3 发布与部署** | 提供 `hua build --release` 单文件 Windows 可执行程序，打包 Clang／lld 和预编译运行时。按模块分编译单元，以模块和依赖的身份做增量缓存（HUA-D021），Wasmtime 按需链接。 | 可执行文件可独立运行。测量干净构建、缓存命中及依赖变更后的重建。原路线目标为小程序构建低于 2 秒、约 1 MB 级，自举编译器的增量构建有可重复的改善。 |
+| **N4 统一带类型 IR 与原生自举** | 从带类型 AST 降到统一 IR，再从 IR 分别生成字节码和 C++（HUA-D009）。按实例引入逃逸分析、冗余边界检查消除及跨模块内联。逐步将 C++ 生成器移入 `selfhost/`，完成原生自举闭环。 | 同源 HUAB 可复现，字节码与原生程序行为、诊断、退出码通过差分。用 Hua 编译器生成下一代原生编译器，再由下一代完成同源编译并验证产物与行为。 |
+| **N5 扩展能力** | VM 嵌入 C API、稳定的扩展 C ABI、WASM 发布、HTTP／JSON 网络应用、parallel／SIMD、AI／Agent 运行时。按能力族推进。 | 各族分别确定接口、兼容和资源合同及验收输入。 |
 
-**不做的事。** VM细碎优化；自研机器码后端；直接接LLVM API。
+N2 涉及的任务恢复、取消、预算和资源协议以[运行时与扩展设计](运行时与扩展设计.md)为准。每项原生能力用 `tests/native_backend_tests.py` 对照 VM 的标准输出、诊断及退出码。子集外输入须在生成 C++ 前给出明确诊断并以退出码 2 拒绝。`tests/native_selfhost_tests.py` 提供小规模双后端对照，完整自身验收另按第 2 节执行。
 
-**差分测试纪律。** 本地后端每项新能力都在`tests/native_backend_tests.py`加入与VM逐字节比对的用例；子集外程序必须由`hua native`以退出码2拒绝，不得误编译；`tests/native_selfhost_tests.py`保持自举编译器本地版与VM版产物一致。
+<a id="selfhost-performance-plan"></a>
 
-<a id="route-reorder-20261108"></a>
+#### 自举提速路线 · 先减少重复分析，再减少执行成本
 
-#### 路线重排：先做结构体COW（2026-11-08）
+1. **在完整自身输入上建立分阶段基线。** 固定源文件清单及内容、构建身份、工具链和预算。原生和 VM 分别记录解析／名称分析、类型分析、C04 能力分析、降级、指令生成、栈及产物校验、HUAB 编码、文件发布。记录每段墙钟，VM 同时采集阶段预算步数。嵌套阶段注明包含关系。C04 记录函数体访问数、摘要实际变化数、调用点展开的来源条目数、合并时检查及改变的字段数。诊断计数及 CPU 采样与发布计时分别采集。
+2. **先做 C04 调用点按实际依赖失效。** 现有被调用方优先顺序与反向依赖表为起点。调用点记录实际读取的返回来源、写效果或别名等摘要部分，按对应事实的版本判断是否失效。摘要变化只唤起依赖相应变化的调用点及其所在分析单元。递归、未知别名、未知写入和无法证明依赖完整的情况沿用保守重算。验收减少的函数体访问、工作量及耗时，同时检查 A07 只读、别名、写效果与跨函数传播。
+3. **再让摘要共享来源关系并按需投影。** 用参数编号、字段路径 ID 与能力标志存共享的不可变关系。调用时绑定实际参数，查询命中具体字段才投影该条路径，稀疏覆盖保存差异。首片只覆盖高频、规则明确的参数字段投影，其他情况保守回退。记录来源展开、字段遍历及临时对象数量。历史数字事实候选的逐字段解码及过滤抵消了收益，当前以真实负载中的工作量下降验收。[数字事实候选](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-20-c04-direct.md)
+4. **按剩余热点选后续改造。** 同一阶段若仅 VM 明显较慢且复制、分配及 GC 仍集中，先对采样点名的结构试做整个不可变结构共享、写入时分离，同时核对可写别名、已发布位置、Task 隔离、GC 计数和回收。若双后端的归档阶段均占明显份额，优先复用校验或生成阶段的格式元数据，合并重复扫描，对连续字段批量编码。每个改动独立对照。紧凑指令、寄存器 VM 或更换 GC 策略由后续剖析和合同核定决定。
 
-用户要求对照C++/Go等重新核定底层，并于2026-11-08选择新次序。真实编译（ast_pool）剖析：复制约28%（包含式）、结构盒分配约15.5%、GC约11%、字符串类型检查约7–12%，分发自身7.2%，lookup约1.9%；计数版显示struct复制1,737,545次，而字段写入只有173,532次。因此S2原次序（S2-2类型槽→S2-3帧分离→S2-4 Value瘦身）让位于“值与内存层”：V1结构体COW → 重新剖析后定V2类型ID/V3 GC跟踪范围 → Map哈希化、紧凑指令、Value瘦身。寄存器VM改变步数合同，需用户另行决定。[对照与提案](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-08-vm-lower-layer-review-proposal.md)；[V1细化设计](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-08-v1-struct-cow-design.md)（待审定，未实施）。V1与2026-10-29字段体共享的区别：共享整个结构盒，不新增GC图节点；钉住只在写路径期间有效。
+### 0.4 Windows 诊断入口
 
-<a id="value-copy-priority1-results"></a>
-
-#### 值复制第一优先（2026-10-29）
-
-已实现长字符串不可变共享、合格叶记录的字段体写时分离、独占成员move归一化、不可变Result载荷复用及内部字段体GC边。复杂外层、readonly能力投影与已发布位置保留保守路径，16字节Value未实施。合同见[运行时](运行时与扩展设计.md#value-copy-priority1)。
-
-正式基线为776d5f8源码用同一工具链新构建，5轮交替A/B：结构体1.494→1.316秒（1.13x）；type_rules编译0.812→0.783秒（1.04x）；ast_pool编译3.727→3.750秒（0.99x，基本持平）；其余0.99–1.02x。九项输出和步数一致，真实编译产物SHA256相同。申请次数约-7.2%、申请字节约-15.5%，但GC扫描对象仍约+19%，因此本轮没有显著加速真实编译。申请字节不是峰值内存。 冷路径布局保留修复后的另一组5轮A/B为结构体1.26x、type_rules 1.04x、ast_pool 0.96x；调用/Map疑似退化经9轮独立复核为1.01x/0.97x。保留两组结果，整体性能目标尚未放行。
-
-63项最终回归通过（73.91秒），完整A07/C04通过（192.57秒，600秒硬限）；新增2027项共享/故障/类型转换/GC反例通过，最后的无分配clear布局保留修复后16项核心复验通过。广域套件遇既有位置的30秒宿主前端超时后已停止，未重试该套件。未跑完整自举，本轮不更新历史197/204秒结论。被否决候选、构建身份及原始结果见[过程记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-29-value-snapshots.md)。
-
-<a id="s2-2a-results-20261107"></a>
-
-#### S2-2a 作用域复用与绑定槽（2026-11-07）
-
-**已实现并通过验收，未提交。** 按0.3“S2-2先核定再做最小切片”的要求，先剖析（`tests/build-prof`，`-g -fno-omit-frame-pointer`，busiest-thread采样）：3000万次`for`的算术循环里，每次迭代的作用域环境取得与释放（`FrameArena::acquire`/`retire`、shared_ptr控制块与删除器、weak lock）合计约16.5%，`bind_named`（含按名字哈希插入、`value_type`、`copy_value`、`read_only`）12.6%；直接对应“原始类型槽”的`lookup`只有3.6%。fib(35)中环境取得/释放约14%。真实编译（ast_pool）里`lookup`约3%，系统分配约22%。所以本切片先做环境与绑定，不改槽的存储形态（Value仍144字节，Entry不变）。
-
-改动（只在`include/hua/vm.hpp`、`src/vm.cpp`，字节码、HUAB、步数和语义不变）：
-
-1. **租约直接复用**：离开作用域或函数返回时，若帧持有的是唯一租约（`use_count()==1`），清空环境并连同shared_ptr放回该布局的`ready`表（每布局最多16个），下次进入同形作用域直接取用，不经控制块分配、删除器和weak lock。任何Location、挂起的continuation仍持有租约时走原删除路径。`ready`声明在`spare`之后，析构时租约删除器还能把环境退回`spare`。
-2. **Bind/IterNext绑定槽在加载时解析**：`CodeLayout::bind_slots`按指令记录名字所在作用域与槽号；运行时核对当前环境的布局相同且槽为空才直接写，否则回到原按名字路径（含晚绑定、省略作用域与重复绑定报错）。
-3. **标量绑定快路径**：bool/int/float绑定跳过`value_type`、`copy_value`与`read_only`（三者对这些类型是恒等）。
-4. 进入作用域把父链移入新环境，离开时按唯一租约把父链移回，省去两次原子引用计数。
-
-正确性：新增`tests/scope_reuse_tests.py`（44项，三路径），覆盖跨迭代不残留（含条件绑定）、迭代中途的晚绑定遮蔽全局、key/item/`_`/map遍历、各类值逐迭代独立、闭包快照、每次迭代的defer、跨调用的赋值目标与多重赋值、超过16层停放上限的递归、嵌套作用域内提前返回、运行时错误、GC不保留（5轮live计数不变）、Task内跨yield与collect；同一测试在改前二进制上也全部通过。全量CTest 109项，-j 4首轮12项失败，与改动前（2026-11-07 since29验收）完全相同；array_size_syntax单独重跑通过，因此98/109，余11项属HUA-D036/D037已知类，没有新增失败。
-
-性能（`perf/results/win-s2-2a-core-ab.json`，5轮交替，base为同工具链改前构建）：
-
-| 循环 | 算术 | 调用 | 结构体 | Map | Map合并 | 字符串 | type_rules编译 | ast_pool编译 |
-|---|---|---|---|---|---|---|---|---|
-| 1.00x | 1.46x | 1.12x | 1.02x | 1.09x | 1.09x | 1.04x | 1.00x | 1.00x |
-
-stdlib 132项中位1.054x（`win-s2-2a-stdlib-ab.json`），最低两项复测（base复制对照）：list/07 1.07x（首轮0.76x为噪声）、fs/04 1.00x。自举C2逐字节不变（f73869fa…，1,281,255,218步）。
-
-结论：`for`/`while`内声明变量与调用密集的代码明显受益；真实编译负载基本不变，它的主要成本在分配、复制与GC，不在环境与绑定。下一步不建议直接做“原始类型槽”（`lookup`只占3–5%），应按真实编译负载的剖析先处理分配与`copy_value`。[过程记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-07-s2-2a.md)。
-
-<a id="s2-1-results-20261030"></a>
-
-#### S2-1 实施与否决结果（2026-10-30）
-
-**已完成本切片的实现试验与核对，性能未放行；默认VM撤回接入。S2-1整体未完成，不进入S2-2已实现状态。** 基线97ecbc2（源码与9a29cc6运行时相同），Release构建确认Ninja无待编译项后冻结exe，SHA256为959ca7d4…；本轮无完整自举、无提交推送。
-
-试验先把标量内联、复杂Value与ValueLocation放进稳定复用池，Entry从432缩为16字节；54项分配/故障/根检查及81项VM槽位检查通过，但Map持续退化约9–11%，真实ast_pool编译约慢4–5%。去掉通用弹栈的额外Value赋值仍未消除退化。随后撤回复杂Value池，只保留赋值位置池与内联Value，Entry为176字节，沿用既有所有权、局部位置及标量快路径；适配器多余临时搬运也已移除。**Value自身仍144字节；176字节是实验Entry，默认Entry仍432字节。** 稳定位置池按32槽分块、暖机后复用，弹栈/缩栈/异常清理释放业务引用；全位置栈会额外占用池空间，尺寸下降不是总内存下降证明。
-
-最终7轮交替A/B，base/new加速比分别：
-
-| 循环 | 算术 | 调用 | 结构体 | Map | Map合并 | 字符串 | type_rules编译 | ast_pool编译 |
-|---|---|---|---|---|---|---|---|---|
-| 1.01x | 1.01x | 1.03x | 0.99x | 0.99x | 0.99x | 0.99x | 1.07x | 0.97x |
-
-ast_pool七对均略慢（约0.5–4.5%），中位数3.689→3.803秒；type_rules为0.825→0.775秒，不能只挑收益项放行。九项输出/步数相同，独立产物核对均35,389,144步，HUAB SHA256为fe89543d90fe6b38abb31b99b6317dc7231b91dc7758ea1f5aa2670d702c020e。该独立运行的一次墙钟方向相反，不替代7轮结果。实验接入版65项定向CTest通过（75.99秒），含资源/Task/GC/快照/观察器；新增赋值目标跨递归、await、GC的夹具在AST/VM/无源码HUAB通过（Task总18例129检查）。接入版A07/C04独立通过（182.38秒，外层600秒硬限）。撤回后全目标重建及16项核心复验通过（3.66秒），真实编译步数/产物再核对一致。无超时、无完整自举；不把实验结果称为默认版提速。
-
-**决定与下一步：** 不继续为Entry尺寸做微调；16字节值池与176字节位置池接入均不作为默认改进。缩小Entry对这些负载没有产生整体收益，不能据此宣布Value144或分发为唯一瓶颈。后续S2-2须核定普通标量绑定/Load/Store/算术边界实际成本，设计能同时绕开通用Value处理的最小类型槽切片；保留旧Environment/位置与能力回退，未知、捕获、暂停/重入边界先证明。若仅改变内存布局而仍逐次构造通用Value，不再预设有提速。
-
-独立实验源码在tests/experimental/s2-1/operand_stack.hpp与tests/operand_stack_tests.cpp；CTest operand_stack_candidate只证明候选存储合同，不是默认VM。便携接入补丁与复核步骤、撤回原因见[本轮记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-30-s2-1.md)。候选ZIP、二进制与原始日志只在本机tests/artifacts/s2-1-20261030，不随Git。
-
-
-<a id="execution-storage-priority2"></a>
-
-#### HUA-D038 P1 Set/位工具（2026-11-04）
-
-新增6函数since21，三路径oracle/24原生边界与19项定向回归通过。手写→原生：Set 7.10x、位工具32.68x（同机各5轮）；既有真实编译约1.03/1.01x。07_strings源码约慢6%，同HUAB1.03x、少量入口分配后1.08x，支持分配布局敏感解释，保留严格无退化待办。本轮未跑完整自身/代际或全量CTest。[完整结果](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-04-p1-set-bit-tools.md)。
-
-#### HUA-D038 P1整数/双曲（2026-11-04）
-
-新增24函数since22，三路径7074行oracle/119原生边界/21项定向回归通过。边界加法组合手写→原生1.50x、六双曲组合1.54x；不是每个整数接口的性能结论。core首轮纯循环0.89x，独立9轮复核1.00x，未复现稳定差异，其余0.98–1.04x。保留所有原始数据，完整自身/代际未跑。[记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-04-p1-math-arithmetic.md)。
-
-### 0.3 第二优先：执行存储与调用帧改造（2026-10-29交接方案）
-
-**最新状态（2026-10-30）：用户已授权开始实施；S2-1实现试验未过性能闸门，默认接入已撤回，整体未完成。** 结果见[上方核对](#s2-1-results-20261030)。后续先按该结果细化S2-2最小类型槽，S2-3/4尚未实施；原2026-10-29交接范围只作历史。每个切片独立验收，不直接全局替换Value，不自动启动完整自举。此顺序优先于下方旧0.3/9.6中的历史下一步，固定HUA-D004不重编号。
-
-#### 基线与证据边界
-
-源码基线为`9a29cc6a535068fb92fef9414c5a5038d2ae57a3`。第一优先已保留长字符串共享、叶记录字段体COW、独占成员move及不可变Result载荷复用；Value仍144字节。既有实测：申请次数约-7.2%、累计申请字节约-15.5%、结构体1.13–1.26x、真实编译0.96–1.04x、GC扫描约+19%。这些是上轮记录，不是本次新测试；申请字节不是峰值内存，整体性能未放行。旧文档的“紧凑Value全部基准1.5–2倍”没有当前证据支持，不作收益承诺。
-
-当前VM已存在Environment槽位、名字路径守卫、参数槽缓存及环境复用，不能按“尚未槽位化”重新实现。真正剩余成本是大型栈项、环境链与守卫、重复类型元数据和通用调用边界。代码入口：`include/hua/value.hpp`、`include/hua/vm.hpp`、`src/vm.cpp`，重点为Value、ValueLocation、Entry、Binding、CodeLayout、lookup、enter_function及返回清理。
-
-#### 实施顺序
-
-| 切片 | 具体改造 | 必须证明与风险 |
-|---|---|---|
-| S2-1 轻量执行栈与稳定位置池（首先实施） | 标量直接存储；局部位置用帧标识/槽号；复杂成员和切片位置进稳定位置池，栈上存索引；复杂值经稳定存储句柄访问；按帧/执行段复用池 | 禁止以每次压栈新增堆盒换尺寸；区分取值与赋值位置；扩容、调用、回调、异常、await后引用有效；记录实际搬运/构造及装箱成本，不能只测sizeof |
-| S2-2 类型化局部槽 | 布局保存类型描述符/TypeId、可变性、作用域、捕获及清理信息；调用帧保存值、初始化/活跃状态；可靠局部访问解析为直接槽号；非捕获标量优先原始槽，未知/捕获变量保守回退 | 保持遮蔽、晚绑定、分支初始化、循环与提前退出；静态类型不能替代数值范围、非有限值、动态/外部输入、上下文转换及能力检查 |
-| S2-3 普通调用帧与逃逸环境分离 | 非逃逸局部使用稳定帧存储；捕获变量保留延长寿命的环境；参数/返回槽减少中间容器；明确借用、快照、移动；按活跃槽清理；暂停时保留帧和GC根 | 递归、Native回调重入、闭包逃逸；返回值先于defer修改来源形成快照；取消/超时/异常一致清理；本切片不混入非原子引用计数改造 |
-| S2-4 通用Value瘦身 | 标量内联；大型Slice/Result/Callable描述移出；元数据驻留；语义标签独立于variant序号；继承第一优先已验收共享机制 | 比较24/32字节与16字节表示，16字节不是先决闸门；现有shared_ptr、标签/能力需要预算；防止短字符串和PlainRecord装箱反而增加分配；影响AST/VM/容器/GC/标准库/桥接，必须独立验收 |
-
-S2-1可行性较高且VM内边界相对清楚；S2-2/3涉及寿命证明；S2-4影响最大。收益不能简单相加。若某切片无可重复收益，应停止并依据新剖析调整，而非假定整条路线必然有效。紧凑指令、JIT、寄存器VM、非原子引用计数、C04算法和map语义改造不捆绑进入本阶段。
-
-#### 不变合同与GC
-
-- A07 readonly/mut、快照、成员位置和别名；Result<void>、上下文转换、Error身份/原因链/来源；Task深快照、取消、资源关闭及在途保活全部保持。
-- 从S2-1开始核对帧/句柄/位置池的GC根和边：不遗漏环、不重复计边、不悬挂；禁止只改GC阈值掩盖扫描增加。公开GC计数与既有合同保持，需改变时另列决策。
-- HUAB仍使用语义标签，旧产物加载与Native/WASM公开ABI保持；内部表示不得直接成为文件格式或外部ABI。内部指令变换保持原逻辑计步。
-
-#### 逐切片验收与停止条件
-
-1. 冻结同源、同工具链Release基线，记录提交、构建选项、二进制/输入哈希；不要使用来源不明或已变化的旧exe。
-2. 机制证据：Value/Entry尺寸、栈项构造复制、装箱、环境创建、绑定、分配次数/字节、GC扫描及活跃根；诊断版只用于归因，性能用普通构建。
-3. 正确性：已有快照/A07及受影响AST/VM/HUAB测试；新增稳定位置、扩容、递归、重入、闭包、defer、await、取消/异常清理与GC环反例。测试按修改范围选择，不反复全量跑。
-4. 交替A/B：现有循环、算术、调用、结构体及冻结compiler HUAB编译type_rules/ast_pool；输出、步数和产物SHA一致。不得只挑最好一轮；疑似退化做有明确目的的有限复核。没有可重复收益或稳定退化则撤回该切片，不叠加修改掩盖。
-5. 启动前声明单命令与阶段预算；首次超时立即终止该项及其子进程，保留阶段、命令、耗时与日志并诊断，不原样重试。宿主前端30秒准备超时仍归HUA-D036，先定位再确定有依据的时限。
-6. 完整自举不作日常反馈循环；短负载通过后，在明确阶段验收范围下才决定一次600秒硬限验证。当前历史197/204秒不能当作本次成果。
-
-#### 换电脑执行清单
-
-- 拉取后核对仓库为NssSSLY/Hua、分支/HEAD与工作区，读取本节及.codex-sync最新状态/待办/检查点；本节源码基线9a29cc6与随后纯文档提交是不同身份。
-- 按开发指南准备工具链并本机重建；tests/build*、tests/artifacts及本地归档不随Git。缺少旧产物时从9a29cc6建立隔离基线，不声称已同步本机原始日志。
-- 首个实现任务限定S2-1：先测量Entry/位置及栈路径，形成稳定句柄、生命周期和回退边界，再实现；不重新修改A07合同，不先重跑完整自举。
-- 每切片结论写本性能文档；完整失败/撤回/身份/逐轮证据写.codex-sync/knowledge，原始产物放tests/artifacts；只有明确要求才提交推送。
-
-### 0.3 历史下一步（以下旧顺序以本节最新交接方案为准）
-
-
-**2026-10-23用户调整优先级**：暂停自举线（C04/selfhost改造与C09/G3验收），先做通用VM性能，目标是微基准赶上CPython量级（`perf/reference_bench.py` 同机同时段，每个基准 Hua/CPython ≤2倍，进一步≤1倍）；达到后转入补标准库。自举只作为回归检查（产物逐字节相同、步数不变）。具体分步见下方“CPython对齐阶段”记录与第9.6节。
-
-原第0.3节内容（暂停，保留供恢复自举线时参考）：
-
-1. 已完成：C04误报修复、Windows完整CTest回归、Windows微基准基线、步骤3a、第9节A/B阶段、D2（GC机制）、F1（结构相等）、Lua参照、P4-S1（被调用方优先调度，见上）。另列：宿主前端检查自举源码过慢导致的测试超时（HUA-D036）。
-2. **建议下一步**：F其余项（`std.map` 原生合并/包含——旧基线上写过接口提案，保存在分支 `bo11-capability-diagnostics-20261023` 的 `designs/2026-10-23-s2-native-map-primitives.md`，F1已覆盖其中“相等”，需在当前代码上重估；`strings.cut_once`，C04来源整数化）与C阶段（不可变共享字符串、16字节Value）——C04阶段的复制（约30%）与长字符串分配仍是最大成本；GC若要再降需决定是否允许“无环对象不入环检测”改变 `std.gc.collect()` 计数。
-3. 待决定：Windows分配器（HUA-D035）；GC计数合同（见2）；第9.5节其余合同问题。
-
-### 0.4 在Windows上复现/验收的命令
+使用本机已构建的 Release `hua.exe`，按实际构建目录调整路径。
 
 ```powershell
-cmake --build tests/build -j 6
-ctest --test-dir tests/build --output-on-failure            # 完整回归
-python perf/run_bench.py --hua tests/build/hua.exe --save perf/results/win-step2.json
-# 交替A/B：python perf/ab_bench.py --base 旧hua.exe --new tests/build/hua.exe --repeat 7
-# 工作量计数（需 tests/build-profile：-DHUA_INTERNAL_PROFILE=ON -DBUILD_TESTING=OFF）：
-#   python perf/count_bench.py --probe tests/build-profile/hua_memory_probe.exe --hua tests/build/hua.exe
-# 同机CPython参照：python perf/reference_bench.py --hua tests/build/hua.exe
-# 原生剖析：tests/tools/native_profile/（见tests/目录说明.md）
+python perf/run_bench.py --hua tests/build/hua.exe
+python perf/ab_bench.py --base tests/build-baseline/hua.exe --new tests/build/hua.exe --repeat 7
 ```
 
+指令及分配计数使用 `HUA_INTERNAL_PROFILE` 构建与 `perf/count_bench.py`。CPU 采样入口在 `tests/tools/native_profile/`。完整自举的入口、工具链和产物目录见[开发与运行指南](开发与运行指南.md)及[N1 验收记录](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-18-n1-windows-acceptance.md)。
 
-## 1. 结论
+<a id="9-基于真实负载剖析的优化路线2026-10-22"></a>
 
-1. **当前失败的直接原因是5亿“步数”硬上限，不是墙钟超时。** 最近一次完整自举在约144–165秒触发E4099，600秒墙钟还远没到。VM每步变快，步数一步也不会少，所以**只优化VM，在现有合同下仍然会在同一位置失败**。
-2. **但VM确实非常慢。** 5亿步/143.9秒≈348万步/秒；Parser负载1.27亿步/26.7秒≈476万步/秒，即每条字节码约210–290纳秒。成熟的switch分发栈式解释器通常每条5–30纳秒，差距约10–50倍。一旦步数问题解决，下一个撞上的就是600秒墙钟。
-3. 所以总耗时是三个因子的乘积，三个都要动：
+## 1. 用于排序的性能证据
 
-   **墙钟 = 编译器算法工作量 × 每个逻辑操作需要的字节码条数 × 每条字节码耗时**
-
-   - 第一项是C04分析算法（函数体重访、单次成本逐轮扩大）——这是你们文档已经定位的问题。
-   - 第二项是**语言/标准库缺少原生集合操作**，导致map相等、合并、集合并集等都要用Hua循环逐项写，每个元素十几步。这一项在之前的分析里基本没被单独看待。
-   - 第三项是VM本身的每步开销——你判断的问题，确实存在且很严重。
-
-## 2. VM每步开销的具体来源（代码证据）
-
-### 2.1 每条指令都要付的固定成本（`vm.cpp` dispatch）
-
-| 位置 | 现状 | 代价 |
-|---|---|---|
-| 每步 `co_await Yield{}` | 每步调用一次非内联的 `await_ready`，每1024步真正挂起一次并经过调度器（含 `Clock::now()`） | 函数调用＋计数；同步主程序也付 |
-| 每步 `task_checkpoint` | 进入 `file_checkpoint` → `files->pump()`，再检查取消 | 两层函数调用 |
-| 每步 `++execution_metrics->steps` | 这是 `std::atomic`（报告用 `.load()`），每步一次原子加 | 带锁指令，单线程下也付 |
-| 每步 `try{}` 包住 switch | 零开销异常模型下主要影响优化器 | 妨碍寄存器分配 |
-| `Entry = variant<Value, ValueLocation>` | Value本身144字节；ValueLocation内含Value、`optional<SliceValue>`、string、多个shared_ptr、一个`mutable Value scratch`，按成员估算超过500字节 | 每次压栈/弹栈搬运的是大对象 |
-
-### 2.2 指令里携带字符串，运行时反复解析
-
-- `Instruction` 里 `text`/`type` 都是 `std::string`。`Binary`/`Unary` 把 `op.text` 传给 `binary_value`，后者按 `op=="=="`、`op=="**"` 等**字符串比较**分支。`Store` 每次做 `op.text!="="`，复合赋值还 `substr` 出新字符串。
-- **运行时类型检查用的是类型字符串。** `enforce_type` 每次调用都会 `type_arguments(expected,"Result")`（构造字符串、扫描、返回 `vector<string>`）、`numeric_spec(value_type(v))`（先把值的类型**拼成字符串**再解析）、`compatible()`（对 map/Result/multi/List/Task 五种构造器各解析一次）。Bind、每个参数、每个返回值、Store、InitField 都走这条路径。
-- `Binding` 保存一份 `std::string type`；像 `capabilities.Environment` 这种超过SSO长度的类型名，每次绑定都要堆分配。
-- builtin 调用按名字分发：`invoke_resumable` 是协程，**按值**接收 `std::string name`、`vector<Value> args`、`vector<bool> contextual`、`std::string inferred`（每次调用都复制），然后 `invoke_builtin` 用 `name=="task_await"`、`name=="ok"`……一串字符串比较找实现。`unwrap`、`has`、`len` 这种最高频的内建都要走完这条链。
-
-Hua 是静态类型语言，这些检查的结果在编译期（或HUAB加载校验期）已经确定，运行时重复做字符串解析是纯浪费。
-
-### 2.3 一次用户函数调用的分配次数
-
-`Op::Call` → `call()` 一次调用大约包括：
-
-1. `arguments()` 新建 `vector<Value>`；
-2. `call()` 本身是协程 → 一个协程帧堆分配；
-3. `activation()`：`FrameArena::acquire` 线性扫描最多64个空闲环境并 `erase`（O(64) 搬移），再用带lambda删除器的 `shared_ptr` 包装 → 控制块堆分配；
-4. 每个非mut参数 `copy_value(args[i])` → 对 struct 是**整棵递归复制**（见2.4），然后 `enforce_type`、`read_only`；
-5. 每个参数一个 `Binding`（类型字符串复制）；
-6. `frames_.push_back` 复制 Frame（含 `vector<Iterator>`）；
-7. 返回时 `finish_return` 又是一个协程帧，且 `auto f=frames_.back();` **复制整个Frame**；`copy_value` 返回值，`enforce_return` 再检查；
-8. 每个 `LeaveScope` / 函数退出都 `co_await drain(env)` → 又一个协程帧，**哪怕 `deferred` 是空的**。
-
-一次很小的Hua函数调用就有十几次堆分配，这也解释了为什么文档里GC和copy在采样中占比高（24.6% / 13.1%）。
-
-### 2.4 struct 值语义被实现成“立即深复制”
-
-`copy_value(StructValue)` 会新建 `StructData`（受管、登记GC），然后递归 `copy_value` 每个字段；嵌套 struct 继续递归。这个函数在 Bind、传参、返回、`unwrap`、`ArrayAppend`、`MakeMulti`、`Defer` 等处都会被调用。只读参数也复制了一份，然后再标成只读——**只读参数的复制完全没有必要**。
-
-C04 的 `State`/`Environment`/`Value`/`View` 都是带多个 map 的 struct，在 `put`/`merge`/`invoke`/`instantiate_view_at` 之间反复按值传递。`move` 路径（use_count==1 时复用）只覆盖了一部分情况。
-
-### 2.5 map 是红黑树＋144字节节点
-
-`MapData::entries` 是 `std::map<variant<bool,int64,string>, Value>`。C04 几乎全是 `map[string]bool` / `map[string]View` / 嵌套 map；每个条目是一个树节点（variant key + 144字节Value），查找是 O(log n) 次字符串比较。`clone()` 一个 map 是逐节点深复制。
-
-## 3. 为什么“步数”本身这么多：缺原生集合操作
-
-`capabilities.hua` 里大量热点是通用集合操作，被迫用Hua循环写：
-
-| 函数 | 本质 | 独占步数（最近完整运行） |
-|---|---|---:|
-| `instantiate_view_at` | 遍历 origins map、拆字符串、重写key | 42,247,683 |
-| `merge_view` | `clone` + map 并集（带或运算） | 27,992,126 |
-| `note_prefix` | `split` 路径 + 逐级插入前缀索引 | 24,055,442 |
-| `same_flags` | 两个 `map[string]bool` 相等 | 22,507,792 |
-| `same_view` | 5个标量比较 + `same_flags` | 18,217,107 |
-| `storage_aliases` | 别名集合查询 | 15,397,835 |
-
-其中 `same_flags`+`same_view`+`merge_view`+`note_prefix`+`storage_aliases` 约1.08亿步，约占C04已耗3.61亿步的30%。这些在原生实现里每次调用就是**1步**。
-
-代码里已经有绕路的证据：`same_fields` 在 `len(a)>8` 时用 `json.encode(a)==json.encode(b)` 比较，正是因为一次原生调用只算1步，比Hua循环便宜。这说明缺的是**正当的原生能力**，而不是需要更多编码技巧。同时 `binary_value` 对聚合类型 `==` 直接报 E4008（aggregate equality is not implemented）。
-
-## 4. 改造方案（按投入产出排序）
-
-### P0：先拿到“真实需要多少步”这个数（约半天，只是诊断）
-
-现在最大的未知是：去掉5亿步上限后，C04到底是**会收敛但慢**，还是**不收敛/超线性爆炸**。文档自己也写了“未证明放宽步数后仍不能完成或逻辑不收敛”。
-
-- 加一个**仅测试用**的步数覆盖选项（例如 `--execution-step-limit`，只在测试构建或显式诊断模式中开放），用现有种子跑一次，墙钟上限放到1小时。
-- 产出：总步数、C04各访问组步数、是否生成HUAB。这决定后面的重点：如果总共只要8–15亿步，P1+P3就足够通过；如果呈指数增长，就必须先改C04算法（P4）。
-- 这不改生产合同，只是一次测量。
-
-**合同建议（需要你决定）：** `compiler` 配置下的步数上限本来是防死循环的保险，但它把“编译器用了简单写法”也当成了失败。一旦P3引入原生集合操作，“一步”的含义也会变。建议 compiler 配置以墙钟（600秒）为主，步数上限提高到一个只防死循环的量级（例如100亿）或去掉；默认 run 配置保持100万步不变。
-
-### P1：VM热路径（语义不变，预计每步耗时降到1/3–1/10）
-
-按改动风险从低到高：
-
-1. **批量做安全点检查。** 把 `Yield`/`task_checkpoint`/原子步数计数合并为“每N步（例如256）检查一次”：本地非原子计数器 `steps_`，到阈值时再同步到 `execution_metrics`、检查取消、检查文件pump、决定是否让出。步数上限判断仍逐步精确（一次整数比较）。E4099的触发位置不变。
-2. **`drain` 只在有 defer 时进入协程。** `LeaveScope`/返回路径先判断 `env->deferred.empty()`，为空就直接退出作用域，不创建协程帧。
-3. **调用/返回不经过协程帧。** 普通Hua→Hua调用本来就是在 `frames_` 上压帧，不需要 `co_await call(...)`。把 `call`/`finish_return` 改成普通函数，只有 `task_start`、`await`、async builtin、带defer的清理这些可能挂起的路径才走协程。`finish_return` 里 `auto f=frames_.back()` 改成引用/移动。
-4. **指令预解码（加载时一次）。** 新增一个运行时专用的 `DecodedInstruction`：
-   - 运算符变成枚举（`BinOp::Add` 等），`binary_value` 按枚举 switch；
-   - builtin 名字解析为 ID 或函数指针，`Load` 一个 builtin 时直接拿到；
-   - 类型字符串 intern 成 `TypeId`，并预先编译成“检查计划”：`Any`（无需检查）、`Exact(nominal id)`、`Numeric(spec)`、`Result(a,b)`、`Slice(elem)`、`Optional(inner)` 等。`enforce_type` 变成按计划的整数比较，只有真正需要转换（数值字面量上下文、固定数组）才走慢路径；
-   - `Binding` 保存 `TypeId` 而不是 `std::string`。
-
-   HUAB 格式不变：这是读入后的内存表示，字符串仍是持久形式。
-5. **builtin 快速路径。** `invoke_resumable` 先判断是否为可能挂起的少数函数（task/sleep/yield/文件类在Task内），其余直接调用同步实现，参数按 `const&` 传、不复制 `name`/`args`/`contextual`/`inferred`。
-6. **调用约定。** 参数直接从操作数栈窗口读取，不建 `vector<Value>`；`FrameArena` 改为按 `ScopeLayout` 分桶的空闲链表（O(1) 取还）；activation 用侵入式引用计数，避免每次分配 shared_ptr 控制块。
-7. **把 Location 移出值栈。** 值栈只放 `Value`，Location 放独立的小栈（或只在 Store 系列指令间存在）。值栈元素从500+字节降到Value大小。
-
-建议完成1–3后立刻测一次（见第5节基准），这三项改动小、收益最直接。
-
-### P2：值表示与复制语义（预计再降1/2–1/3，同时大幅减少GC压力）
-
-8. **struct 写时复制（COW）。** 保持语言上的值语义，但实现成：复制 = 引用计数+1；写入前若 `use_count>1` 则先复制这一层。要点：
-   - `LocateName`/`LocateField`/`LocateIndex` 生成写入位置时，沿路径逐层“确保唯一”（Swift 的做法）；
-   - 只读标志放在引用（StructValue）上而不是数据上，`read_only` 只改标志，不复制；
-   - 只读参数传递变成 O(1)；
-   - `copy_value(..., deep=true)`（`clone`）仍然是显式深复制，File 拒绝和128层限制不变。
-
-   这项需要单独验证A07的“只读来源后代不能升级写能力”和Task快照隔离，但它是去掉第2.4节成本的正确办法，比继续扩大“use_count==1 才 move”的特判更稳。
-9. **Value 瘦身。** 把 `SliceValue` 的 `element_type`(string)、`packed`、`contextual`(vector<bool>) 等不常用字段挪进堆上的 slice 头对象，Value 降到16–24字节（标签+一个指针/标量）。`NumericValue` 的 `std::string type` 改成 `TypeId`。这是改动面最大的一项，可以放在COW之后。
-10. **map 改为哈希表，并让 clone 也走 COW。** `map[string]...` 用开放寻址哈希＋字符串预计算hash；`clone(map)` 变成 O(1) 共享、首次写入时复制。注意保持当前“快照遍历”和遍历顺序的合同（如果语言承诺按key有序遍历，就需要有序哈希或在遍历时排序，这点要先确认语言合同）。
-11. **GC：不追踪不可能成环的对象。** 只含标量/字符串字段的 StructData、只含标量的 List/Slice 不进入循环检测集合（CPython 对 tuple/dict 做同样的“untrack”）。配合COW和更少的分配，GC 的24.6%采样占比应明显下降。
-
-### P3：补原生集合能力（直接减少步数，预计C04步数减少约30%）
-
-这一项同时完成“标准库未完成”的一部分：
-
-12. **聚合相等。** `==`/`!=` 支持 map、struct、slice、List 的结构相等（原生递归比较，带深度上限）。`same_flags`/`same_view`/`same_fields` 直接变成一个表达式，`json.encode` 绕路可以删掉。
-13. **`std.map`（或 `std.set`）原生操作：** `keys`、`union`/`merge_with`（带合并规则，例如 bool 取或）、`contains_all`、`equal`、`retain`/`filter_prefix`。`merge_view`、`instantiate_view_at` 的内层循环、`note_prefix` 的逐级插入都可以改写成少数原生调用。
-14. **字符串路径的缓存/拆分。** `split_origin`、`depth(path)` 每次都 `strings.split` 新建数组；若保留字符串路径，至少提供 `strings.cut_once` 之类不分配数组的原生函数。
-
-这些都是通用、可测试、可在AST/VM/HUAB三路径对照的标准库函数，不是为编译器开后门。
-
-### P4：C04算法（编译器侧，决定能否“收敛”）
-
-P0 的结果决定这一项的紧迫度。你们已有的 R1/R2 方向（符号化来源、精确失效）是对的，补充两点：
-
-15. **路径和来源 intern 成整数。** 现在来源是 `"owner|path#@field"` 拼接字符串，最长512字节，作为 map key 反复拆分、拼接、比较。改为编译期一次性分配 PathId/OriginId，origins 用排序整数数组或位集；合并、相等、实例化都变成整数操作。这与P3配合效果最大。
-16. **保证格高度有界。** 单次访问成本随轮次扩大（statement第3次是首次的18倍），说明事实集合在增长。给 origins 集合设上限（超过阈值就“加宽”为保守的“未知来源”），确保每个函数的摘要只能单调变化有限次。这样最坏情况下重访次数和每次成本都有界。A07的保守回退规则正好可以作为加宽的语义。
-17. **摘要变化检测用版本号。** 被调用者摘要变化时递增版本，调用者只记“我看到的是哪个版本”，判断是否需要重访只比较整数，而不是做深比较。
-
-## 5. 先建立的基准（每次改动都跑，几分钟内出结果）
-
-现在只能靠一次跑两三分钟的Parser/完整自举来判断改进，周期太长，而且一次只测一个改动。建议先加一组微基准（Hua源码＋固定期望输出），用普通Release构建，记录 ns/步：
-
-| 基准 | 测什么 |
+| 观察 | 对当前方案的意义 |
 |---|---|
-| 空循环1亿次 `for i in 0..N {}` | 纯分发开销 |
-| 整数累加循环 | Load/Binary/Store |
-| 递归 fib(27) | 调用/返回开销 |
-| 传入/返回一个含6个字段、2层嵌套的struct，调用100万次 | 值复制成本（COW前后对比） |
-| `map[string]bool` 插入/查询/遍历10万项 | map 表示 |
-| 两个1000项map的相等/合并 | P3收益 |
+| 旧版完整自举跟踪在 5 亿步处截断，C04 已执行 3.61 亿步。调用点来源实例化、来源合并、路径前缀传播各消耗约 4,225 万、2,799 万、2,406 万个独占步骤。 | 当前应测实函数体重访和摘要传播。该截断跟踪说明历史热点，当前完整执行的阶段占比仍待测。[历史跟踪](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-20-direct-selfhost-trace.md) |
+| 被调用方优先的同机同输入 A/B 把步数从 15.70 亿降至 12.76 亿，墙钟从 228.6 秒降至 184.3 秒，产物相同。当前代码已采用该访问顺序。 | 改变分析工作量已带来约 19% 的全流程收益。当前切片针对现有顺序下剩余的失效和传播成本。[历史 A/B](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-23-p4-s1-callee-first.md) |
+| 历史 `ast_pool` 真实编译样本中约有 174 万次结构复制、17 万次字段写入。采样中复制约 28%（含子调用）、GC 约 11%、分发自身约 7.2%、名字查找约 1.9%。 | 优先验证值复制和对象存活成本。采样组有重叠，小型真实负载比例应与完整自身归因分开。[底层剖析](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-08-vm-lower-layer-review-proposal.md) |
+| 叶记录字段体共享降低约 15.5% 的累计申请字节，但 GC 扫描对象约增 19%，真实编译基本持平。作用域复用让算术用例快 1.46 倍，`ast_pool` 为 1.00 倍。 | 同时观测分配次数、GC 扫描与真实负载墙钟，防止搬移开销。[字段体共享](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-29-value-snapshots.md) · [作用域复用](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-07-s2-2a.md) |
+| 当前归档会扫描指令判定格式，写出时再次遍历并逐字段调用 Buffer。 | 先用归档单独计时决定批处理优先级。[归档实现](../selfhost/archive.hua) |
 
-目标参考（同一台机器上可以顺手对照 Lua 5.4 或 CPython 3.12 的同等脚本）：空循环每步≤20ns，fib(27)≤1秒。
+## 2. 测量与验收
 
-Parser负载（现有1.27亿步、普通CPU约26.6秒）作为真实回归：HUAB逐字节相同、步数相同（P1/P2不应改变步数），只看CPU时间。
+1. **对照负载。** 完整 `selfhost/archive_main.hua` 是决策基准。`ast_pool` 与 `type_rules` 用于快速筛查，适用的同机 A/B 交替运行。记录版本、源文件身份、构建参数、是否计步、墙钟及必要的工作量计数。分开记录准备种子、生成 C++、Clang 构建与运行编译器的时间。
+2. **同源产物及诊断。** 新旧编译器处理同一冻结输入，核对 HUAB 字节、校验和、独立 reader、回执、诊断及退出码。对非法输入确认能力检查拒绝且不发布产物。运行相关 A07/C04 正反例及 AST、源码 VM、无源码 HUAB 对照，同步原生路径加入差分。算法优化记录预期减少的预算步数，运行时切片核对原逻辑计步和故障位置。
+3. **代际验收。** 对更新后的编译器源码重新生成种子，完整运行 C2、C3，核对同源 C2=C3，在隔离副本上移走编译器源码后，验证已有 HUAB 仍可加载并编译示例。原生编译器输出的 HUAB 与同源 VM 产物比较。
+4. **预算与放行。** 完整自身每个受监督进程的墙钟上限为 600 秒，VM compiler 配置为每个执行器 1000 亿步、调用深度 128。首次严重超时即停止该验收链路，保留最后阶段、步数和诊断。候选需在真实负载上产生可重复的工作量和耗时改善，独立记录语义边界及退化，避免按单个微基准放行。
 
-## 6. 预期效果（估算，需基准验证）
+## 3. 历史记录索引
 
-| 阶段 | 每步耗时 | 步数 | 说明 |
-|---|---|---|---|
-| 当前 | 约210–290ns | 5亿步时C04未完成 | — |
-| P1完成 | 约50–80ns | 不变 | 主要去掉协程帧、字符串类型检查、逐步原子/挂起检查 |
-| P1+P2 | 约20–40ns | 不变 | COW去掉大部分struct复制和GC压力 |
-| +P3 | 同上 | C04约减少30% | 集合操作变成单步原生调用 |
-| +P4 | 同上 | 有界、可预测 | 决定是否收敛 |
+<a id="execution-storage-priority2"></a>
+<a id="route-reorder-20261108"></a>
+<a id="s2-2a-results-20261107"></a>
+<a id="s2-1-results-20261030"></a>
+<a id="value-copy-priority1-results"></a>
 
-如果P0测出完整自举需要10–15亿步，P1+P2之后大约30–60秒即可完成（在调整步数上限的前提下）。这是推算，不是承诺。
+- [执行存储试验与否决](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-30-s2-1.md)、[值复制结果](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-29-value-snapshots.md)、[作用域复用与绑定槽](../.codex-sync/knowledge/bootstrap-performance/runs/2026-11-07-s2-2a.md)和[整体结构写时复制设计](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-08-v1-struct-cow-design.md)。旧执行存储顺序及其估算以历史方案留存，本轮决策使用 0.3 的两条路线。
 
-## 7. 不建议现在做的事
+<a id="p4-s12026-10-23windows另一台机器c04摘要轮次按被调用方优先访问"></a>
 
-- **继续在 Hua 源码里做局部技巧优化**（例如用 json.encode 做相等比较、调整 unwrap_or 求值顺序）。每轮收益在1%左右，而且被VM开销和缺失的原生能力抵消，最近 R1/R2 就是正确性通过但步数反增的例子。
-- **直接上 JIT/原生后端或寄存器VM。** 在当前的值表示（144字节variant、字符串类型、shared_ptr一切）上换执行引擎，大部分成本会原样搬过去。先把P1/P2做完，再看HUA-D028是否还需要。
-- **每次只改一处就跑完整自举。** 先用第5节的微基准和Parser负载快速迭代，确认数量级提升后再跑一次完整自举。
+- [C04 被调用方优先 A/B](../.codex-sync/knowledge/bootstrap-performance/runs/2026-10-23-p4-s1-callee-first.md)。
 
-## 8. 建议的执行顺序
+<a id="windows完整ctest回归2026-10-22"></a>
 
-1. 加微基准，记录当前 ns/步（半天）。
-2. P0：测试专用步数覆盖，跑一次不限步数的完整自举，拿到真实总步数和收敛情况（半天，取决于运行时间）。
-3. P1 第1–3项（安全点批量化、drain空跳过、调用去协程），测基准和Parser（1–2天）。
-4. P1 第4–7项（指令预解码/TypeId、builtin快速路径、调用约定、Location分离）（3–5天）。
-5. P3 聚合相等＋std.map 原生操作，改写C04热点（2–3天，可与4并行）。
-6. P2 COW → map哈希化 → Value瘦身 → GC untrack（1–2周）。
-7. 按P0结果决定P4的深度；调整 compiler 配置的步数合同；再跑一次完整自举并进入C08代际。
-
-## 9. 基于真实负载剖析的优化路线（2026-10-22）
-
-目标：把每条指令的平均耗时从现在的约273ns降到成熟解释器的量级，并减少编译器自身需要执行的指令数。本节基于两类实测（原始数据在本机 `tests/artifacts/perf-mix-20261022/`，测量补丁只在scratch副本中构建，未进入仓库源码）：
-
-- **原生采样**（`tests/tools/native_profile/`，自举编译器编译ast_pool.hua）：内建调用32%、`copy_value` 19–32%、`operator new` 13%、GC约9%、`enter_function` 13%；约26%自身时间在ntdll/ucrtbase（Windows堆）。
-- **计数**（完整自举，1,735,764,055条指令，产物与正式构建逐字节相同）。
-
-### 9.1 实测事实
-
-| 项目 | 数值 | 含义 |
-|---|---:|---|
-| 堆分配次数 | 1,833,544,648次（**每条指令1.06次**），合计372.8GB，平均203字节 | 一次474秒的自举里分配/释放与搬运字节是最大单项成本；成熟解释器的热路径基本不分配 |
-| 指令构成 | Load 28.4%、Constant 8.6%、Member 7.0%、Call 6.4%、JumpFalse 4.8%、Jump 4.8%、Unary 4.3%、Binary 4.0%、CheckIndex 3.7%、LeaveScope 3.4% | 读值类指令（Load/Constant/Member）占44% |
-| Load读到的值 | struct 28.2%、string 26.0%、callable 22.7%、bool 7.2%、map 5.6% | **9,308万次Load读到超过22字节的长字符串，每次都要分配一份副本**；callable每次复制128字节（含std::string） |
-| Unary | `!` 7,485万次（几乎全部紧接条件跳转） | 可在加载时与跳转融合 |
-| Binary | `==` 2,506万、`+` 1,906万、`!=` 1,055万 | 运算符按 `std::string` 比较分发；`+` 多为字符串拼接（分配） |
-| 调用 | 用户函数3,035万次，内建8,156万次（每条指令0.064次调用） | 内建前三：`has` 30.1%、`unwrap` 17.6%、`len` 9.5%；`strings.split` 8.0%（每次新建字符串数组） |
-| 复制 | struct复制4,716万次（每次新建StructData并逐字段复制）、字符串复制2,739万次、move路径字符串7,874万次 | 值语义被实现为立即复制 |
-| 类型检查 | `enforce_type` 3.21亿次，步骤3a快路径命中88.3% | 剩余慢路径：`[]string` 1,196万、`map<` 1,022万、`List<` 444万、`Result<` 404万 |
-| 数据结构尺寸 | Value 144字节、Instruction 336字节、ValueLocation 400字节、Callable 128字节、SliceValue 120字节、StructData 104字节 | 操作数栈元素约400字节；每条指令跨5个以上缓存行 |
-| map | `std::map<variant<bool,int64,string>,Value>`；每次查找先复制键（长字符串即分配）再O(log n)字符串比较，命中后复制值 | `has` 一项就有2,452万次 |
-
-结论：**慢的主因不是分发循环，而是“读一个值就复制、复制就分配”**。所以排序原则是先消灭热路径分配（C、D），再压缩指令与帧（B、E），并行减少编译器的步数（F）。
-
-### 9.2 分阶段实施步骤
-
-每个阶段都有独立验收（见9.4），一个阶段内每个子项单独提交、单独A/B，不把多项混在一次测量里。时间是单人估算。
-
-#### A. 测量基础（约0.5周）——2026-10-22已完成，见0.2节
-
-1. 把本次scratch计数（指令直方图、内建按名计数、Load/Constant值种类、copy_value按种类、分配次数/尺寸桶）做成正式构建选项（并入 `HUA_INTERNAL_PROFILE`，普通构建零开销），输出与 `perf/` 结果一起保存。
-2. 在同一台机器上写Lua 5.4与CPython 3.12的等价微基准（01–07），得到“成熟语言”在本机的真实参照，而不是引用外部数字。
-3. 每个基准增加“分配次数/指令”列；真实负载（08/09）与完整自举都记录分配次数。
-
-效果：不直接提速；之后每一步都能回答“省掉了哪类工作”。
-
-#### B. 调度与内建快路径（约1–1.5周，低风险，不改HUAB、不改步数）——2026-10-22已完成主要项，见0.2节；完整自举实测约-2%，低于下面的预估
-
-1. **指令加载时预解码**：Binary/Unary的运算符转为枚举（去掉每次 `std::string` 比较）；Member预先标记 `len`；Call目标若为内建，加载时解析成内建编号与 `StandardFunction*`，并缓存“是否可能挂起”。
-2. **加载时融合**（不改HUAB，执行时仍按原指令数计步）：`!`＋JumpFalse/JumpTrue→反向跳转；Load＋Member→直接取字段；Constant＋Binary比较→带常量比较。
-3. **热门内建内联**：`has`、`unwrap`、`len`、`ok`、`unwrap_or`、`is_none/is_some`、`list.len/get` 走专用快路径：不建参数向量、不扫MultiValue、不经名字比较链（这7项占内建调用的70%以上）。
-4. **Callable瘦身**：函数值改为指向不可变描述的指针（内建名、闭包、接收者放在共享描述里），Load一个函数不再复制128字节和字符串。
-5. 每次调用的3次哈希查找（function_layout、functions.find、code_layout）改为在Callable描述或调用点缓存。
-
-预期：每条指令-15%到-25%，完整自举约**360–410秒**。
-
-#### C. 字符串与值表示（约3–4周，收益最大）
-
-1. **不可变共享字符串**：`HString`（侵入式引用计数、长度、缓存的哈希；不超过15字节可内联）。复制字符串值只增减引用计数，**Load/Constant/传参/返回不再分配**；拼接与切片才分配。这一项直接消除约9,300万次长字符串Load分配和约1亿次字符串复制分配。
-2. **Value压缩到16字节**：类型标签＋8字节载荷；int/float/bool/nil内联；Slice/Result/Callable/Numeric/Map等放到堆上的头对象。操作数栈、Binding、结构字段一起缩小约9倍，搬运字节随之大降。
-3. **侵入式、非原子引用计数代替 `shared_ptr`**：去掉控制块分配和原子操作。值跨线程只在task启动/await、parallel_map处发生，这些边界已有 `isolated()` 复制；需逐一核对后才能用非原子计数（见9.5）。
-4. **map改为哈希表**：键用 `HString`（哈希已缓存）、查找不复制键、命中不复制值（只增引用计数）。语言合同写明map“顺序无承诺”，遍历仍保持“进入for时快照”的合同。
-5. 操作数栈与Location分离：栈只放16字节Value，Location在独立小栈或只在Store系列指令间存在。
-
-预期：分配次数/指令从1.06降到约0.2–0.3；在B之后再快1.6–2.2倍，完整自举约**180–250秒**。
-
-#### D. 结构写时复制与GC（约2–3周）——D2机制部分2026-10-22已完成（完整自举-7.5%），见0.2节；无环对象不入环检测需先定计数合同
-
-1. **struct写时复制（COW）**：复制=引用计数+1；写入路径（LocateField/LocateIndex/Store）逐层“确保唯一”，共享时才复制这一层（Swift做法）。只读标志放在引用上，`read_only` 不再复制。4,716万次struct复制基本不再分配。
-2. **GC改造**：跟踪记录改为侵入式链表（去掉每对象一个 `weak_ptr` 记录与 `std::function` 访问器）；字符串、只含标量/字符串字段的结构、标量切片不进入环检测；按“年轻代候选集”收集。
-3. `clone`（显式深复制）、File拒绝、128层嵌套限制与E4099位置保持不变。
-
-预期：再快1.3–1.5倍，完整自举约**120–190秒**；GC占比从约9%降到2%左右。
-
-#### E. 槽位化帧与紧凑指令（约2–3周）
-
-1. **编译期/加载期把局部变量解析为帧内槽位编号**：Load/Store变成数组下标访问；不再沿作用域链做守卫检查；EnterScope/LeaveScope在无defer、无闭包捕获时只清槽位。Environment对象只给被闭包捕获的作用域。
-2. **连续调用栈**：帧放在一个连续数组里，参数直接写入被调函数的槽位，不再有激活租约 `shared_ptr` 与参数向量。
-3. **类型检查计划**：加载时把类型字符串编成TypeId检查计划；字节码校验器已能证明类型相同的位置（静态类型语言中的大多数）直接省去运行时检查，其余走整数比较。
-4. **紧凑指令**：热字段（操作码、2–3个整数操作数）压到16–32字节，源位置、文本、名字放到旁表，只在报错时读取。
-
-预期：再快1.6–2.2倍，完整自举约**55–120秒**，平均每条指令约**30–70ns**，进入成熟字节码解释器常见的量级。
-
-#### F. 减少编译器步数（约2–4周，可与C–E并行）——F1聚合相等2026-10-22已完成（步数-9.5%），见0.2节
-
-1. **原生集合操作**（原P3）：聚合相等、`std.map` 的合并/包含/前缀筛选、`strings.cut_once`（完整自举中 `split` 调用约650万次，每次新建字符串数组）。
-2. **C04来源整数化**（原P4/R1）：来源现在是 `"owner|path#@field"` 长字符串，正是长字符串Load分配的主要来源；改为编译期分配的PathId/OriginId与整数集合。
-3. 有界格高度与版本号判重（原P4第16–17项）。
-
-预期：完整自举步数减少30–50%，与C–E叠加后约**30–85秒**。这一阶段改变编译器自身的指令序列与步数，需要重新冻结身份并重做C2/C3代际比较。
-
-#### G. 成熟解释器级（条件性，约1–2个月，E/F之后按实测决定）
-
-1. 寄存器式VM：Load/Constant（现占37%）变成指令操作数，指令总数预计减少30–40%。
-2. 线程化分发（computed goto）、NaN-boxing、Member/Call内联缓存。
-3. 是否进入基线JIT/AOT（HUA-D010/D028）在此之后再定。
-
-预期：每条（按旧指令计）约5–15ns，完整自举约**10–40秒**，达到Lua一类成熟解释器的量级。这是方向性估计，需要A阶段的本机Lua/CPython参照来校准。
-
-### 9.3 预期效果汇总（估算，每阶段以实测为准）
-
-| 完成到 | 完整自举（现474秒） | 平均每条指令 | 分配/指令 | 01_loop | 03_calls | 09_real |
-|---|---:|---:|---:|---:|---:|---:|
-| 现在（步骤3a） | 474秒 | 约273ns | 1.06 | 25ns | 51ns | 123ns |
-| B（预估） | 360–410秒 | 约210–235ns | 约1.0 | ≤18ns | ≤35ns | ≤100ns |
-| B（实测，2026-10-22） | 同时段508秒（步骤3a同时段520秒） | 约293ns（本时段） | 0.37（09） | 23ns | 51ns | 131ns |
-| B＋D2＋F1（实测，2026-10-22） | 同时段343.5秒（B阶段同时段470.1秒） | 约219ns（15.7亿步） | — | — | — | — |
-| C | 180–250秒 | 约105–145ns | 0.2–0.3 | ≤15ns | ≤30ns | ≤60ns |
-| D | 120–190秒 | 约70–110ns | ≤0.1 | ≤15ns | ≤25ns | ≤45ns |
-| E | 55–120秒 | 约30–70ns | ≤0.1 | ≤8ns | ≤15ns | ≤30ns |
-| E＋F | 30–85秒 | 同上（步数-30–50%） | ≤0.1 | — | — | — |
-| G | 10–40秒 | 约5–15ns | ≤0.05 | ≤3ns | ≤8ns | ≤15ns |
-
-各阶段收益不能简单相乘：前一阶段去掉的成本会改变后一阶段的占比。每完成一个子项都要重测并修正本表。
-
-### 9.4 每个子项的验收门槛（沿用步骤3a做法）
-
-1. `perf/ab_bench.py` 交替A/B：步数不变（F阶段除外）、输出与 `.expect` 一致；任何基准退化超过3%要先解释或撤回。
-2. 完整自举：产物与上一版逐字节相同（F阶段除外，F阶段改为重做C2=C3代际比较）、步数不变、记录墙钟和分配次数。
-3. 此前通过的72项CTest、`capability_c04`（A07四路）全部通过；C、D阶段另加A07只读来源、Task快照隔离、GC成环回收、File拒绝与128层嵌套的专门反例。
-4. 剖析复测：确认目标成本确实下降（例如C阶段的“分配/指令”），而不是只看总时间。
-
-### 9.5 需要用户决定或确认的合同问题
-
-| 问题 | 建议 | 影响阶段 |
-|---|---|---|
-| 指令融合后的步数计账 | 融合只在加载时做，按原指令条数计步（步数、E4099位置、HUAB都不变） | B、G |
-| 非原子引用计数 | 值只在已有的task/parallel_map隔离边界跨线程；逐一核对后改为非原子，否则保留原子计数（收益约减三分之一） | C |
-| map迭代顺序 | 语言合同已写“顺序无承诺”，改哈希表不改合同；如希望稳定顺序可用插入序哈希表（略慢） | C |
-| Windows分配器（HUA-D035） | 可先引入作为临时提速（预计1.2–1.4倍），但它是新依赖；C/D完成后可再评估是否保留 | 任意 |
-| 寄存器VM/JIT | 等E/F完成、有本机Lua/CPython参照后再决定 | G |
-
-### 9.6 CPython对齐路线（2026-10-23，用户调整优先级后）
-
-目标：`perf/reference` 同算法微基准上每项 Hua/CPython ≤2倍，再争取≤1倍；之后转入补标准库。约束不变：语义、HUAB、步数不变，自举产物逐字节相同。起点（B阶段构建）3.9–9.6倍；P2后3.2–9.1倍；P3后3.1–7.6倍（06_map_merge的同时段CPython时间波动较大）；P4后2.4–9.7倍。
-
-剩余差距的来源（剖析01_loop/02_arith）：CPython每轮约4条字节码，Hua约9–11条，且每条要搬运144字节Value、400字节ValueLocation，局部变量按名字走Environment。因此只靠修补分发不够，必须做9.2的C/E两阶段的核心部分。顺序（每步独立验收、可单独回退）：
-
-1. **P3 轻量位置**（2026-10-23完成）：实测01_loop 1.18x、02_arith 1.06x，低于预估的1.3–1.6倍——剩余成本在名字查找、Value复制与指令数，需P4/P5解决。
-2. **P4 标量快路径**（2026-10-23完成）：实测01 1.43x、02 1.17x、03 1.23x，01_loop首次到2.4倍。下一步重点是03_calls（进入/返回函数约占46%：激活分配、参数向量、`function_layout` 哈希查找）与P5。
-   - **HUA-D035堆分配剖析**（2026-10-23，另一台机器）：完整自举中系统模块27.2%（operator new 14.4%、map节点5.2%），GC遍历与回收约26%，`copy_value` 是第一大分配来源；09_real_ast_pool每步0.33次分配、struct复制173.7万次。Windows Segment Heap清单（无新依赖）实测自举195.6→186.4秒（-4.7%，产物与步数不变）、微基准持平。对比方案（清单／第三方分配器／从源头减少分配）见[设计稿](../.codex-sync/knowledge/bootstrap-performance/designs/2026-10-23-heap-allocation-options.md)，待用户决定。
-   - **分发循环瘦身**（2026-10-23完成，另一台机器）：只有 `LocalRef` 去掉owner保留（01 1.09x、02 1.04x）；`pump_pending` 缓存（0.87x）、步数上限提前读取、帧缓存指令首址均无收益已撤回。剩余逐指令开销需P7/P6。
-   - **调用路径**（2026-10-23完成，另一台机器）：帧缓存被调函数布局、调用点span改为指针，03_calls 1.15x（本机Hua/CPython 3.14为4.28→3.67倍）；实参移动无收益已撤回。激活环境的 `shared_ptr`/`weak_ptr` 开销（约17%）待寿命证明后再做，形参按名字绑定归P5。
-3. **P5 槽位化局部变量（9.2 E1）**：加载时把非捕获局部变量解析为帧内槽位，Load/Store为数组下标；Environment只给被闭包捕获或动态回退的作用域。原预计循环/算术类1.5–2倍。
-   - **实施前剖析（2026-10-23，另一台机器，`tests/build-prof`）**：01_loop（3000万次迭代）中 `lookup` 只占6.6%，分发循环自身50%（逐指令开销：循环条件与pc越界检查、取336字节Instruction约16%；轮询计数、每步 `pump_pending` 指针追踪加原子读、步数计数与上限比较约14%；内联的 `shared_ptr` 计数6.7%，如 `LocalRef` 的owner），Value/栈项variant构造析构约17%。02_arith中 `lookup` 3.8%，但 `for` 每轮在新Environment里绑定 `i`（`FrameArena::acquire`/`retire`、`shared_ptr`、`bind_named`）约14%，分发自身40.6%。据此P5的现实收益约为01的5–8%、02的15–18%，远低于原估计；更大的块是逐指令分发开销（P7/分发瘦身）与144字节Value的variant成本（P6）。顺序待用户重新决定。
-4. **P6 紧凑Value与共享字符串（9.2 C）**：Value压到16字节、字符串不可变共享；影响面最大，单独分支做，预计全部基准1.5–2倍、06/07收益最大。
-5. **P7 紧凑指令（9.2 E4）**：热字段16–32字节，文本/源位置进旁表。
-   - **实施前剖析（2026-10-23，另一台机器，`tests/build-prof`）**：微基准循环只有11–20条指令（约4–7KB），完全在L1缓存内，336字节步长的代价是依赖加载与解码而非缓存缺失。02_arith（1200万次迭代）中取指相关行（vm.cpp:412–414）约10%，其余大块是每轮作用域环境的生命周期（`LeaveScope`/`IterNext`处的 `shared_ptr` 释放、竞技场删除器与回收、`weak_ptr`，合计约20%）与variant析构（12.8%）。真实负载09_real_ast_pool中分发自身仅8.4%、取指行约2–3%，主要是 `[system]`（Windows堆分配，22.7%）、`copy_value`、GC（`heap_edges`/`collect_records`约5%）与受管分配。据此P7的现实收益约为微基准5–10%、真实负载2–3%，低于重写全部热处理器的代价；顺序待用户重新决定。
-
-06_map_merge（9倍）主要成本在map红黑树与复制，归入P6与map哈希化（HUA-D004，迭代顺序合同见9.5）。每步完成后在0.2“CPython对齐阶段”追加结论行。
+- 2026-10-22 Windows CTest 逐项分析、旧 P／S 与 A–G 路线、过往 N1 实施细节见[整理前原文](../.codex-sync/knowledge/bootstrap-performance/originals/2026-11-18-VM与自举性能改造分析.md)。归档原文中的相对链接以原 `docs/` 路径为基准。

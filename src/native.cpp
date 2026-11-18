@@ -772,6 +772,27 @@ struct Emitter {
                     (mut?"hn::dynamic_borrow<":"hn::dynamic_exact<")+concrete_type+">("+concrete_args+"),"+
                     tag+(mut?"":" ,false")+");";
             }
+            // A dynamic interface value carries its concrete receiver. Check the
+            // target relation against that receiver, not the erased source interface.
+            std::string tags;
+            if(relation!=m.relations.end())
+                for(const auto& concrete:relation->second)
+                    if(interface_tags.contains(concrete))
+                        tags+="case "+std::to_string(interface_tags.at(concrete))+":";
+            for(const auto& [from,ignored]:m.relations){
+                if(from==type)continue;
+                const auto from_type=ct(from,at);
+                const auto from_args=value+","+quoted(from)+","+site;
+                const auto binding=fresh("interface");
+                body+="if(hn::dynamic_is<"+from_type+">("+value+")){auto& "+binding+"=hn::"+
+                    (mut?"dynamic_borrow<":"dynamic_exact<")+from_type+">("+from_args+");";
+                if(!tags.empty())
+                    body+="switch("+binding+".object.tag){"+tags+
+                        (mut?"return hn::interface_alias<"+target+">("+binding+");":
+                             "return hn::interface_convert<"+target+">("+binding+",true);")+"}";
+                body+="hua::runtime_error("+site+","+quoted("expected "+type+", got ")+
+                    "+hua::value_type(hn::to_value("+binding+")),\"E4003\");}";
+            }
             return body+(mut?"(void)hn::dynamic_mut("+value+","+site+");":"")+
                 "return hn::dynamic_take<"+target+">("+args+");})()";
         }
@@ -1399,6 +1420,24 @@ struct Emitter {
         if(!kind.starts_with("builtin:"))no(n,"callee of kind `"+kind+"`");
         const std::string name=kind.substr(8);const auto s=span(n.span);
         auto a=[&](std::size_t i){return given?(*given)[i]:expr(arg(i));};
+        static const std::set<std::string> needs_static_argument{
+            "delete","is_ok","is_err","is_some","is_none","unwrap","unwrap_err","unwrap_or"};
+        if(count&&needs_static_argument.contains(name)&&ty(arg(0))=="@dynamic")
+            no(arg(0),"builtin "+name+" requires a statically typed argument");
+        // These specializations consume typed containers, callbacks or strings
+        // directly. A DynamicValue cannot be passed to their C++ overloads.
+        if(name.starts_with("$std$")){
+            const bool typed_container=name.starts_with("$std$list$")||name.starts_with("$std$maps$")||
+                name.starts_with("$std$deque$")||name.starts_with("$std$heap$")||
+                name.starts_with("$std$sets$")||name.starts_with("$std$random$")||has_typed_callback(name);
+            static const std::set<std::string> typed_text{
+                "$std$strings$starts_with","$std$strings$ends_with","$std$strings$split",
+                "$std$strings$trim","$std$strings$lower_ascii","$std$strings$upper_ascii",
+                "$std$strings$count","$std$strings$last_index","$std$strings$template"};
+            if(typed_container||typed_text.contains(name))
+                for(std::size_t i=0;i<count;++i)
+                    if(ty(arg(i))=="@dynamic")no(arg(i),"builtin "+name+" requires a statically typed argument");
+        }
         auto optional_arg=[&]{
             const auto& input=arg(0);
             if(!given&&input.kind==N::Name)if(auto local=find(input.text,input);local&&local->type.ends_with('?'))
@@ -1760,6 +1799,12 @@ struct Emitter {
                     return dynamic_pack(ct(type,arg)+"(hn::sequence_view("+place+"))",type,arg,true);
                 });
             return dynamic_pack(ct(type,arg)+"("+sequence_expr(arg)+")",type,arg,true);
+        }
+        if(is_interface(type)&&can_write&&possible_place(arg)){
+            return location_expression([&]{
+                const auto receiver=locate_receiver(arg);
+                return dynamic_pack(ct(type,arg)+"{"+receiver+".object.alias()}",type,arg,true);
+            });
         }
         if(is_struct(type)&&located_records.contains(type)&&can_write&&possible_place(arg)){
             return location_expression([&]{

@@ -1072,6 +1072,111 @@ fn main() {
 }
 ''')
 
+case("dynamic_interface_conversion_both_directions", '''interface Name { fn name() string }
+interface Wide {
+    fn name() string
+    fn count() int
+}
+struct Box { n int }
+fn Box.name() string { return "box" }
+fn Box.count() int { return self.n }
+fn wide() Wide { return Box{n:7} }
+fn narrow() Name { return Box{n:7} }
+fn as_name(x) Name { return x }
+fn as_wide(x) Wide { return x }
+fn main() { print(as_name(wide()).name(),as_wide(narrow()).count()) }
+''')
+
+reject("dynamic_field_read", '''struct Box { n int }
+fn use(x) int { return x.n }
+fn main() { print(use(Box{n:7})) }
+''')
+
+reject("dynamic_field_write_local", '''struct Box { n int }
+fn id(x) { return x }
+fn main() {
+    var b=id(Box{n:7})
+    b.n=9
+    print(b.n)
+}
+''')
+
+reject("dynamic_method_call", '''struct Box { n int }
+fn Box.get() int { return self.n }
+fn use(x) int { return x.get() }
+fn main() { print(use(Box{n:7})) }
+''')
+
+reject("dynamic_sequence_index", '''fn use(x) int { return x[1] }
+fn main() { print(use([2,3])) }
+''')
+
+reject("dynamic_sequence_slice", '''fn use(x) { print(x[1:]) }
+fn main() { use([2,3]) }
+''')
+
+reject("dynamic_sequence_for", '''fn use(x) {
+    for v in x { print(v) }
+}
+fn main() { use([2,3]) }
+''')
+
+reject("dynamic_map_index", '''fn use(x) int { return x["a"] }
+fn main() { print(use(map[string]int{"a":7})) }
+''')
+
+reject("dynamic_optional_unwrap", '''fn get() int? { return 7 }
+fn use(x) int { return unwrap(x) }
+fn main() { print(use(get())) }
+''')
+
+reject("dynamic_result_test", '''fn get() Result<int,string> { return ok(7) }
+fn use(x) bool { return is_ok(x) }
+fn main() { print(use(get())) }
+''')
+
+reject("dynamic_result_unwrap", '''fn get() Result<int,string> { return ok(7) }
+fn use(x) int { return unwrap(x) }
+fn main() { print(use(get())) }
+''')
+
+reject("dynamic_list_size", '''import std.list as list
+fn use(x) int { return list.len(x) }
+fn main() { print(use(list.from_slice([2,3]))) }
+''')
+
+case('dynamic_interface_concrete_mismatch', """interface Name { fn name() string }
+interface Count { fn count() int }
+struct Box { n int }
+fn Box.name() string { return "box" }
+fn only_name() Name { return Box{n:7} }
+fn as_count(x) Count { return x }
+fn main() { print(as_count(only_name())) }
+""")
+
+case('dynamic_interface_mut_preserves_receiver', '''interface Tick { mut fn update() int }
+interface ReadWrite {
+    mut fn update() int
+    fn read() int
+}
+struct Counter { n int }
+fn Counter.update() int { self.n+=1
+    return self.n
+}
+fn Counter.read() int { return self.n }
+fn bump(x mut Tick) int { return x.update() }
+fn alternate(x mut ReadWrite) bool { return x.update()==0 }
+fn select(first bool) {
+    if first { return bump }
+    return alternate
+}
+fn main() {
+    var c ReadWrite=Counter{n:7}
+    let f=select(true)
+    print(f(c),c.read())
+}
+''')
+
 def run(command):
     p = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=120)
     return p.returncode, p.stdout, p.stderr
@@ -1087,7 +1192,9 @@ def refuse(item):
     path = work / (name + '.hua'); path.write_text(source, encoding='utf-8', newline='\n')
     if run([str(hua), 'check', str(path)])[0]: return name, 'test program does not type-check'
     code, message = native_build.build(hua, path, work / (name + '.exe'))
-    return name, None if code == 2 and 'unsupported' in message else 'expected rejection, got %d: %s' % (code, message[-600:])
+    if code == 2 and 'native: unsupported' in message and not (work / (name + '.cpp')).exists():
+        return name, None
+    return name, 'expected rejection without C++ output, got %d: %s' % (code, message[-600:])
 failures = []
 with concurrent.futures.ThreadPoolExecutor(6) as pool:
     for name, problem in list(pool.map(check, cases.items())) + list(pool.map(refuse, rejected.items())):

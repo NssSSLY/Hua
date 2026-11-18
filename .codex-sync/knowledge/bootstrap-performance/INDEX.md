@@ -1,5 +1,15 @@
 # Hua自举性能项目记忆索引
 
+## Windows 跨语言基准（2026-11-18）
+
+[端到端、工作集、预热及构建记录](runs/2026-11-18-cross-language-benchmarks.md)。Hua VM、HUAB 和原生与 Lua、Python、Java、Go、C++ 同机七任务对照，AST 递归达到 60 秒即停止。
+
+## 当前性能路线（2026-11-18）
+
+- [原生发布 N2–N5](../../../docs/VM与自举性能改造分析.md#native-release-route-20261114)与[完整自举提速计划](../../../docs/VM与自举性能改造分析.md#selfhost-performance-plan)。
+- [N1 Windows 验收](runs/2026-11-18-n1-windows-acceptance.md)记录原生和 VM 的同源产物、计时与动态操作验收。
+- [整理前原文](originals/2026-11-18-VM与自举性能改造分析.md)按字节保留旧性能文档。以下标题中的阶段及“当前”均对应各自日期。
+
 ## 当前主线：N1 本地后端（2026-11-17）
 
 - [本地覆盖实施与验收](runs/2026-11-17-n1-native-coverage.md)
@@ -211,3 +221,5 @@ UR-1/2/3已接入并通过所选回归；最终3afa32e1/C0 32d46a34/14模块2847
 - 2026-11-07 HUA-D038 P1 os参数与子进程（since28，HUA-D022）：[运行记录](runs/2026-11-07-p1-os-process.md)。
 - 2026-11-07 HUA-D038 P1 File缓冲读写（since29）：[运行记录](runs/2026-11-07-p1-file-bulk.md)。
 - 2026-11-07 S2-2a作用域复用与绑定槽：[运行记录](runs/2026-11-07-s2-2a.md)。
+
+- 2026-11-18 [N1 Windows 自举与同步动态操作验收](runs/2026-11-18-n1-windows-acceptance.md)。
