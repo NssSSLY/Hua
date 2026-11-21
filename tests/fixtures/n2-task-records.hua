@@ -1,0 +1,28 @@
+import std.task as task
+struct Packet { values []int }
+enum Answer { Data(Packet), Missing }
+var shared = Packet{values:[5,6]}
+fn work(p Packet) Packet { task.yield()
+    return Packet{values:[p.values[0],shared.values[0]]}
+}
+fn tag(answer Answer) Answer { return answer }
+fn num(answer Answer) int {
+    match answer {
+        Data(p)=>{return p.values[0]}
+        Missing=>{return 0}
+    }
+}
+fn main(){
+    var local = Packet{values:[7,8]}
+    fn read() int { return local.values[0]+shared.values[0] }
+    let tracked Task<Packet> = spawn work(local)
+    let captured = spawn read()
+    let tagged = spawn tag(Answer.Data(local))
+    let empty = spawn tag(Answer.Missing())
+    local.values[0]=99
+    shared.values[0]=90
+    var first=await tracked
+    first.values[0]=77
+    let second=await tracked
+    print(first.values[0],second.values[0],second.values[1],await captured,num(await tagged),num(await empty))
+}

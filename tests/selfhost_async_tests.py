@@ -31,6 +31,45 @@ fn main() {
 }
 """
 
+LOCAL_TASK = """
+import std.task as task
+var setting = 10
+fn main() {
+    var bias = 4
+    var items = [2,3]
+    fn child(x int) int {
+        task.yield()
+        return bias + items[0] + setting + x
+    }
+    bias = 40
+    items[0] = 5
+    let job = spawn child(2)
+    items[0] = 50
+    setting = 100
+    print(await job,bias,items[0],setting)
+}
+"""
+
+LOCAL_SCOPES = """
+fn main() {
+    let base = 2
+    fn recurse(n int) int {
+        if n == 0 { return base }
+        return 1+recurse(n-1)
+    }
+    fn outer(k int) int {
+        fn inner() int { return base+k }
+        return inner()
+    }
+    print(recurse(3),outer(8))
+    {
+        let base = 9
+        fn recurse(n int) int { return base+n }
+        print(recurse(1))
+    }
+}
+"""
+
 IMPORTS = """
 import left as left
 import right as right
@@ -57,6 +96,8 @@ def verify(exe, compiler):
                 encoding="utf-8"), "once before 5\n10 99 1 4\n", {}),
             ("container-results", (Path(__file__).parent / "fixtures/n2-task-container-results.hua").read_text(
                 encoding="utf-8"), "8192 4096 17\nchanged task result\n", {}),
+            ("value-wrappers", (Path(__file__).parent / "fixtures/n2-task-value-wrappers.hua").read_text(
+                encoding="utf-8"), "ok(3) ok(7) err(missing)\n", {}),
             ("task-control", (Path(__file__).parent / "fixtures/n2-task-control.hua").read_text(
                 encoding="utf-8"), None, {}),
             ("task-file", """import std.file as file
@@ -71,6 +112,14 @@ fn worker() int {
 }
 fn main() { print(await spawn worker()) }
 """, "3\n", {}),
+            ("records", (Path(__file__).parent / "fixtures/n2-task-records.hua").read_text(
+                encoding="utf-8"), "77 7 5 12 7 0\n", {}),
+            ("local-async", (Path(__file__).parent / "fixtures/n2-task-local-async.hua").read_text(
+                encoding="utf-8"), "6 5 40\n", {}),
+            ("task-field-forward", "struct Box { job Task<Good> }\nstruct Good { number int }\nfn main() { print(1) }\n", "1\n", {}),
+            ("task-field-backward", "struct Good { number int }\nstruct Box { job Task<Good> }\nfn main() { print(1) }\n", "1\n", {}),
+            ("local-task", LOCAL_TASK, "21 40 50 100\n", {}),
+            ("local-scopes", LOCAL_SCOPES, "5 10\n10\n", {}),
             ("imports", IMPORTS, "40 60\n", {
                 "left.hua": "pub async fn twice(x int) int { return x * 2 }\n",
                 "right.hua": "pub async fn twice(x int) int { return x * 3 }\n",
@@ -109,7 +158,15 @@ fn main() { print(await spawn worker()) }
             ("async fn main() {}\n", "E8201@"),
             ("import std.task as task\nasync fn work() {}\nfn main() { task.timeout(work(),1) }\n", "E3004@"),
             ("let x = await 42\nfn main() {}\n", "E2004@"),
-            ("fn main() { async fn nested() {} }\n", "E8201@"),
+            ("fn main() { async fn nested(xs mut []int) {} }\n", "E8201@"),
+            ("struct Box { out Buffer }\nasync fn bad(x Box) int { return 0 }\nfn main(){}", "E8201@"),
+            ("enum Box { Plain(int), Complex(Buffer) }\nasync fn bad(x Box) int { return 0 }\nfn main(){}", "E8201@"),
+            ("struct Box { job Task<Bad> }\nstruct Bad { bytes Buffer }\nfn main() {}", "E8201@"),
+            ("struct Bad { bytes Buffer }\nstruct Box { job Task<Bad> }\nfn main() {}", "E8201@"),
+            ("fn main() { var x=1\nfn child() { x=2 }\n}", "E3003@"),
+            ("fn main() { var xs=[1]\nfn child() { xs[0]=2 }\n}", "E3003@"),
+            ("fn main() { { fn child() {} }\nchild()\n}", "E3001@"),
+            ("fn main() { for i in 0..1 { fn child() { break } } }\n", "E2004@"),
         ):
             bad_source.write_text(text, encoding="utf-8")
             rejected = run(exe, work, "run", compiler, "--execution-profile", "compiler", "--",
@@ -119,7 +176,7 @@ fn main() { print(await spawn worker()) }
             assert receipt["status"] == "error" and expected in receipt["error"], receipt
             assert bad_output.read_bytes() == b"previous artifact"
 
-    print("Passed 7 positive and 9 negative Task cases")
+    print("Passed 14 positive and 17 negative Task cases")
 
 
 if __name__ == "__main__":

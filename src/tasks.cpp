@@ -53,32 +53,74 @@ Value TaskRuntime::start_resumable(TaskResumeJob job,std::string type,const Sour
     try{enqueue_task(state,std::move(job),std::move(child));admission.transferred=true;}catch(...){children.pop_back();throw;}
     return Value(TaskValue{state});
 }
-Routine<Value> TaskRuntime::await_async(Value value,SourceSpan span,std::optional<std::chrono::milliseconds> timeout){
+namespace {
+enum class TaskResult { copy, discard };
+
+// Result copying can diagnose invalid data. Prove the common shapes safe
+// without constructing copies; leave the full copier in charge of other shapes.
+bool can_discard_result(const Value& value, unsigned depth = 0) {
+    if (depth > 128) return false;
+    if (value_kind(value) <= 4 || holds<NumericValue>(value.data)) return true;
+    auto safe = [depth](const Value& item) { return can_discard_result(item, depth + 1); };
+    if (auto list = cget_if<ListValue>(&value.data))
+        return std::all_of(list->data->values.begin(), list->data->values.end(), safe);
+    if (auto map = cget_if<MapValue>(&value.data))
+        return std::all_of(map->data->entries.begin(), map->data->entries.end(),
+                           [&](const auto& entry) { return safe(entry.second); });
+    if (auto slice = cget_if<SliceValue>(&value.data)) {
+        if (slice->fixed || slice->packed || !slice->storage ||
+            slice->start > slice->storage->size() ||
+            slice->length > slice->storage->size() - slice->start) return false;
+        const auto& items = *slice->storage;
+        for (std::size_t i = 0; i < slice->length; ++i)
+            if (!safe(items[slice->start + i])) return false;
+        return true;
+    }
+    if (auto result = cget_if<ResultValue>(&value.data))
+        return !result->payload || safe(*result->payload);
+    return false;
+}
+
+Routine<Value> wait_task(TaskRuntime& runtime, Value value, SourceSpan span,
+                         TaskResult delivery, std::optional<std::chrono::milliseconds> timeout = {}) {
+    auto& context = runtime.context;
     auto state=task_state(value,span);auto deadline=timeout?Clock::now()+*timeout:Clock::time_point::max();
     bool timed_out=false,canceled=false;
     auto done=[state]{std::lock_guard lock(state->mutex);return state->finished;};
     while(!done()){
         if(!context.cleanup&&context.cancellation&&context.cancellation->stopped()){canceled=true;state->cancellation->requested=true;break;}
         if(Clock::now()>=deadline){timed_out=true;state->cancellation->requested=true;break;}
-        co_await Suspend{[this,done]{return done()||(!context.cleanup&&context.cancellation&&context.cancellation->stopped());},deadline};
+        co_await Suspend{[&context,done]{return done()||(!context.cleanup&&context.cancellation&&context.cancellation->stopped());},deadline};
     }
     notify_task_scheduler();
     // A soft deadline requests cancellation, then waits for cleanup and confirmed native completion.
     if(!done())co_await Suspend{done};
-    {std::lock_guard lock(state->mutex);state->observed=true;if(!state->emitted){output<<state->output;state->emitted=true;}}
+    {std::lock_guard lock(state->mutex);state->observed=true;if(!state->emitted){runtime.output<<state->output;state->emitted=true;}}
     if(canceled)runtime_error(span,"task canceled while awaiting a dependency","E4101");
     if(timed_out)co_return standard_result(Value(std::string("timeout")),false,state->result_type);
     if(state->error){if(timeout)co_return standard_result(Value(failure(state->error)),false,state->result_type);std::rethrow_exception(state->error);}
     // The awaiter takes a deep copy into its own heap, one awaiter at a time: nothing but
     // this copy ever reads a finished task's result.
-    Value result;{std::lock_guard lock(state->mutex);result=copy_value(state->result,true);}
-    co_return timeout?standard_result(std::move(result),true,state->result_type):result;
+    Value result;
+    {
+        std::lock_guard lock(state->mutex);
+        if (delivery == TaskResult::copy || !can_discard_result(state->result))
+            result = copy_value(state->result, true);
+    }
+    if (delivery == TaskResult::discard) co_return Value{};
+    co_return timeout ? standard_result(std::move(result), true, state->result_type) : result;
+}
+}
+
+Routine<Value> TaskRuntime::await_async(Value value, SourceSpan span,
+                                       std::optional<std::chrono::milliseconds> timeout) {
+    return wait_task(*this, std::move(value), std::move(span), TaskResult::copy, timeout);
 }
 Value TaskRuntime::await(const Value& value,const SourceSpan& span,std::optional<std::chrono::milliseconds> timeout){return sync_wait(await_async(value,span,timeout),context);}
 Routine<void> TaskRuntime::finish_async(bool cancel){
     if(cancel)for(auto& child:children)child->cancellation->requested=true;
     std::exception_ptr first;bool old=context.cleanup;context.cleanup=true;
-    for(const auto& child:children)try{if(!observed(child))co_await await_async(Value(TaskValue{child}),{});}catch(...){if(!first)first=std::current_exception();for(auto& other:children)other->cancellation->requested=true;}
+    for(const auto& child:children)try{if(!observed(child))co_await wait_task(*this, Value(TaskValue{child}), {}, TaskResult::discard);}catch(...){if(!first)first=std::current_exception();for(auto& other:children)other->cancellation->requested=true;}
     context.cleanup=old;children.clear();groups.clear();if(first&&!cancel)std::rethrow_exception(first);
 }
 std::size_t TaskRuntime::begin_group(){auto id=next_group++;groups.emplace_back(id,children.size());return id;}
@@ -86,7 +128,7 @@ Routine<void> TaskRuntime::end_group_async(std::size_t id,SourceSpan span){
     if(groups.empty()||groups.back().first!=id)runtime_error(span,"invalid taskgroup scope","E4103");
     auto start=groups.back().second;groups.pop_back();std::exception_ptr first;
     if(context.unwinding||(context.cancellation&&context.cancellation->stopped()))for(std::size_t i=start;i<children.size();++i)children[i]->cancellation->requested=true;
-    for(std::size_t i=start;i<children.size();++i)try{if(!observed(children[i]))co_await await_async(Value(TaskValue{children[i]}),span);}catch(...){if(!first)first=std::current_exception();for(std::size_t j=start;j<children.size();++j)children[j]->cancellation->requested=true;}
+    for(std::size_t i=start;i<children.size();++i)try{if(!observed(children[i]))co_await wait_task(*this, Value(TaskValue{children[i]}), span, TaskResult::discard);}catch(...){if(!first)first=std::current_exception();for(std::size_t j=start;j<children.size();++j)children[j]->cancellation->requested=true;}
     if(first)std::rethrow_exception(first);
 }
 void TaskRuntime::finish(bool cancel){sync_wait(finish_async(cancel),context);}
@@ -132,7 +174,7 @@ Value task_combine(std::string_view op,const std::vector<Value>& args,const Sour
         }catch(...){error=std::current_exception();}
         child.cleanup=true;
         if(error||op=="race")for(const auto& v:args)task_state(v,span)->cancellation->requested=true;
-        for(const auto& v:args)try{co_await runtime.await_async(v,span);}catch(...){if(!error&&op=="all")error=std::current_exception();}
+        for(const auto& v:args)try{co_await wait_task(runtime, v, span, TaskResult::discard);}catch(...){if(!error&&op=="all")error=std::current_exception();}
         child.tasks=nullptr;if(error)std::rethrow_exception(error);co_return result;
     };
     return c->tasks->start_resumable(std::move(job),op=="all"?"[]"+type:type,span);

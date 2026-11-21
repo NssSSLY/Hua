@@ -30,7 +30,8 @@ struct State { model types.Model
     core Core
     type_cache map[string]string
     prefixes map[string]string
-    module_ids []string }
+    module_ids []string
+    recursive_async map[string]bool }
 struct Frame { id int
     function bool
     loops int
@@ -103,6 +104,22 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
     if k == "Const" || k == "Enum" || k == "Variant" || k == "Import" || k == "Program" || k == "Parameters" {
         return err(fail(u,n,"E8201","node outside C05 core"))
     }
+    if (k == "Call" && len(s.recursive_async)>0) || (k == "Unary" && text == "spawn") {
+        var call = n
+        if k == "Unary" { call = get(u,n.children[0]) }
+        let called = target(s,u,get(u,call.children[0]))
+        if has(s.recursive_async,called) {
+            let name = "$async$"+runtime_name(s,called)
+            let intrinsic = add(s,u,n,"Name","$core$task_start","builtin:task_start",false,[],role)?
+            let body = add(s,u,n,"Name",name,"fn:"+name,false,[],role)?
+            var args = list.from_slice([intrinsic,body])
+            for i in 1..len(call.children) { list.append(args,lowered(s,u,call.children[i],depth+1,role)?)? }
+            return add(s,u,n,"Call","",t,false,list.snapshot(args),role)
+        }
+    }
+    if k=="Name" && len(s.recursive_async)>0 && has(s.recursive_async,ref) {
+        return err(fail(u,n,"E3008","local async self reference requires a direct call"))
+    }
     if k == "Unary" && text == "spawn" {
         let callee = add(s,u,n,"Name","$core$task_start","builtin:task_start",false,[],role)?
         let call = get(u,n.children[0])
@@ -128,12 +145,22 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
     if k == "Function" {
         let parameters = get(u,n.children[0])
         for p in parameters.children { list.append(children,lowered(s,u,p,depth+1,role)?)? }
-        list.append(children,lowered(s,u,n.children[1],depth+1,role)?)?
+        let recursive = role=="async-body" && rules.lexical_target(decl)
+        if recursive { s.recursive_async[decl]=true }
+        list.append(children,lowered(s,u,n.children[1],depth+1,"source")?)?
+        if recursive { delete(s.recursive_async,decl) }
     } else if k == "Member" && ref != "" {
         k = "Name"
         text = runtime_name(s,ref)
     } else {
-        for child in n.children { list.append(children,lowered(s,u,child,depth+1,role)?)? }
+        for child in n.children {
+            let item=get(u,child)
+            if k=="Block" && ast.kind(item.payload)=="Function" && strings.contains(ast.payload_text(item.payload)," async") {
+                let f=unwrap(s.model.functions[declaration(s,u,item)])
+                list.append(children,lowered(s,u,child,depth+1,"async-body")?)?
+                list.append(children,async_wrapper(s,u,item,f)?)?
+            } else { list.append(children,lowered(s,u,child,depth+1,role)?)? }
+        }
     }
     if (k == "Name" || k == "TypeName" || k == "StructLiteral") && ref != "" { text = runtime_name(s,ref) }
     if decl != "" && (k == "Function" || k == "Struct" || k == "Let" || k == "Var" || k == "Parameter" || k == "Name") {
@@ -143,6 +170,9 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
             t = "fn:"+text
         }
         if k == "Parameter" && (strings.ends_with(ast.payload_text(n.payload)," mut") || (len(n.children)>0 && ast.kind(get(u,n.children[0]).payload)=="MutableType")) { text += " mut" }
+    }
+    if k=="Function" && rules.lexical_target(decl) {
+        return add(s,u,n,k,text,t,w,list.snapshot(children),"local-function")
     }
     return add(s,u,n,k,text,t,w,list.snapshot(children),role)
 }
@@ -167,7 +197,9 @@ fn async_wrapper(s mut State, u modules.Unit, n ast.Node, f types.Function) Resu
     let start = add(s,u,n,"Call","",task,false,list.snapshot(operands),"source")?
     let result = add(s,u,n,"Return","","",false,[start],"source")?
     list.append(children,add(s,u,n,"Block","","",false,[result],"source")?)?
-    return add(s,u,n,"Function",name,"fn:"+name,false,list.snapshot(children),"source")
+    var role="source"
+    if rules.lexical_target(f.target) { role="local-function" }
+    return add(s,u,n,"Function",name,"fn:"+name,false,list.snapshot(children),role)
 }
 fn enum_fields(s mut State, u modules.Unit, n ast.Node, name string) Result<[]FieldInfo> {
     var empty []FieldInfo = []
@@ -251,7 +283,7 @@ pub fn verify(c Core) Result<void> {
     var depths = map[int]int{}
     for i in 0..list.len(c.nodes) {
         let n = unwrap(list.get(c.nodes,i))
-        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || !alg.contains(["source","enum-layout","enum-constructor","async-body"],n.role) { return err("E8203@1:1 invalid C05 node") }
+        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || (n.role!="local-function" || n.kind!="Function") && !alg.contains(["source","enum-layout","enum-constructor","async-body"],n.role) { return err("E8203@1:1 invalid C05 node") }
         var depth = 1
         for child in n.children {
             if child<0 || child>=i { return err("E8203@1:1 invalid C05 child/order") }
@@ -304,11 +336,15 @@ pub fn verify(c Core) Result<void> {
     while list.len(stack)>0 {
         let frame = list.pop(stack)?
         let n = unwrap(list.get(c.nodes,frame.id))
-        if alg.contains(["Function","Struct"],n.kind) && frame.depth!=0 { return err("E8203@1:1 nested C05 declaration") }
+        if n.kind=="Struct" && frame.depth!=0 { return err("E8203@1:1 nested C05 structure") }
+        if n.kind=="Function" && ((frame.depth!=0 && !frame.function) || (n.role=="local-function")!=(frame.depth!=0)) {
+            return err("E8203@1:1 invalid C05 function scope")
+        }
         if alg.contains(["Break","Continue"],n.kind) && frame.loops==0 { return err("E8203@1:1 C05 loop exit outside loop") }
         if alg.contains(["Return","Defer","Propagate"],n.kind) && !frame.function { return err("E8203@1:1 C05 return/cleanup outside function") }
         for i in 0..len(n.children) {
             var loops = frame.loops
+            if n.kind=="Function" { loops=0 }
             if (n.kind=="For" || n.kind=="While") && i==len(n.children)-1 { loops += 1 }
             list.append(stack,Frame{id:n.children[i],function:frame.function || n.kind=="Function",loops:loops,depth:frame.depth+1})?
         }
@@ -319,7 +355,7 @@ pub fn lower(model types.Model) Result<Core> {
     var empty []Node = []
     var inits []Initializer = []
     let entry = unwrap(list.get(model.graph.units,0)).id
-    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[]}
+    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[],recursive_async:map[string]bool{}}
     var names []string = []
     var ids = list.from_slice(names)
     for u in list.snapshot(model.graph.units) {

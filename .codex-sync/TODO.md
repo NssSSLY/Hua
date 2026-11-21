@@ -8,9 +8,11 @@
 
 P0 剩余两项已验收。[源码标准模块](knowledge/bootstrap-performance/runs/2026-11-18-sdk-source-stdlib.md) · [完整分阶段实测](knowledge/bootstrap-performance/runs/2026-11-18-full-selfhost-phase-profile.md)
 
-1. 后续性能工作根据实测优先细分 C04 函数体重访、摘要变化、来源展开和合并。改动先验正确性，再比较真实输入。
-2. P1 N2.3 剩余 Hua 自举嵌套闭包和原生 Task 的更广载荷。已开放的快照和控制已联验。N2.4 Windows 1／2／4 worker 及 N2.5 IOCP / 阻塞池本机对照见[本轮证据](knowledge/bootstrap-performance/runs/2026-11-18-n2-windows-workers-iocp.md)。N4 Hua 原生生成器小切片及 N3 发布缓存后续处理。
-3. P2 本地包及可选 C ABI/Python 适配交付；跨平台暂缓。完整步骤、依赖和退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
+Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、局部 async fn 及直接递归、实际在途 IOCP 取消和最终代际检查。[Windows N2 验收](knowledge/bootstrap-performance/runs/2026-11-20-n2-final.md)
+
+1. P1 N4.2D 至 N4.4 已验收。继续 N3，把可复验的 Windows 原生生成器、HUAB 编译器和运行库接入发行目录及依赖缓存。[记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-full-entries.md)
+2. 并行自举提速按真实负载细分 C04 函数体重访、摘要变化、来源展开和合并。改动先验正确性，再做同输入 A/B。
+3. P1 N3 发布驱动、依赖缓存和目标打包，P2 本地包及可选 C ABI／Python 适配。跨平台暂缓。完整依赖与退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
 
 以下为按日期保存的既有任务和交接。
 
@@ -124,3 +126,5 @@ P0 剩余两项已验收。[源码标准模块](knowledge/bootstrap-performance/
 - 核对隐式捕获中的 File 保活和 clone 合同，再完成 Windows N1 放行。
 
 - 原生发布路线从 N2.3 完整任务合同继续。自举提速路线从完整负载分阶段归因开始。
+
+- N2.3 原生 Task 继续扩充结构体、枚举等名义载荷并完成全范围矩阵。

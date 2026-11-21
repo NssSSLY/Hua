@@ -3,6 +3,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <cstdlib>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 using namespace hua;using namespace std::chrono_literals;
 namespace {
 unsigned checks{},cases{};
@@ -35,6 +40,99 @@ void nested_and_races(){
         check(as_int(runtime.await(value,{}),{})==3,"completion/registration race");
         check(as_int(runtime.await(value,{}),{})==3,"already-completed await");runtime.finish();
     }
+}
+void discard_task_results() {
+    ++cases;
+    RuntimeContext context;
+    std::ostringstream output;
+    TaskRuntime runtime(context, output);
+    context.tasks = &runtime;
+    TaskResumeJob payload = [](RuntimeContext&, std::ostream& out) -> Routine<Value> {
+        auto items = managed<std::vector<Value>>();
+        for (int i = 0; i < 8; ++i) {
+            auto list = managed<ListData>();
+            list->element_type = "int";
+            list->values.push_back(number(i));
+            items->push_back(Value(ListValue{std::move(list), true}));
+        }
+        out << "child\\n";
+        co_return Value(SliceValue{items, 0, items->size(), true, "List<int>"});
+    };
+    auto start = [&] { return runtime.start_resumable(payload, "[]List<int>", {}); };
+    auto group = runtime.begin_group();
+    auto retained = start();
+    auto before = context.heap->allocated();
+    runtime.end_group(group, {});
+    check(context.heap->allocated() == before, "taskgroup makes no payload allocations");
+
+    auto first = runtime.await(retained, {});
+    auto& first_list = hua::get<ListValue>(cget<SliceValue>(first.data).storage->at(0).data);
+    first_list.data->values[0] = number(99);
+    auto second = runtime.await(retained, {});
+    auto& second_list = cget<ListValue>(cget<SliceValue>(second.data).storage->at(0).data);
+    check(as_int(second_list.data->values[0], {}) == 0, "await after join still delivers isolated copies");
+    check(output.str() == "child\\n", "taskgroup and repeated await emit once");
+
+    start();
+    before = context.heap->allocated();
+    runtime.finish();
+    check(context.heap->allocated() == before, "scope finish makes no payload allocations");
+    check(output.str() == "child\\nchild\\n", "scope finish delivers unobserved output");
+
+    // Complete both children before combining. race must discard a successful loser.
+    for (std::string_view op : {"all", "race"}) {
+        std::vector<Value> args{start(), start()};
+        for (const auto& arg : args) {
+            auto state = cget<TaskValue>(arg.data).data;
+            std::unique_lock lock(state->mutex);
+            check(state->changed.wait_for(lock, 5s, [&] { return state->finished; }),
+                  "both tasks completed before combination");
+        }
+        auto combined = task_combine(op, args, {}, &context);
+        auto value = runtime.await(combined, {});
+        const auto state = cget<TaskValue>(combined.data).data;
+        const auto length = cget<SliceValue>(value.data).length;
+        check(length == (op == "all" ? 2 : 8), "combined result correctly delivered");
+        // One Slice backing plus eight Lists per retained result, and all's outer Slice.
+        check(state->heap->allocated() == (op == "all" ? 19 : 9),
+              "only retained results allocate in combinator heap");
+        runtime.finish();
+    }
+
+    // Values outside the proven subset still go through the previous diagnostics.
+    auto invalid_group = runtime.begin_group();
+    runtime.start_resumable([](RuntimeContext&, std::ostream&) -> Routine<Value> {
+        co_return Value(VoidValue{});
+    }, "void", {});
+    bool rejected = false;
+    try { runtime.end_group(invalid_group, {}); }
+    catch (const Diagnostic& diagnostic) { rejected = diagnostic.code() == "E4003"; }
+    check(rejected, "an uncopyable result still fails at implicit join");
+}
+void completion_delivery() {
+    ++cases;
+    RuntimeContext context;
+    std::ostringstream output;
+    TaskRuntime runtime(context, output);
+    CompletionEvent early;
+    early.signal();
+    CompletionEvent pending;
+    std::atomic<unsigned> resumed{};
+    auto waiter = runtime.start_resumable([&](RuntimeContext&, std::ostream&) -> Routine<Value> {
+        co_await early;
+        co_await pending;
+        ++resumed;
+        co_return number(42);
+    }, "int", {});
+    // With one worker, running this producer proves the waiter released its worker.
+    auto producer = runtime.start_resumable([&](RuntimeContext&, std::ostream&) -> Routine<Value> {
+        pending.signal();
+        co_return number(1);
+    }, "int", {});
+    check(as_int(unwrap(runtime.await(producer, {}, 5s)), {}) == 1, "completion producer finished");
+    check(as_int(unwrap(runtime.await(waiter, {}, 5s)), {}) == 42 && resumed == 1,
+          "completion before and after suspension resumes once");
+    runtime.finish();
 }
 void limits(){
     ++cases;RuntimeContext c;std::ostringstream out;TaskRuntime runtime(c,out);c.tasks=&runtime;
@@ -87,6 +185,75 @@ void blocking_file_and_timeout(){
     auto usage=scope->usage();for(auto n:usage.used)check(n==0,"resource quota returned after cancel");
     runtime.finish();
 }
+#ifdef _WIN32
+void iocp_cancel_inflight() {
+    ++cases;
+    struct OwnedHandle {
+        HANDLE value=INVALID_HANDLE_VALUE;
+        ~OwnedHandle(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}
+        HANDLE release(){return std::exchange(value,INVALID_HANDLE_VALUE);}
+    };
+    const auto name=std::wstring(LR"(\\.\pipe\hua-n2-cancel-)")+std::to_wstring(GetCurrentProcessId());
+    OwnedHandle server{CreateNamedPipeW(name.c_str(),PIPE_ACCESS_INBOUND|FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,1,4096,4096,0,nullptr)};
+    check(server.value!=INVALID_HANDLE_VALUE,"create overlapped pipe for IOCP fixture");
+    OwnedHandle client{CreateFileW(name.c_str(),GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr)};
+    check(client.value!=INVALID_HANDLE_VALUE,"open pipe writer without sending data");
+
+    RuntimeContext context;
+    std::ostringstream out;
+    TaskRuntime runtime(context,out);
+    context.tasks=&runtime;
+    auto probe=std::make_shared<FileCompletionProbe>();
+    std::atomic<unsigned> submitted{},cancel_calls{},packets{},retired{};
+    std::atomic<bool> cancel_accepted{},release_packet{},packet_gate_timeout{};
+    std::atomic<unsigned long> packet_status{};
+    probe->pending=[&]{++submitted;};
+    probe->canceled=[&](bool accepted){cancel_accepted=accepted;++cancel_calls;};
+    probe->packet=[&](unsigned long error){
+        packet_status=error;
+        ++packets;
+        const auto deadline=Clock::now()+5s;
+        while(!release_packet && Clock::now()<deadline)std::this_thread::sleep_for(1ms);
+        if(!release_packet)packet_gate_timeout=true;
+    };
+    probe->retired=[&]{++retired;};
+    std::shared_ptr<FileScope> scope;
+    std::shared_ptr<FileData> retained;
+    auto child=runtime.start_resumable([&](RuntimeContext& c,std::ostream& output)->Routine<Value>{
+        scope=c.files;
+        auto file=unwrap(adopt_completion_file_for_test(*scope,server.release(),probe));
+        retained=cget<FileValue>(file.data).data;
+        co_return co_await invoke_resumable("$std$file$read",{file,number(32)},{},output,{},"",&c);
+    },"Result<Bytes?,std.file.IOFailure>",{});
+    const auto deadline=Clock::now()+5s;
+    while(submitted==0 && Clock::now()<deadline)std::this_thread::sleep_for(1ms);
+    const bool was_pending=submitted==1;
+    const bool requested=was_pending && as_bool(task_standard("cancel",{child},{},&context),{});
+    while(requested && (cancel_calls==0 || packets==0) && Clock::now()<deadline)
+        std::this_thread::sleep_for(1ms);
+    bool was_retained=false;
+    if(requested && packets==1 && cancel_calls==1){
+        const auto quota=scope->usage().used;
+        was_retained=!as_bool(task_standard("done",{child},{},&context),{}) && retired==0 &&
+            quota[std::size_t(resources::Metric::handles)]==1 &&
+            quota[std::size_t(resources::Metric::operations)]==1 &&
+            quota[std::size_t(resources::Metric::inflight_bytes)]==32 &&
+            retained->handle.snapshot().state==resources::Lifecycle::open;
+    }
+    release_packet=true;
+    if(packets==0)CloseHandle(client.release()); // unblock even a failed fixture setup
+    auto observed=runtime.await(child,{},5s);
+    check(was_pending && requested && cancel_accepted,"CancelIoEx accepted an actual pending read");
+    check(was_retained,"File and buffers retained while IOCP packet publication is held");
+    check(packet_status==ERROR_OPERATION_ABORTED && !packet_gate_timeout,"real canceled kernel completion delivered");
+    check(!cget<ResultValue>(observed.data).ok && show(observed).find("E4101")!=std::string::npos,"canceled Task observed");
+    check(submitted==1 && cancel_calls==1 && packets==1 && retired==1,"one submit, cancel, completion and retirement");
+    check(retained->handle.snapshot().state==resources::Lifecycle::closed,"File closed after completion");
+    for(auto n:scope->usage().used)check(n==0,"all IOCP operation quotas returned");
+    runtime.finish();
+}
+#endif
 void migration(){
     if(task_worker_count()<2)return;
     ++cases;RuntimeContext context;std::ostringstream out;TaskRuntime runtime(context,out);context.tasks=&runtime;
@@ -119,7 +286,11 @@ void migration(){
 }
 }
 int main(){try{
-    nested_and_races();limits();blocking_file_and_timeout();migration();
+    nested_and_races();discard_task_results();completion_delivery();limits();blocking_file_and_timeout();
+#ifdef _WIN32
+    iocp_cancel_inflight();
+#endif
+    migration();
     std::cout<<"D002-c continuation tests: "<<cases<<" cases, "<<checks<<" checks, "<<task_worker_count()<<" workers\n";return 0;
 }catch(const std::exception& e){
     if(auto p=std::getenv("HUA_TASK_WORKERS");p&&std::string_view(p)=="2"&&std::string_view(e.what()).find("HUA_TASK_WORKERS")!=std::string_view::npos){

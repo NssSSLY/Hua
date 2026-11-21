@@ -285,7 +285,7 @@ fn conditional(s mut State) Result<ast.NodeId> {
 }
 fn function(s mut State) Result<ast.NodeId> {
     let first = expect(s,"fn")?
-    if s.blocks != 0 { return err(unsupported(first)) }
+    if s.blocks != 0 && (!s.extended || s.functions == 0) { return err(unsupported(first)) }
     let name = expect(s,"identifier")?
     if s.data[s.pos].kind == "." || s.data[s.pos].kind == "<" { return err(unsupported(s.data[s.pos])) }
     let open = expect(s,"(")?
@@ -343,7 +343,7 @@ fn function(s mut State) Result<ast.NodeId> {
 }
 fn async_function(s mut State) Result<ast.NodeId> {
     let modifier = expect(s,"async")?
-    if s.blocks != 0 { return err(unsupported(modifier)) }
+    if s.blocks != 0 && s.functions == 0 { return err(unsupported(modifier)) }
     let id = function(s)?
     let old = ast.get(s.pool,id)?
     ast.replace(s.pool,id,ast.Payload.Function(ast.payload_text(old.payload)+" async"),ast.span(s.pool,s.source,modifier.start,old.span.end)?,old.children)?

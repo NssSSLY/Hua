@@ -23,7 +23,9 @@ struct State { seen map[int]Flow
     result Verification }
 struct Catalog { globals map[string]bool
     structures map[string]bool
-    functions map[string]bool }
+    functions map[string]bool
+    local_functions map[string]bool
+    lexical_names map[string]bool }
 fn error(image bc.Image, op bc.Instruction, text string) string {
     if op.site<0 || op.site>=list.len(image.sites) { return "E6002@1:1 C06 "+text }
     let s = unwrap(list.get(image.sites,op.site))
@@ -77,7 +79,7 @@ fn scalar(value bc.Scalar) bool {
     }
     return is_ok(json.as_float(unwrap(j)))
 }
-fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, returns []string) Result<void> {
+fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, returns []string, nested bool) Result<void> {
     let size = list.len(code.instructions)
     if size==0 || size>250000 || !small(code.name,false) { return err("E6002@1:1 C06 empty/oversized code") }
     var names = map[string]bool{}
@@ -91,7 +93,7 @@ fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, 
     }
     for op in list.snapshot(code.instructions) {
         let e = error(image,op,"invalid metadata")
-        if op.op<0 || op.op>40 || op.op==31 || op.op==39 { return err(error(image,op,"unsupported/unknown opcode")) }
+        if op.op<0 || op.op>40 || op.op==31 { return err(error(image,op,"unsupported/unknown opcode")) }
         if op.site<0 || op.site>=list.len(image.sites) || op.argument<0 || op.argument>4096 || op.target<0 || !small(op.text,true) || !(op.op==27 && op.type_name=="E4002") && !valid_type(c,op.type_name,0) || !scalar(op.constant) || len(op.names)>4096 || len(op.contextual)>4096 { return err(e) }
         if !rules.value_type_allowed(op.type_name,op.op != 2 && op.op != 35) { return err(e) }
         if op.op!=0 && (op.constant.kind!=0 || op.constant.text!="") { return err(error(image,op,"constant on non-constant instruction")) }
@@ -119,7 +121,8 @@ fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, 
         if op.op==5 && !alg.contains(["+","-","*","/","//","%","**","&","|","^","<<",">>","==","!=","<",">","<=",">=","&&","||"],op.text) { return err(e) }
         if op.op==15 && !alg.contains(["=","+=","-=","*=","/=","//=","%=","**="],op.text) { return err(e) }
         if op.op==19 && !has(c.structures,op.text) { return err(error(image,op,"unknown structure")) }
-        if (op.op==1 || op.op==12) && op.text!="_" && !has(names,op.text) && !has(c.globals,op.text) && !(op.op==1 && intrinsic(op.text)) { return err(error(image,op,"unknown binding/function")) }
+        if op.op==39 && !has(c.local_functions,op.text) { return err(error(image,op,"unknown local closure function")) }
+        if (op.op==1 || op.op==12) && op.text!="_" && !has(names,op.text) && !has(c.globals,op.text) && !(op.op==1 && (intrinsic(op.text) || (nested && has(c.lexical_names,op.text)))) { return err(error(image,op,"unknown binding/function")) }
         if op.op==27 && (op.type_name!="E4002" || op.text=="") { return err(error(image,op,"invalid literal failure")) }
     }
     return ok()
@@ -151,7 +154,7 @@ fn merge(s mut State, code bc.Code, pc int) Result<void> {
 }
 fn transition(s mut State, code bc.Code, op bc.Instruction) Result<bool> {
     let k = op.op
-    if alg.contains([0,1,16,19,32],k) { s.flow.stack += "v" }
+    if alg.contains([0,1,16,19,32,39],k) { s.flow.stack += "v" }
     else if alg.contains([2,3,35],k) { pop(s,false)? }
     else if alg.contains([4,20,37],k) { pop(s,false)?
         s.flow.stack += "v" }
@@ -211,8 +214,8 @@ fn transition(s mut State, code bc.Code, op bc.Instruction) Result<bool> {
     else { return err("unhandled opcode") }
     return ok(true)
 }
-fn verify_code(image bc.Image, catalog Catalog, code bc.Code, parameters []bc.Parameter, returns []string, result Verification) Result<Verification> {
-    metadata(image,catalog,code,parameters,returns)?
+fn verify_code(image bc.Image, catalog Catalog, code bc.Code, parameters []bc.Parameter, returns []string, nested bool, result Verification) Result<Verification> {
+    metadata(image,catalog,code,parameters,returns,nested)?
     var empty []int = []
     var s = State{seen:map[int]Flow{},queue:list.from_slice(empty),flow:Flow{stack:"",scopes:0,iterators:0},result:result}
     merge(s,code,0)?
@@ -243,9 +246,9 @@ pub fn verify(image bc.Image) Result<Verification> {
         nodes[site.node] = true
         if site.node==-1 {
             if site.origin!=-1 || site.role!="initializer" || site.start!=0 || site.end!=0 || site.line!=1 || site.column!=1 || site.module!=image.entry { return err("E6002@1:1 C06 invalid initializer site") }
-        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor"],site.role) && site.role!="async-body" { return err("E6002@1:1 C06 invalid source origin") }
+        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor"],site.role) && site.role!="async-body" && site.role!="local-function" { return err("E6002@1:1 C06 invalid source origin") }
     }
-    var c = Catalog{globals:map[string]bool{},structures:map[string]bool{},functions:map[string]bool{}}
+    var c = Catalog{globals:map[string]bool{},structures:map[string]bool{},functions:map[string]bool{},local_functions:map[string]bool{},lexical_names:map[string]bool{}}
     for st in list.snapshot(image.structures) {
         if !small(st.name,false) || has(c.structures,st.name) || st.site<0 || st.site>=list.len(image.sites) || len(st.fields)>4096 { return err("E6002@1:1 C06 invalid structure metadata") }
         c.structures[st.name] = true
@@ -254,7 +257,10 @@ pub fn verify(image bc.Image) Result<Verification> {
     for f in list.snapshot(image.functions) {
         if !small(f.name,false) || has(c.functions,f.name) || has(c.structures,f.name) || f.name!=f.code.name || f.site<0 || f.site>=list.len(image.sites) || len(f.parameters)>4096 || len(f.returns)>4096 { return err("E6002@1:1 C06 invalid function metadata") }
         c.functions[f.name] = true
-        c.globals[f.name] = true
+        if f.nested {
+            if f.published || f.name=="main" { return err("E6002@1:1 C06 invalid local function metadata") }
+            c.local_functions[f.name]=true
+        } else { c.globals[f.name] = true }
         # Preserve accepted hand-built images whose function has the initializer
         # name: the old name-based scan supplied those parameters to both codes.
         if f.name==image.initializer.name { initializer_parameters=f.parameters }
@@ -279,9 +285,20 @@ pub fn verify(image bc.Image) Result<Verification> {
         if op.op==2 { c.globals[op.text] = true }
         if op.op==35 { for n in op.names { c.globals[n] = true } }
     }
+    # This catalog checks logical name existence, as with ordinary Bind/Load.
+    # Lexical visibility and readonly capture proofs come from C03/C04.
+    if len(c.local_functions)>0 {
+        for f in list.snapshot(image.functions) {
+            for p in f.parameters { c.lexical_names[p.name]=true }
+            for op in list.snapshot(f.code.instructions) {
+                if op.op==2 { c.lexical_names[op.text]=true }
+                if op.op==35 || op.op==25 { for n in op.names { c.lexical_names[n]=true } }
+            }
+        }
+    }
     let zero = Verification{instructions:0,reachable:0,slots:0,work:0,max_stack:0,max_scopes:0,max_iterators:0}
-    var result = verify_code(image,c,image.initializer,initializer_parameters,[],zero)?
-    for f in list.snapshot(image.functions) { result = verify_code(image,c,f.code,f.parameters,f.returns,result)? }
+    var result = verify_code(image,c,image.initializer,initializer_parameters,[],false,zero)?
+    for f in list.snapshot(image.functions) { result = verify_code(image,c,f.code,f.parameters,f.returns,f.nested,result)? }
     if result.instructions!=image.instructions { return err("E6002@1:1 C06 instruction count mismatch") }
     return ok(result)
 }

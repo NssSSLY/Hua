@@ -84,7 +84,7 @@ static int run(const std::vector<std::string>& args){
                 const auto id=hua::get<std::int64_t>(n[0]->data),origin=hua::get<std::int64_t>(n[1]->data);const auto module=str(*s[0]),role=str(*s[1]);
                 if(!ids.insert(id).second)throw std::runtime_error("duplicate site identity");
                 if(id==-1){if(origin!=-1||role!="initializer"||module!=str(field(j,"entry"))||number(*n[2])||number(*n[3]))throw std::runtime_error("invalid initializer site");}
-                else if(id<0||id>=262144||origin<0||origin>=32768||(role!="source"&&role!="enum-layout"&&role!="enum-constructor"))throw std::runtime_error("invalid site origin");
+                else if(id<0||id>=262144||origin<0||origin>=32768||(role!="source"&&role!="enum-layout"&&role!="enum-constructor"&&role!="async-body"&&role!="local-function"))throw std::runtime_error("invalid site origin");
                 auto span=sources.at(module)->span(number(*n[2]),number(*n[3]));
                 if(span.line!=number(*n[4])||span.column!=number(*n[5]))throw std::runtime_error("invalid packed coordinates");sites.push_back(span);
             });
@@ -100,7 +100,13 @@ static int run(const std::vector<std::string>& args){
             auto name=str(field(*r,"name"));auto n=std::make_unique<hua::Node>(hua::NodeKind::Function,site(*r),name+(boolean(field(*r,"published"))?" pub":""));
             for(const auto& p:array(field(*r,"parameters"))){auto child=std::make_unique<hua::Node>(hua::NodeKind::Parameter,site(*p),str(field(*p,"name"))+(boolean(field(*p,"writable"))?" mut":""));const auto t=str(field(*p,"type_name"));if(!t.empty())child->add(std::make_unique<hua::Node>(hua::NodeKind::TypeName,site(*p),t));n->add(std::move(child));}
             if(!array(field(*r,"returns")).empty()){auto rs=std::make_unique<hua::Node>(hua::NodeKind::ReturnTypes,site(*r));for(const auto& t:array(field(*r,"returns")))rs->add(std::make_unique<hua::Node>(hua::NodeKind::TypeName,site(*r),str(*t)));n->add(std::move(rs));}
-            if(!model.functions.emplace(name,n.get()).second)throw std::runtime_error("duplicate function");model.return_writable[name]=boolean(field(*r,"writable"));model.mutating[name]=false;declarations.push_back(std::move(n));
+            if(!model.functions.emplace(name,n.get()).second)throw std::runtime_error("duplicate function");model.return_writable[name]=boolean(field(*r,"writable"));model.mutating[name]=false;
+            const auto& record=hua::get<J::Object>(r->data);
+            if(record.contains("nested")&&boolean(field(*r,"nested"))){
+                if(name=="main"||boolean(field(*r,"published")))throw std::runtime_error("invalid local function");
+                model.nested[n.get()]=true;
+            }
+            declarations.push_back(std::move(n));
         }
         std::size_t count=0;
         auto read_code=[&](const J& j){
@@ -110,7 +116,7 @@ static int run(const std::vector<std::string>& args){
                 const auto expected=number(field(j,"count"));if(!expected||expected>250000||expected>1000000-count)throw std::runtime_error("packed instruction budget");
                 const auto actual=blocks(field(j,"blocks"),expected,[&](const J& r){
                     row(r,{"n","s","a","c"},6,3);const auto& n=array(field(r,"n"));const auto& s=array(field(r,"s"));
-                    hua::Instruction op{};const auto tag=number(*n[0]);if(tag>40||tag==31||tag==39)throw std::runtime_error("unknown/excluded opcode");
+                    hua::Instruction op{};const auto tag=number(*n[0]);if(tag>40||tag==31)throw std::runtime_error("unknown/excluded opcode");
                     op.op=static_cast<hua::Op>(tag);op.span=sites.at(number(*n[1]));op.argument=number(*n[2]);op.target=number(*n[3]);const auto flag=number(*n[4]);if(flag>1||op.argument>4096)throw std::runtime_error("invalid packed operand");op.flag=flag;
                     op.constant=scalar(number(*n[5]),str(*s[2]));op.text=str(*s[0]);op.type=str(*s[1]);
                     if(array(field(r,"a")).size()>4096||array(field(r,"c")).size()>4096)throw std::runtime_error("packed vector budget");

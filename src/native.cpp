@@ -256,9 +256,12 @@ struct Emitter {
                (hua::numeric_spec(type) && type != "@integer");
     }
 
+    std::map<std::pair<std::string,unsigned>, bool> task_record_cache;
+    std::ostringstream task_record_decls, task_record_defs;
+
     bool task_payload(const std::string& type, unsigned depth = 0) {
         if (depth > 64) return false;
-        if (task_scalar(type)) return true;
+        if (task_scalar(type) || type == "Bytes") return true;
         if (is_sequence(type)) return task_payload(element_type(type), depth + 1);
         if (type.starts_with("List<")) {
             const auto parts = type_arguments(type, "List");
@@ -269,6 +272,30 @@ struct Emitter {
             return parts.size() == 2 &&
                    (parts[0] == "int" || parts[0] == "bool" || parts[0] == "string") &&
                    task_payload(parts[1], depth + 1);
+        }
+        if (type.size() > 1 && type.back() == '?')
+            return task_payload(type.substr(0, type.size() - 1), depth + 1);
+        if (type.starts_with("Result<")) {
+            const auto parts = type_arguments(type, "Result");
+            return (parts.size() == 1 || parts.size() == 2) &&
+                   (parts[0] == "void" || task_payload(parts[0], depth + 1)) &&
+                   (parts.size() == 1 || task_payload(parts[1], depth + 1));
+        }
+        if ((is_struct(type) || is_enum(type)) && usable_structs.contains(type)) {
+            const auto key=std::pair{type,depth};
+            if(auto it=task_record_cache.find(key);it!=task_record_cache.end())return it->second;
+            bool safe=true;
+            if(is_enum(type)) {
+                for(const auto& [variant,fields]:enum_info(type).fields)
+                    for(const auto& [field,t]:fields)
+                        if(t!="void" && !task_payload(t,depth+1))safe=false;
+            }else{
+                for(const auto& field:m.structures.at(type)->children)
+                    if(field->kind==N::Field && !task_payload(type_name(*field->children[0]),depth+1))
+                        safe=false;
+            }
+            task_record_cache.emplace(key,safe);
+            return safe;
         }
         return false;
     }
@@ -1027,6 +1054,50 @@ struct Emitter {
     }
     std::set<std::string> located_records;
     std::set<std::string> module_bindings;
+    std::map<std::string, const Node*> task_module_roots;
+
+    // Include every reachable declaration, even in untaken branches or nested
+    // functions. An unresolved call or callback can read any module slot.
+    std::set<std::string> task_module_reads(const Node& root) const {
+        std::set<std::string> slots;
+        std::set<const Node*> visited;
+        std::vector<const Node*> pending{&root};
+        while (!pending.empty()) {
+            const auto* node = pending.back();
+            pending.pop_back();
+            if (!visited.insert(node).second) continue;
+            if (node->kind == N::Name && module_bindings.contains(node->text))
+                slots.insert(node->text);
+            if (node->kind == N::Call) {
+                const auto* callee = node->children.front().get();
+                const auto type = m.types.find(callee);
+                if (type == m.types.end()) return module_bindings;
+                if (type->second.starts_with("fn:")) {
+                    const auto target = m.functions.find(type->second.substr(3));
+                    if (target == m.functions.end() || callee->kind != N::Name)
+                        return module_bindings;
+                    pending.push_back(target->second);
+                } else if (type->second.starts_with("builtin:")) {
+                    const auto& builtin = builtin_info(type->second.substr(8));
+                    if (builtin.standard && builtin.standard->callback) return module_bindings;
+                } else {
+                    return module_bindings;
+                }
+            }
+            // task_start takes a callable operand instead of a source-level call.
+            // Following all statically named function values also covers it.
+            if (node->kind == N::Name) {
+                const auto type = m.types.find(node);
+                if (type != m.types.end() && type->second.starts_with("fn:")) {
+                    const auto target = m.functions.find(type->second.substr(3));
+                    if (target == m.functions.end()) return module_bindings;
+                    pending.push_back(target->second);
+                }
+            }
+            for (const auto& child : node->children) pending.push_back(child.get());
+        }
+        return slots;
+    }
     std::unordered_set<const Node*> stable_local_fields;
     void plan_locations(const Node& n,const Node* parent=nullptr,const Node* function=nullptr){
         if(n.kind==N::Function)function=&n;
@@ -1416,7 +1487,9 @@ struct Emitter {
         std::string body;
         if(!module_bindings.empty()){
             if(!captures.empty())captures+=",";
-            captures+="native_task_module=native_snapshot_module()";
+            const auto snapshot = mangle("native_snapshot_", sig.name);
+            task_module_roots.try_emplace(snapshot, function);
+            captures+="native_task_module="+snapshot+"()";
             body="hn::TaskModuleScope native_task_scope(&native_task_module);";
         }
         body+=sig.result.empty()?invoke+";return hn::Value{};":"return hn::to_value("+invoke+");";
@@ -2429,6 +2502,7 @@ struct Emitter {
                 structs_ready=false;}}
         for(const auto& name:names){if(usable.contains(name))continue;try{structs_ready=true;usable_structs=usable;for(const auto& t:field_types(name))(void)ct(t,*m.structures.at(name));}catch(const NativeUnsupported& u){if(survey)++missing["struct "+name+": "+u.what];}structs_ready=false;}
         structs_ready=true;usable_structs=usable;
+        task_record_cache.clear();
         for(const auto& name:names)if(usable.contains(name)){
             o<<"struct "<<mangle(is_enum(name)?"E_":"S_",name)<<";\n";
             if(located_records.contains(name))o<<"struct "<<mangle("SB_",name)<<";\n";
@@ -2524,6 +2598,47 @@ struct Emitter {
             o<<"inline "<<cpp<<" capture_value("<<cpp<<" v){\n"<<readonly<<"    return v;\n}\n";
         return o.str();
     }
+    void emit_task_record(const std::string& type){
+        const auto& declaration=*m.structures.at(type);
+        const bool sum=is_enum(type);
+        const auto cpp=mangle(sum?"E_":"S_",type);
+        task_record_decls<<"inline "<<cpp<<" task_input(const "<<cpp<<"&);\n"
+                         <<"template<> struct From<"<<cpp<<">{static "<<cpp<<" get(const Value&);};\n";
+        std::string snapshot, unpack;
+        auto field=[&](const std::string& name,const std::string& t){
+            const auto dst=field_access("out",type,name),src=field_access("input",type,name);
+            snapshot+="    "+dst+"=task_input("+src+");\n";
+            unpack+="    "+dst+"=from_value<"+ct(t,declaration)+">(task_record_field(input,"+quoted(name)+"));\n";
+        };
+        if(sum){
+            const auto& variants=enum_info(type);
+            unpack+="    const auto tag=task_record_field(input,\"$case\");\n"
+                    "    const auto* label=hua::string_data(&tag.data);\n"
+                    "    if(!label)bad_unbox(TypeName<"+cpp+">::get().c_str());\n";
+            snapshot+="    out.tag=input.tag;\n";
+            for(std::size_t i=0;i<variants.variants.size();++i){
+                const auto& variant=variants.variants[i];
+                const auto index=std::to_string(i);
+                snapshot+="    if(input.tag=="+index+"){\n";
+                unpack+="    if(*label=="+quoted(variant)+"){out.tag="+index+";\n";
+                for(const auto& [name,t]:variants.fields.at(variant))
+                    if(t!="void")field(name,t);
+                snapshot+="    return out;}\n";
+                unpack+="    return out;}\n";
+            }
+            snapshot+="    bad_unbox(TypeName<"+cpp+">::get().c_str());\n";
+            unpack+="    bad_unbox(TypeName<"+cpp+">::get().c_str());\n";
+        }else{
+            for(const auto& f:declaration.children)
+                if(f->kind==N::Field)field(f->text,type_name(*f->children[0]));
+            snapshot+="    return out;\n";
+            unpack+="    return out;\n";
+        }
+        task_record_defs<<"inline "<<cpp<<" task_input(const "<<cpp<<"& input){\n    "<<cpp<<" out{};\n"
+                        <<snapshot<<"}\n"
+                        <<"inline "<<cpp<<" From<"<<cpp<<">::get(const Value& input){\n    "<<cpp<<" out{};\n"
+                        <<unpack<<"}\n";
+    }
     std::set<std::string> usable_structs;bool structs_ready{};std::vector<const Node*> survey_functions;
     std::string run(){
         collect_inferred_returns();
@@ -2543,7 +2658,8 @@ struct Emitter {
         plan_locations(tree);
         const auto struct_code=structs();
         // The module body executes in source order, before an optional entry function.
-        std::string global_declarations,global_initializers;
+        std::string global_declarations;
+        std::vector<std::string> global_order;
         scopes.clear();scopes.emplace_back();result_type.clear();
         for(const auto& c:tree.children){
             if(c->kind==N::Function||c->kind==N::Struct||c->kind==N::Const||c->kind==N::Import)continue;
@@ -2554,8 +2670,7 @@ struct Emitter {
                     line(slot+"="+binding_value(*c,t,coerce(expr(init),ty(init),t,*c))+";");
                     const auto type=ct(t,*c);
                     global_declarations+="    std::conditional_t<NATIVE_TASKS,std::optional<"+type+">,"+type+"> "+cpp+"{};\n";
-                    if(!global_initializers.empty())global_initializers+=",";
-                    global_initializers+="hn::task_module_input("+slot+")";
+                    global_order.push_back(c->text);
                     globals[c->text]=Local{slot,t};
                 }else statement(*c);
             }catch(const NativeUnsupported& u){if(!survey)throw;++missing["global: "+u.what];}
@@ -2599,13 +2714,29 @@ struct Emitter {
             o<<"0};\n";
         }
         o<<interface_layouts()<<struct_code;
+        if(uses_tasks){
+            for(const auto& name:usable_structs)
+                if(task_payload(name))emit_task_record(name);
+            o<<task_record_decls.str()<<task_record_defs.str();
+        }
         if(!global_declarations.empty()){
             o<<"struct NativeModule{\n"<<global_declarations<<"};\n";
             o<<"static NativeModule& native_module(){\n";
             if(uses_tasks)o<<"    return *static_cast<NativeModule*>(hn::current_state().module_data);\n";
             else o<<"    static NativeModule module;return module;\n";
             o<<"}\n";
-            if(uses_tasks)o<<"static NativeModule native_snapshot_module(){return NativeModule{"<<global_initializers<<"};}\n";
+            for (const auto& [snapshot, root] : task_module_roots) {
+                const auto slots = task_module_reads(*root);
+                o << "static NativeModule " << snapshot << "(){return NativeModule{";
+                for (std::size_t i = 0; i < global_order.size(); ++i) {
+                    if (i) o << ",";
+                    if (slots.contains(global_order[i]))
+                        o << "hn::task_module_input(native_module()." << mangle("g_", global_order[i]) << ")";
+                    else
+                        o << "std::nullopt";
+                }
+                o << "};}\n";
+            }
         }
         o<<closure_layouts.str();
         if(!task_closures.empty())o<<closure_snapshots.str();

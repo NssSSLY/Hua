@@ -1,0 +1,14 @@
+import std.bytes as bytes
+async fn inspect(input Result<Bytes>, fallback int?) Result<int?> {
+    if is_ok(input) {
+        return ok(bytes.len(unwrap(input)))
+    }
+    if is_some(fallback) { return ok(fallback) }
+    return err(unwrap_err(input))
+}
+fn main() {
+    let data Result<Bytes> = ok(bytes.from_text("hua"))
+    let missing Result<Bytes> = err("missing")
+    let absent int? = nil
+    print(await inspect(data,absent),await inspect(missing,7),await inspect(missing,absent))
+}

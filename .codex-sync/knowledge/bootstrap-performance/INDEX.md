@@ -1,5 +1,37 @@
 # Hua自举性能项目记忆索引
 
+## Windows N4.2D 至 N4.4（2026-11-21）
+
+[完整入口、归档一致性和代际验收](runs/2026-11-21-n4-full-entries.md)。
+
+## Windows N4.2B／N4.2C 原生词法器（2026-11-21）
+
+[容器、Result、四路径差分与切片测量](runs/2026-11-21-n4-lexer.md)。
+
+## Windows N4.2A 结构体、字符串与模块初始化（2026-11-20）
+
+[C3 归档及三路径差分](runs/2026-11-20-n4-records.md)。
+
+## Windows N4.0／N4.1 首阶段（2026-11-20）
+
+[种子、差分、生成规则变更和真实依赖盘点](runs/2026-11-20-n4-scalar.md)。
+
+## Windows N2 整体验收（2026-11-20）
+
+[复验、性能和代际产物](runs/2026-11-20-n2-final.md)。
+
+## Hua 自举普通局部闭包（2026-11-20）
+
+[同源差分、无源码归档和自举检查](runs/2026-11-20-n2-selfhost-closure.md)。
+
+## Windows N2 快照、完成投递及载荷（2026-11-20）
+
+[本机验收与对照](runs/2026-11-20-n2-followup.md)。
+
+## Windows N2 Task 收拢优化（2026-11-20）
+
+[实现、运行身份与 A/B](runs/2026-11-20-n2-task-join.md)。大结果收拢的 Windows 原生端到端耗时下降 49.6%，HUAB 下降 35.1%。
+
 ## Windows N2 Task 控制、多 worker 与 IOCP（2026-11-18）
 
 [本机回归、对照和自举验收](runs/2026-11-18-n2-windows-workers-iocp.md)。

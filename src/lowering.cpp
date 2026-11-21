@@ -31,6 +31,7 @@ struct Lower {
   std::map<std::string, std::string> instances;
   std::vector<NodePtr> generated;
   std::vector<std::map<std::string, std::string>> names, types;
+  std::set<std::string> recursive_async;
   std::string unique(const std::string &name) {
     return "$local" + std::to_string(++serial) + "$" + name;
   }
@@ -106,7 +107,7 @@ struct Lower {
       n.children.erase(n.children.begin());
     }
   }
-  void lexical(Node &n, bool top = false) {
+  void lexical(Node &n, bool top = false, bool async_operand = false) {
     if (n.kind == N::Program || n.kind == N::Block) {
       names.emplace_back();
       types.emplace_back();
@@ -150,6 +151,12 @@ struct Lower {
     }
     if (n.kind == N::Function) {
       auto old = declared_name(n);
+      std::string async_alias, async_body;
+      if (!top && old.starts_with("$async$")) {
+        const auto separator = old.find('$', 7);
+        if (separator != std::string::npos)
+          async_alias = old.substr(separator + 1);
+      }
       if (!top) {
         auto replacement = unique(old);
         names.back()[old] = replacement;
@@ -157,11 +164,18 @@ struct Lower {
       }
       names.emplace_back();
       types.emplace_back();
+      if (!async_alias.empty()) {
+        async_body = declared_name(n);
+        names.back()[async_alias] = async_body;
+        recursive_async.insert(async_body);
+      }
       for (const auto &c : n.children)
         if (c->kind == N::Parameter)
           names.back()[declared_name(*c)] = declared_name(*c);
       for (auto &c : n.children)
         lexical(*c);
+      if (!async_body.empty())
+        recursive_async.erase(async_body);
       names.pop_back();
       types.pop_back();
       return;
@@ -178,8 +192,21 @@ struct Lower {
       n.text.clear();
       return;
     }
-    if (n.kind == N::Name)
+    if (n.kind == N::Call) {
+      const bool launch = n.children[0]->text == "$core$task_start";
+      for (std::size_t i = 0; i < n.children.size(); ++i)
+        lexical(*n.children[i], false, i == 0 || (launch && i == 1));
+      const auto& callee = *n.children[0];
+      if (callee.kind == N::Name && recursive_async.contains(callee.text))
+        n.children.insert(n.children.begin(),
+                          std::make_unique<Node>(N::Name, callee.span, "$core$task_start"));
+      return;
+    }
+    if (n.kind == N::Name) {
       n.text = resolve(n.text, names);
+      if (!async_operand && recursive_async.contains(n.text))
+        throw Diagnostic("E3008", n.span, "local async self reference requires a direct call");
+    }
     if (n.kind == N::TypeName || n.kind == N::StructLiteral)
       n.text = resolve(n.text, types);
     for (auto &c : n.children)

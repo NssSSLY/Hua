@@ -3,6 +3,29 @@ import std.strings as strings
 import std.list as list
 import std.alg as alg
 pub fn cut(t string, start int, end int) string { return unwrap(strings.slice(t,start,end)) }
+pub fn integer_literal(text string, negative bool) Result<string> {
+    var t = strings.replace(text,"_","")
+    var base = 10
+    if strings.starts_with(t,"0x") { base = 16
+        t = cut(t,2,len(t)) }
+    else if strings.starts_with(t,"0b") { base = 2
+        t = cut(t,2,len(t)) }
+    else if strings.starts_with(t,"0o") { base = 8
+        t = cut(t,2,len(t)) }
+    if len(t)==0 { return err("integer literal is outside signed int64 range") }
+    let minimum = int("-9223372036854775808")
+    var limit = -9223372036854775807
+    if negative { limit = minimum }
+    # 在负区间累积，避免 INT64_MIN 的绝对值和检查本身溢出。
+    var value = 0
+    for i in 0..len(t) {
+        let digit = strings.index("0123456789abcdef",strings.lower_ascii(cut(t,i,i+1)))
+        if digit<0 || digit>=base || value < (limit+digit+base-1)//base { return err("integer literal is outside signed int64 range") }
+        value = value*base-digit
+    }
+    if negative { return ok(str(value)) }
+    return ok(str(-value))
+}
 pub fn arguments(t string, name string) []string {
     var empty []string = []
     if !strings.starts_with(t,name+"<") || !strings.ends_with(t,">") { return empty }
@@ -98,18 +121,40 @@ pub fn shared(t string) bool {
     return strings.starts_with(t,"[") || strings.starts_with(t,"map<") || strings.starts_with(t,"Result<") || strings.starts_with(t,"List<") || t == "Buffer"
 }
 
+# C03 gives local declarations the form <module>#s<scope>:<name>.
+pub fn lexical_target(target string) bool {
+    if !strings.contains(target,":") { return false }
+    let pieces = strings.split(target,"#")
+    if len(pieces) < 2 { return false }
+    let identity = pieces[len(pieces)-1]
+    return strings.starts_with(identity,"s") && strings.contains(identity,":")
+}
+
 # Restrict this profile to data whose elements can be snapshotted recursively.
-pub fn task_payload(t string, depth int) bool {
+pub fn task_payload(t string, depth int, shapes map[string][]string, active map[string]bool) bool {
     if depth > 64 { return false }
-    if category(t) != "" || t == "bool" || t == "string" { return true }
-    if strings.starts_with(t,"[") { return task_payload(element(t),depth+1) }
+    if category(t) != "" || t == "bool" || t == "string" || t == "Bytes" { return true }
+    if strings.starts_with(t,"[") { return task_payload(element(t),depth+1,shapes,active) }
     if strings.starts_with(t,"List<") {
         let ts = arguments(t,"List")
-        return len(ts) == 1 && task_payload(ts[0],depth+1)
+        return len(ts) == 1 && task_payload(ts[0],depth+1,shapes,active)
     }
     if strings.starts_with(t,"map<") {
         let ts = arguments(t,"map")
-        return len(ts) == 2 && alg.contains(["int","bool","string"],ts[0]) && task_payload(ts[1],depth+1)
+        return len(ts) == 2 && alg.contains(["int","bool","string"],ts[0]) && task_payload(ts[1],depth+1,shapes,active)
+    }
+    if strings.ends_with(t,"?") { return task_payload(optional(t),depth+1,shapes,active) }
+    if strings.starts_with(t,"Result<") {
+        let ts = arguments(t,"Result")
+        return len(ts) == 2 && (ts[0] == "void" || task_payload(ts[0],depth+1,shapes,active)) && task_payload(ts[1],depth+1,shapes,active)
+    }
+    if has(shapes,t) && !has(active,t) {
+        var path=clone(active)
+        path[t]=true
+        for item in unwrap(shapes[t]) {
+            if !task_payload(item,depth+1,shapes,path) { return false }
+        }
+        return true
     }
     return false
 }

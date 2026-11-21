@@ -42,6 +42,7 @@ pub struct Structure { name string
 pub struct Function { name string
     site int
     published bool
+    nested bool
     writable bool
     parameters []Parameter
     returns []string
@@ -62,7 +63,8 @@ struct State { core lower.Core
     depth int
     loops List<Loop>
     sites map[int]int
-    published map[string]bool }
+    published map[string]bool
+    functions List<int> }
 pub fn nil_scalar() Scalar { return Scalar{kind:0,text:""} }
 pub fn get(c lower.Core, id int) lower.Node { return unwrap(list.get(c.nodes,id)) }
 pub fn name(n lower.Node) string { return strings.split(n.text," ")[0] }
@@ -91,29 +93,6 @@ pub fn numeric(c lower.Core, id int) bool {
     return n.kind=="Integer" || n.kind=="Float" || (n.kind=="Unary" && (n.text=="+" || n.text=="-") && numeric(c,n.children[0]))
 }
 pub fn contextual(c lower.Core, id int) bool { return get(c,id).kind=="Array" || numeric(c,id) }
-fn integer(text string, negative bool) Result<string> {
-    var t = strings.replace(text,"_","")
-    var base = 10
-    if strings.starts_with(t,"0x") { base = 16
-        t = rules.cut(t,2,len(t)) }
-    else if strings.starts_with(t,"0b") { base = 2
-        t = rules.cut(t,2,len(t)) }
-    else if strings.starts_with(t,"0o") { base = 8
-        t = rules.cut(t,2,len(t)) }
-    if len(t)==0 { return err("integer literal is outside signed int64 range") }
-    let minimum = int("-9223372036854775808")
-    var limit = -9223372036854775807
-    if negative { limit = minimum }
-    # 在负区间累积，避免 INT64_MIN 的绝对值和检查本身溢出。
-    var value = 0
-    for i in 0..len(t) {
-        let digit = strings.index("0123456789abcdef",strings.lower_ascii(rules.cut(t,i,i+1)))
-        if digit<0 || digit>=base || value < (limit+digit+base-1)//base { return err("integer literal is outside signed int64 range") }
-        value = value*base-digit
-    }
-    if negative { return ok(str(value)) }
-    return ok(str(-value))
-}
 fn floating(text string) Result<string> {
     var t = strings.replace(text,"_","")
     # JSON 数值读取是宿主标量原语，不调用前端；规范化前导零以匹配 Hua literal。
@@ -133,11 +112,11 @@ pub fn scalar(c lower.Core, id int) Result<Scalar> {
     if n.kind=="Nil" || n.kind=="Omitted" { return ok(nil_scalar()) }
     if n.kind=="String" { return ok(Scalar{kind:4,text:n.text}) }
     if n.kind=="Boolean" { return ok(Scalar{kind:1,text:n.text}) }
-    if n.kind=="Integer" { return ok(Scalar{kind:2,text:integer(n.text,false)?}) }
+    if n.kind=="Integer" { return ok(Scalar{kind:2,text:rules.integer_literal(n.text,false)?}) }
     if n.kind=="Float" { return ok(Scalar{kind:3,text:floating(n.text)?}) }
     if n.kind=="Unary" && (n.text=="+" || n.text=="-") {
         let child = get(c,n.children[0])
-        if n.text=="-" && child.kind=="Integer" { return ok(Scalar{kind:2,text:integer(child.text,true)?}) }
+        if n.text=="-" && child.kind=="Integer" { return ok(Scalar{kind:2,text:rules.integer_literal(child.text,true)?}) }
         var value = scalar(c,n.children[0])?
         if n.text=="-" {
             if value.kind==2 {
@@ -396,7 +375,12 @@ fn statement(s mut State, id int) Result<void> {
     let n = get(s.core,id)
     let k = n.kind
     if k=="Block" { return block(s,id,true) }
-    if k=="Let" || k=="Var" {
+    if k=="Function" {
+        if n.role!="local-function" { return err(fail(n,"expected local function")) }
+        list.append(s.functions,id)?
+        simple(s,n,39,name(n))?
+        emit(s,n,2,name(n),n.type_name,0,false,nil_scalar(),[],[false])?
+    } else if k=="Let" || k=="Var" {
         expression(s,n.children[len(n.children)-1])?
         emit(s,n,2,n.text,n.type_name,0,k=="Var",nil_scalar(),[],[contextual(s.core,n.children[len(n.children)-1])])?
     } else if k=="MultiBinding" {
@@ -498,13 +482,14 @@ pub fn compile(model types.Model) Result<Image> {
     return generate_verified(c,model)
 }
 fn generate_verified(c lower.Core, model types.Model) Result<Image> {
+    let empty_functions []int = []
     var ops []Instruction = []
     var sites []Site = []
     var structures []Structure = []
     var functions []Function = []
     var loops []Loop = []
     var initial = Code{name:"<initialize>",instructions:list.from_slice(ops)}
-    var s = State{core:c,image:Image{entry:c.entry,sites:list.from_slice(sites),structures:list.from_slice(structures),functions:list.from_slice(functions),initializer:initial,instructions:0,work:0},code:initial,depth:0,loops:list.from_slice(loops),sites:map[int]int{},published:map[string]bool{}}
+    var s = State{core:c,image:Image{entry:c.entry,sites:list.from_slice(sites),structures:list.from_slice(structures),functions:list.from_slice(functions),initializer:initial,instructions:0,work:0},code:initial,depth:0,loops:list.from_slice(loops),sites:map[int]int{},published:map[string]bool{},functions:list.from_slice(empty_functions)}
     for symbol in list.snapshot(model.graph.symbols) { s.published[symbol.module+":"+str(symbol.node)] = symbol.published }
     # 布局先于匹配生成；声明按 C03 初始化/源码次序登记。
     for init in list.snapshot(c.initialization) {
@@ -529,8 +514,12 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
     simple(s,origin,22,"")?
     s.image.initializer = s.code
     for init in list.snapshot(c.initialization) { for id in init.roots {
-        let n = get(c,id)
-        if n.kind!="Function" { continue }
+        if get(c,id).kind=="Function" { list.append(s.functions,id)? }
+    } }
+    var next_function=0
+    while next_function<list.len(s.functions) {
+        let n=get(c,list.get(s.functions,next_function)?)
+        next_function+=1
         s.code = Code{name:name(n),instructions:list.from_slice(ops)}
         s.depth = 0
         var ps []Parameter = []
@@ -549,7 +538,7 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
         block(s,n.children[len(n.children)-1],false)?
         constant(s,n,nil_scalar())?
         simple(s,n,22,"")?
-        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
-    } }
+        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),nested:n.role=="local-function",writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+    }
     return ok(s.image)
 }

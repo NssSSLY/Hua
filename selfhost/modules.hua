@@ -377,6 +377,7 @@ fn walk(g mut Graph, e mut Environment, id ast.NodeId, top bool) Result<void> {
         for child in n.children { walk(g,e,child,false)? }
         list.pop(e.scopes)? }
     else if k == "Function" {
+        if !top { define(g,e,n,declared(text),"Function")? }
         let signature = ast.get(e.pool,n.children[0])?
         # Types are resolved before value parameters enter scope.
         for child in signature.children {

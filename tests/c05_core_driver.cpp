@@ -66,7 +66,7 @@ static int run(const std::vector<std::string>& args){
             auto* node=n.get();const auto type=str(field(r,"type_name"));
             if(!type.empty())model.types[node]=type;
             model.writable[node]=hua::get<bool>(field(r,"writable").data);
-            if(kind==hua::NodeKind::Function){auto name=hua::declared_name(*node);if(!model.functions.emplace(name,node).second)throw std::runtime_error("duplicate core function");model.return_writable[name]=model.writable[node];model.mutating[name]=false;}
+            if(kind==hua::NodeKind::Function){auto name=hua::declared_name(*node);if(!model.functions.emplace(name,node).second)throw std::runtime_error("duplicate core function");model.return_writable[name]=model.writable[node];model.mutating[name]=false;if(str(field(r,"role"))=="local-function")model.nested[node]=true;}
             if(kind==hua::NodeKind::Struct)if(!model.structures.emplace(hua::declared_name(*node),node).second)throw std::runtime_error("duplicate core structure");
             nodes.push_back(std::move(n));raw.push_back(node);
         }

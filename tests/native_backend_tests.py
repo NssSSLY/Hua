@@ -1000,6 +1000,38 @@ fn main() {
     print(await job, local[0], setting[0])
 }
 ''')
+case('native_task_module_transitive_reads', '''import std.task as task
+var setting = [5,6]
+let unrelated = [7,8]
+fn read_setting() int { return setting[0] }
+fn launch_nested() int { return await spawn read_setting() }
+fn main() {
+    let job = spawn launch_nested()
+    setting[0] = 90
+    print(await job, setting[0], unrelated[0])
+}
+''')
+case('native_task_module_indirect_call', '''var setting = [5,6]
+fn read_setting() int { return setting[0] }
+fn constant() int { return 17 }
+fn select(first bool) {
+    if first { return read_setting }
+    return constant
+}
+fn work() int { return select(true)() }
+fn main() {
+    let job = spawn work()
+    setting[0] = 90
+    print(await job, setting[0])
+}
+''')
+case('native_task_nominal_values', (pathlib.Path(__file__).parent / 'fixtures/n2-task-records.hua').read_text(encoding='utf-8'))
+case('native_task_local_async_recursive', (pathlib.Path(__file__).parent / 'fixtures/n2-task-local-async.hua').read_text(encoding='utf-8'))
+reject('native_task_enum_buffer_branch', '''enum Box { Plain(int), Complex(Buffer) }
+fn take(x Box) int { return 1 }
+fn main() { print(await spawn take(Box.Plain(1))) }
+''')
+case('native_task_value_wrappers', (pathlib.Path(__file__).parent / 'fixtures/n2-task-value-wrappers.hua').read_text(encoding='utf-8'))
 case('native_task_defer_group_timeout', '''import std.task as task
 fn done(value int) {
     task.sleep(1)

@@ -154,10 +154,10 @@
         "match/variant payload bindings",
         "multi-return/binding/assignment",
         "defer call and Result propagation",
-        "top-level async fn and pub async fn, function-scope spawn, await and taskgroup, Task<T> syntax"
+        "top-level, pub and local async fn, function-scope spawn, await and taskgroup, Task<T> syntax"
       ],
       "excluded": [
-        "interface/user generics/method/nested declarations",
+        "interface/user generics/method/nested struct declarations",
         "parallel/SIMD/unsafe/attributes/ptr/ref",
         "catch/structured Error/external modules"
       ],
@@ -242,7 +242,7 @@
       "async entry and async arguments or results outside the Task data profile",
       "non-decimal or out-of-signed64 integer match patterns"
     ],
-    "task_data": "Top-level async functions only. Readonly inputs and results may contain numeric, bool or string leaves, slices, fixed arrays, List and map, with at most 64 nested containers. Results also allow void. A call yields Task<T>, and await yields T.",
+    "task_data": "Top-level and local async functions are supported. A local declaration can capture compatible values and call itself directly, including under spawn. Using the local async function as a value inside its own body is rejected, as is async main in the bootstrap compiler. Readonly inputs, captures and results may contain numeric, bool, string or Bytes leaves, slices, fixed arrays, List, map, Optional, Result, and acyclic named structs and enums whose fields and variant payloads all qualify. Compound nesting is limited to 64. Task and Result returns may use void in their success position. A call yields Task<T>, and await yields T.",
     "artifact": "typed facts consumed by C05-L1 / C06-BC1 / C07-HUAB1",
     "array_extent": "Source grammar: 0 or [1-9][0-9]* only; no leading zeroes, separators or base prefixes. Legacy valid HUAB metadata is reader-only compatibility; extent 0..1000000.",
     "void_contexts": {
@@ -271,7 +271,7 @@
     "depth": 64,
     "input": "C04-T1 accepted closure",
     "representation": "typed VM core tree; ordered children, logical symbols, flattened signatures, Hua enum layout/constructors; no instructions",
-    "captures": "none: SB1 rejects nested declarations",
+    "captures": "extended C04 resolves local functions by lexical identity and checks readonly captures; C06 emits Closure and C07 marks nested function metadata",
     "failure": "no input execution; C01 exit/publication unchanged",
     "artifact": "non-executable core consumed by C06-BC1; C07-HUAB1 encodes complete HUAB6/7/17"
   },
@@ -330,8 +330,7 @@
       "DEFER"
     ],
     "excluded_opcodes": [
-      31,
-      39
+      31
     ],
     "intrinsics": [
       "print",
@@ -371,7 +370,11 @@
       "usize",
       "isize",
       "sizeof",
-      "alignof"
+      "alignof",
+      "task_start",
+      "task_await",
+      "task_group_begin",
+      "task_group_end"
     ],
     "input": "C05-L1 core for C04-T1 accepted SB1 closure",
     "representation": "Hua-generated instruction and declaration JSON with scalar constants, compact source sites, public/capability metadata; not HUAB",

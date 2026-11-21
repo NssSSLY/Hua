@@ -1,5 +1,15 @@
 # 已确定决定与当前方案
 
+2026-11-21 N4.4 验收通过。生成器可用 native-generator 模式直接启动上一代 EXE。代际固定点以 C++、完整 HUAB 和行为验证，PE 原始字节与时间戳归一结果独立记录。[实施记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-full-entries.md)
+
+2026-11-21 N4.2B／C 复用原生带类型容器与可写位置。Result 提前返回沿用固定 Clang 的语句表达式和错误来源链，字符串切片只复制选定片段。[验收](knowledge/bootstrap-performance/runs/2026-11-21-n4-lexer.md)
+
+2026-11-20 N4.2A 按结构体字段类型依赖排列定义。顶层代码沿 C05 顺序执行，全局存储记录初始化状态，字段目标复用原生 RecordStorage 的保活机制。[验收](knowledge/bootstrap-performance/runs/2026-11-20-n4-records.md)
+
+2026-11-20 N4 以验证后的 C05 Core 为第一版原生后端输入，保留 Hua 字节码编译器作为行为对照。N4.0／N4.1 已验，先按真实依赖扩后端，再完成原生编译器代际闭环。[N4 首阶段验收](knowledge/bootstrap-performance/runs/2026-11-20-n4-scalar.md)
+
+2026-11-20 Windows N2.1–N2.5 按已验范围关闭。普通名义载荷需递归可快照，局部 async 自调用须通过调用或 spawn，真实 IOCP 取消以收到内核完成为资源退休点。下一阶段沿原有 N4／N3 和 C04 实测路线推进。[Windows N2 验收](knowledge/bootstrap-performance/runs/2026-11-20-n2-final.md)
+
 2026-11-18 用户确认现阶段以 Hua 自身扩展语法、标准库和产物生成能力为主，逐步收缩 C++ 实现职责。Windows huaBin 已按可搬移 SDK 交付，仓库外样例、缺依赖和 C2/C3 验收通过。[证据](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)实现、测量与 N2/N3/N4 的次序见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。标量 async/await 已通过旧种子重建及两代验收。P0 已完成源码标准模块接入与完整阶段归因。C04 是后续性能工作的首要热点。[验收](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
 
 2026-11-18 用户批准 N2.1–N2.2。采用 Windows 纤程承载原生栈，等待和结果交付复用 VM TaskRuntime。首片使用一个固定计算线程和标量跨 Task 边界。N2.3 再扩展快照、清理与公开取消／超时，[当前范围](../docs/运行时与扩展设计.md#native-task-single-worker)。
@@ -111,3 +121,5 @@ Entry尺寸下降未产生整体收益；两个接入候选撤回默认，保留
 - 两条路线在性能文档 0.3 节维护。其他平台验收暂缓。
 
 - 用户确认现有实现作为百科基线。确认范围与执行器、平台、验证范围分别维护，未实现候选继续单独列明。
+
+- 显式等待继续交付独立结果。复杂数据走既有复制与诊断。

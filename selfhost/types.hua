@@ -24,11 +24,16 @@ pub struct Function { target string
     result string
     asynchronous bool
     writable bool }
+pub struct TaskFieldCheck { payload string
+    message string }
 pub struct Model { graph modules.Graph
     refs map[string]string
     declarations map[string]string
     symbols map[string]Info
     fields map[string]string
+    task_fields map[string][]string
+    task_field_checks List<TaskFieldCheck>
+    collecting_task_fields bool
     functions map[string]Function
     variants map[string]Function
     facts map[string]Info
@@ -92,7 +97,13 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
     }
     if k == "GenericType" {
         if text == "Task" {
-            if ts[0] != "void" && !rules.task_payload(ts[0],0) { return err(fail(e,n,"E8201","Task result is outside the supported data profile")) }
+            if ts[0] != "void" {
+                if m.collecting_task_fields {
+                    list.append(m.task_field_checks,TaskFieldCheck{payload:ts[0],message:fail(e,n,"E8201","Task result is outside the supported data profile")})?
+                } else if !task_payload(m,ts[0]) {
+                    return err(fail(e,n,"E8201","Task result is outside the supported data profile"))
+                }
+            }
             return ok("Task<"+ts[0]+">")
         }
         if text == "Result" {
@@ -150,6 +161,9 @@ fn require(m mut Model, e Environment, expected string, actual Info, n ast.Node)
     if !rules.compatible(expected,actual.type_name) { return err(fail(e,n,"E3004","expected "+expected+", got "+actual.type_name)) }
     return ok()
 }
+fn task_payload(m Model, t string) bool {
+    return rules.task_payload(t,0,m.task_fields,map[string]bool{})
+}
 fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Function> {
     let params = get(e,n.children[0])
     let asynchronous = strings.contains(ast.payload_text(n.payload)," async")
@@ -165,7 +179,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
             if len(p.children) == 0 { return err(fail(e,p,"E8201","C04-T1 requires parameter annotations")) }
             let typ = typename(m,e,p.children[0])?
             let write = strings.ends_with(ast.payload_text(p.payload)," mut") || ast.kind(get(e,p.children[0]).payload) == "MutableType"
-            if asynchronous && (write || !rules.task_payload(typ,0)) { return err(fail(e,p,"E8201","async parameter must be readonly and snapshot-compatible")) }
+            if asynchronous && (write || !task_payload(m,typ)) { return err(fail(e,p,"E8201","async parameter must be readonly and snapshot-compatible")) }
             list.append(parameters,Parameter{target:declaration(m,e,p),type_name:typ,writable:write})?
         } else {
             var values []string = []
@@ -175,7 +189,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
             else { result = "multi<"+strings.join(list.snapshot(results),",")+">" }
         }
     }
-    if asynchronous && result != "void" && !rules.task_payload(result,0) { return err(fail(e,n,"E8201","async result is outside the supported data profile")) }
+    if asynchronous && result != "void" && !task_payload(m,result) { return err(fail(e,n,"E8201","async result is outside the supported data profile")) }
     return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,asynchronous:asynchronous,writable:true})
 }
 # 有限单调迭代；能力推断引用 C03 的词法身份。
@@ -206,6 +220,7 @@ fn capscan(m mut Model, e Environment, id ast.NodeId, values mut map[string]bool
     let n = get(e,id)
     tick(m,e,n)?
     let k = ast.kind(n.payload)
+    if k == "Function" { return ok() }
     if k == "Return" {
         for child in n.children { list.append(returns,capability(m,e,child,values)?)? }
         return ok()
@@ -662,11 +677,11 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
             if !has(m.functions,callee_target) { return err(fail(e,n,"E8201","spawn requires a known function declaration")) }
             let signature = unwrap(m.functions[callee_target])
             for parameter in signature.parameters {
-                if parameter.writable || !rules.task_payload(parameter.type_name,0) {
+                if parameter.writable || !task_payload(m,parameter.type_name) {
                     return err(fail(e,n,"E8201","spawn requires readonly snapshot-compatible parameters"))
                 }
             }
-            if signature.result!="void" && !rules.task_payload(signature.result,0) {
+            if signature.result!="void" && !task_payload(m,signature.result) {
                 return err(fail(e,n,"E8201","spawn result is outside the supported data profile"))
             }
             return ok(info("Task<"+signature.result+">",false))
@@ -823,7 +838,35 @@ fn statement(m mut Model, e mut Environment, id ast.NodeId) Result<void> {
     tick(m,e,n)?
     let k = ast.kind(n.payload)
     let text = ast.payload_text(n.payload)
-    if k == "Import" || k == "Struct" || k == "Enum" || k == "Function" || k == "Break" || k == "Continue" { return ok() }
+    if k == "Function" {
+        let name = declaration(m,e,n)
+        if !rules.lexical_target(name) { return ok() }
+        let f = unwrap(m.functions[name])
+        var inner = environment(e.unit,clone(e.values))
+        inner.function = true
+        inner.result = f.result
+        for id, input in e.values {
+            if rules.lexical_target(id) {
+                var readonly = input
+                readonly.type_name = input.declared
+                readonly.writable = false
+                readonly.mutable_binding = false
+                readonly.readonly_children = true
+                inner.values[id] = readonly
+            }
+        }
+        for p in f.parameters {
+            let value = info(p.type_name,p.writable)
+            inner.values[p.target] = value
+            m.symbols[p.target] = value
+        }
+        statement(m,inner,n.children[1])?
+        if f.result != "void" && !strings.ends_with(f.result,"?") && !returns(inner,get(inner,n.children[1])) {
+            return err(fail(inner,n,"E3006","typed local function may reach end"))
+        }
+        return ok()
+    }
+    if k == "Import" || k == "Struct" || k == "Enum" || k == "Break" || k == "Continue" { return ok() }
     if k == "Block" || k == "Program" { for child in n.children { statement(m,e,child)? }
         return ok() }
     if k == "Let" || k == "Var" || k == "Const" {
@@ -1042,31 +1085,56 @@ pub fn analyze(entry string) Result<Model> {
     let graph = modules.analyze_compiler(entry)?
     var units = map[string]modules.Unit{}
     for u in list.snapshot(graph.units) { units[u.id] = u }
-    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},capabilities:map[string]flow.Fact{},work:0,capability_passes:0}
+    let pending []TaskFieldCheck=[]
+    let symbols=list.snapshot(graph.symbols)
+    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},task_fields:map[string][]string{},task_field_checks:list.from_slice(pending),collecting_task_fields:true,functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},capabilities:map[string]flow.Fact{},work:0,capability_passes:0}
     for ref in list.snapshot(graph.references) { m.refs[key(ref.module,ref.node)] = ref.target }
-    for symbol in list.snapshot(graph.symbols) { m.declarations[key(symbol.module,symbol.node)] = symbol.target }
-    for symbol in list.snapshot(graph.symbols) {
-        if symbol.scope != 0 { continue }
+    for symbol in symbols { m.declarations[key(symbol.module,symbol.node)] = symbol.target }
+    for symbol in symbols {
+        if symbol.kind=="Struct" || symbol.kind=="Enum" { m.task_fields[symbol.target]=[] }
+    }
+    for symbol in symbols {
+        if symbol.scope != 0 || !alg.contains(["Struct","Enum","Variant"],symbol.kind) { continue }
         let e = environment(unwrap(units[symbol.module]),map[string]Info{})
         let n = unwrap(ast.get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:symbol.node}))
-        if symbol.kind == "Function" {
-            let f = signature(m,e,n,symbol.target)?
-            if symbol.target == unwrap(list.get(graph.units,0)).id+"#main" && len(f.parameters)>0 { return err(fail(e,n,"E3005","main must take no parameters")) }
-            m.functions[symbol.target] = f
-        }
-        else if symbol.kind == "Struct" {
+        if symbol.kind == "Struct" {
             m.symbols[symbol.target] = info("struct:"+symbol.target,false)
+            let empty []string=[]
+            var fields=list.from_slice(empty)
             for child in n.children { let field = get(e,child)
                 let name = symbol.target+"#"+ast.payload_text(field.payload)
                 if has(m.fields,name) { return err(fail(e,field,"E3002","duplicate struct field")) }
-                m.fields[name] = typename(m,e,field.children[0])? }
+                let typ=typename(m,e,field.children[0])?
+                m.fields[name]=typ
+                list.append(fields,typ)?
+            }
+            m.task_fields[symbol.target]=list.snapshot(fields)
         } else if symbol.kind == "Variant" {
             var empty []Parameter = []
             var ps = list.from_slice(empty)
             for child in n.children { list.append(ps,Parameter{target:"",type_name:typename(m,e,child)?,writable:false})? }
             let dot = strings.index(symbol.name,".")
-            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:symbol.module+"#"+rules.cut(symbol.name,0,dot),asynchronous:false,writable:true}
+            let owner=symbol.module+"#"+rules.cut(symbol.name,0,dot)
+            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:owner,asynchronous:false,writable:true}
+            var fields=list.from_slice(unwrap(m.task_fields[owner]))
+            for p in list.snapshot(ps) { list.append(fields,p.type_name)? }
+            m.task_fields[owner]=list.snapshot(fields)
         } else if symbol.kind == "Enum" { m.symbols[symbol.target] = info("enum:"+symbol.target,false) }
+    }
+    # A Task annotation can reference a type whose fields appear later.
+    m.collecting_task_fields=false
+    for check in list.snapshot(m.task_field_checks) {
+        if !task_payload(m,check.payload) { return err(check.message) }
+    }
+    list.clear(m.task_field_checks)
+    for symbol in symbols {
+        if symbol.kind!="Function" { continue }
+        let e=environment(unwrap(units[symbol.module]),map[string]Info{})
+        let n=get(e,ast.NodeId{pool:e.unit.tree.pool.identity,index:symbol.node})
+        var f=signature(m,e,n,symbol.target)?
+        if symbol.scope!=0 { f.writable=false }
+        if symbol.target==unwrap(list.get(graph.units,0)).id+"#main" && len(f.parameters)>0 { return err(fail(e,n,"E3005","main must take no parameters")) }
+        m.functions[symbol.target]=f
     }
     infer(m,units)?
     var flow_functions=map[string]flow.Function{}

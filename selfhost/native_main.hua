@@ -1,0 +1,79 @@
+import types as types
+import lowering as lower
+import native_cpp as native
+import std.fs as fs
+import std.json as json
+import std.os as os
+import std.list as list
+import std.strings as strings
+
+struct Receipt { schema string
+    status string
+    detail string }
+struct Requirement { count int
+    module string
+    line int
+    column int }
+struct Inventory { schema string
+    status string
+    nodes int
+    requirements map[string]Requirement
+    first_blocker string }
+
+fn reply(status string, detail string) {
+    print(unwrap(json.encode(Receipt{schema:"hua.native.cpp.v1",status:status,detail:detail})))
+}
+fn observe(items mut map[string]Requirement, key string, n lower.Node) {
+    let item=unwrap_or(items[key],Requirement{count:0,module:n.module,line:n.line,column:n.column})
+    items[key]=Requirement{count:item.count+1,module:item.module,line:item.line,column:item.column}
+}
+fn inventory(core lower.Core) {
+    var items=map[string]Requirement{}
+    for n in list.snapshot(core.nodes) {
+        observe(items,"node:"+n.kind,n)
+        if n.type_name!="" && !strings.starts_with(n.type_name,"fn:") &&
+                !strings.starts_with(n.type_name,"builtin:") {
+            observe(items,"type:"+n.type_name,n)
+        }
+        if n.kind=="Binary" || n.kind=="Unary" || n.kind=="Assignment" {
+            observe(items,"operator:"+n.text,n)
+        }
+        if n.kind=="Name" && strings.starts_with(n.text,"$core$") {
+            observe(items,"intrinsic:"+n.text,n)
+        }
+    }
+    let generated=native.emit(core)
+    var blocker=""
+    if is_err(generated) { blocker=unwrap_err(generated) }
+    print(unwrap(json.encode(Inventory{schema:"hua.native.inventory.v1",status:"ok",
+        nodes:list.len(core.nodes),requirements:items,first_blocker:blocker})))
+}
+fn main() {
+    let args=os.args()
+    if len(args)!=3 || (args[0]!="emit" && args[0]!="inventory") {
+        reply("error","E8204 expected (emit|inventory) entry.hua output.cpp")
+        return
+    }
+    let model=types.analyze(args[1])
+    if is_err(model) {
+        reply("error",unwrap_err(model))
+        return
+    }
+    let core=lower.lower(unwrap(model))
+    if is_err(core) {
+        reply("error",unwrap_err(core))
+        return
+    }
+    if args[0]=="inventory" {
+        inventory(unwrap(core))
+        return
+    }
+    let generated=native.emit(unwrap(core))
+    if is_err(generated) {
+        reply("error",unwrap_err(generated))
+        return
+    }
+    let output=fs.write_text(args[2],unwrap(generated))
+    if is_err(output) { reply("error",unwrap_err(output)) }
+    else { reply("ok","") }
+}

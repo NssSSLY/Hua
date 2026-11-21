@@ -20,6 +20,7 @@ struct Code { name string
 struct Function { name string
     site int
     published bool
+    nested bool
     writable bool
     parameters []bc.Parameter
     returns []string
@@ -89,6 +90,6 @@ pub fn success(image bc.Image, model types.Model, source string, checked verify.
     }
     var fs []Function = []
     var functions = list.from_slice(fs)
-    for f in list.snapshot(image.functions) { list.append(functions,Function{name:f.name,site:f.site,published:f.published,writable:f.writable,parameters:f.parameters,returns:f.returns,code:code(f.code)?})? }
+    for f in list.snapshot(image.functions) { list.append(functions,Function{name:f.name,site:f.site,published:f.published,nested:f.nested,writable:f.writable,parameters:f.parameters,returns:f.returns,code:code(f.code)?})? }
     return json.encode(Report{schema:"hua.bytecode.image.v2",profile:"C06-BC1",status:"ok",source:source,entry:image.entry,sources:list.snapshot(sources),site_blocks:sites(image)?,structures:list.snapshot(image.structures),functions:list.snapshot(functions),initializer:code(image.initializer)?,instructions:image.instructions,work:image.work,verification:checked})
 }

@@ -1,0 +1,12 @@
+import std.task as task
+fn main() {
+    var base = 4
+    async fn recurse(n int) int {
+        if n == 0 { return base }
+        task.yield()
+        return 1+(await recurse(n-1))
+    }
+    base=40
+    let pending = recurse(2)
+    print(await pending,await spawn recurse(1),base)
+}

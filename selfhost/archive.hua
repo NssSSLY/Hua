@@ -173,10 +173,12 @@ pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
     buffer.write_u32_le(out,len(function_names))?
     for name in function_names {
         let f=functions[unwrap(function_indices[name])]
-        text(out,name)?
+        var raw=name
+        if f.nested { raw+=" nested" }
+        text(out,raw)?
         span(out,sites[f.site],ids)?
         boolean(out,f.published)?
-        # BC1 排除 unsafe/external/方法/嵌套声明；mutating 不是返回写能力。
+        # BC1 排除 unsafe/external/方法；mutating 不是返回写能力。
         boolean(out,false)?
         boolean(out,false)?
         boolean(out,false)?

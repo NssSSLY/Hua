@@ -49,6 +49,14 @@ void file_checkpoint(RuntimeContext*);
 void finish_file_scope(RuntimeContext*);
 Value invoke_file_standard(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 #ifdef _WIN32
+// Host fixture only. Ownership of the overlapped handle passes to FileScope.
+struct FileCompletionProbe {
+    std::function<void()> pending;
+    std::function<void(bool)> canceled;
+    std::function<void(unsigned long)> packet;
+    std::function<void()> retired;
+};
+Value adopt_completion_file_for_test(FileScope&, void*, std::shared_ptr<FileCompletionProbe>);
 bool file_has_completion(const std::vector<Value>&);
 Routine<Value> invoke_completion_file(const StandardFunction&,const std::vector<Value>&,const SourceSpan&,RuntimeContext*);
 #endif

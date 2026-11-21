@@ -75,8 +75,9 @@ FileHostFailure host_failure(DWORD n){
 // Only the completion thread observes the kernel packet. The task resumes
 // through the shared scheduler and retains the request until that packet arrives.
 struct FileCompletion : OVERLAPPED {
-    std::atomic<bool> done{false};
+    CompletionEvent done;
     DWORD count{},error{};
+    const FileCompletionProbe* probe{};
     explicit FileCompletion(I offset) : OVERLAPPED{} {
         const auto value=static_cast<std::uint64_t>(offset);
         Offset=static_cast<DWORD>(value);
@@ -99,8 +100,8 @@ public:
                     auto& completion=*static_cast<FileCompletion*>(request);
                     completion.count=bytes;
                     completion.error=error;
-                    completion.done.store(true,std::memory_order_release);
-                    notify_task_scheduler();
+                    if(completion.probe&&completion.probe->packet)completion.probe->packet(error);
+                    completion.done.signal();
                 }
             });
         }catch(...){CloseHandle(port);throw;}
@@ -125,6 +126,7 @@ FileCompletionPort& file_completion_port(){static FileCompletionPort port;return
 class NativeFile final:public FileBackend {
     HANDLE handle_;bool append_,overlapped_;
     I cursor_{};
+    std::shared_ptr<FileCompletionProbe> probe_;
     FileHostIO complete(bool reading,DWORD bytes,DWORD error){
         if(reading&&error==ERROR_HANDLE_EOF)return {I{0},{}};
         if(error)return {{},host_failure(error)};
@@ -157,23 +159,29 @@ class NativeFile final:public FileBackend {
         return complete(reading,bytes,ok?ERROR_SUCCESS:GetLastError());
     }
 public:
-    explicit NativeFile(HANDLE h,bool append,bool overlapped):handle_(h),append_(append),overlapped_(overlapped){}
+    explicit NativeFile(HANDLE h,bool append,bool overlapped,std::shared_ptr<FileCompletionProbe> probe={})
+        :handle_(h),append_(append),overlapped_(overlapped),probe_(std::move(probe)){}
     bool overlapped() const {return overlapped_;}
     Routine<FileHostIO> transfer(bool reading,char* storage,std::size_t size,RuntimeContext& context){
         FileCompletion completion(append_&&!reading?-1:cursor_);
-        const auto finished=[&completion]{return completion.done.load(std::memory_order_acquire);};
+        completion.probe=probe_.get();
+        const auto finished=[&completion]{return completion.done.await_ready();};
         // Allocate wait predicates before exposing OVERLAPPED to the OS.
-        Suspend interruptible{[&]{return finished()||(!context.cleanup&&context.cancellation&&context.cancellation->stopped());}};
-        Suspend confirmed{finished};
+        Suspend interruptible{
+            [&]{return finished()||(!context.cleanup&&context.cancellation&&context.cancellation->stopped());},
+            Clock::time_point::max(), &completion.done, true};
         if(!issue(reading,storage,size,completion)){
             const auto error=GetLastError();
             if(error!=ERROR_IO_PENDING)co_return complete(reading,0,error);
+            if(probe_&&probe_->pending)probe_->pending();
         }
         co_await std::move(interruptible);
         if(!finished()){
-            CancelIoEx(handle_,&completion);
-            co_await std::move(confirmed);
+            const bool canceled=CancelIoEx(handle_,&completion);
+            if(probe_&&probe_->canceled)probe_->canceled(canceled);
+            co_await completion.done;
         }
+        if(probe_&&probe_->retired)probe_->retired();
         co_return complete(reading,completion.count,completion.error);
     }
     void attach(HANDLE h){handle_=h;}
@@ -484,6 +492,14 @@ Value FileScope::adopt(std::unique_ptr<FileBackend> backend,std::string_view tex
     auto h=admit(*this,native);if(!h)return failed(resource_failure(h.error),"open","std.file.File");
     return publish(shared_from_this(),*h.value,std::move(native));
 }
+#ifdef _WIN32
+Value adopt_completion_file_for_test(FileScope& scope, void* handle, std::shared_ptr<FileCompletionProbe> probe) {
+    auto backend=std::make_unique<NativeFile>(handle,false,true,std::move(probe));
+    if(!file_completion_port().associate(handle))
+        return failed(host_failure(GetLastError()),"open","std.file.File");
+    return scope.adopt(std::move(backend),"r");
+}
+#endif
 static Routine<Value> transfer_file(const StandardFunction& f,const std::vector<Value>& args,
                                    const SourceSpan& span,RuntimeContext* c,std::shared_ptr<FileData> file,
                                    std::unique_lock<std::mutex> lock,[[maybe_unused]] bool allow_suspend){

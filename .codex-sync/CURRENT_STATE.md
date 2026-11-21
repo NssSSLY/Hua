@@ -1,5 +1,37 @@
 # 当前状态
 
+## 2026-11-21 Windows N4.2D、N4.3、N4.4 已验收
+
+原生 archive.exe 用 52.946 秒编译完整归档入口，产物与 303.662 秒的 VM 基准逐字节一致。无源码复跑及导入、预算、发布失败对照通过。原生 A → B → C 闭环通过，三份 C++ 一致，B、C 的归档同源逐字节一致，源码修改进入原生子代。[实施记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-full-entries.md)
+
+## 2026-11-21 Windows N4.2B／N4.2C 已验
+
+C3 用 271.942 秒构建 Hua 生成器。Hua 生成的真实词法器通过 10 组 AST、源码 VM、HUAB 和 EXE 对照，移走词法器源码后复跑通过。接续 N4.2D 补齐两个真实编译入口的剩余依赖。[记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-lexer.md)
+
+## 2026-11-20 Windows N4.2A 已验
+
+Hua 生成器可处理带 int、bool、string 或普通结构体字段的跨模块程序，并按 C05 顺序执行初始化。C3 在 247.634 秒内重建生成器，七组新差分、四组标量回归和两组产物保护通过。下一片接容器、可写位置和循环。[N4.2A 记录](knowledge/bootstrap-performance/runs/2026-11-20-n4-records.md)
+
+## 2026-11-20 Windows N4.0／N4.1 已验
+
+C3 构建 Hua 原生生成器并经 Clang/lld 生成标量 EXE。四个程序三路径一致，两个拒绝场景保护既有产物。改一条 Hua 生成规则后同一 EXE 的输出由 13 变成 5。已盘点两个编译入口的真实节点与依赖，后续推进 N4.2。[N4 首阶段验收](knowledge/bootstrap-performance/runs/2026-11-20-n4-scalar.md)
+
+## 2026-11-20 Windows N2 整体完成
+
+本机完成 N2.1–N2.5。支持普通 struct/enum 快照、捕获和直接递归的局部 async fn、确定的 IOCP 在途取消及资源归还。7 个源程序五路径一致，108 个原生差分、13 个拒绝、5 项定向 CTest 通过。C2/C3 用时 247.777／251.964 秒，逐字节一致，各通过 14 个正例和 17 个反例。C05/C06 的独立报告生成、宿主指令对照和实际执行也已通过。[Windows N2 验收](knowledge/bootstrap-performance/runs/2026-11-20-n2-final.md)
+
+## 2026-11-20 N2.3 自举局部闭包
+
+普通局部函数和带捕获的 spawn 已由 Hua 编译器生成并执行。原反例四路均输出 6，C1、C2、C3 各通过 10 正例／13 反例。两次完整自举分别为 254.482／246.491 秒，C2/C3 逐字节相同。[证据](knowledge/bootstrap-performance/runs/2026-11-20-n2-selfhost-closure.md)
+
+## 2026-11-20 N2 按需快照、完成投递和载荷
+
+模块快照只复制已知可达槽位，阻塞池和 Windows IOCP 按请求唤醒，协作让出直接入队。原生和 Hua 自举前端已通过 Bytes、Optional 和 Result 载荷。模块和让出负载端到端下降 40.7% 及 47.7%–51.1%。C2/C3 分别 280.219／249.356 秒，产物逐字节一致。N2.3 的 Hua 自举嵌套闭包与更广名义载荷仍待。[本轮记录](knowledge/bootstrap-performance/runs/2026-11-20-n2-followup.md)
+
+## 2026-11-20 N2 Task 收拢优化
+
+常见可安全丢弃的容器结果收拢时跳过深复制。显式等待仍交付独立副本。四个 Task 各返回 75,000 行时，端到端 HUAB 949.29 → 616.30 ms，原生 679.85 → 342.55 ms。Task 收拢切片完成，N2.3 的跨编译器闭包和更多载荷及 N2 整体验收仍待。[记录](knowledge/bootstrap-performance/runs/2026-11-20-n2-task-join.md)
+
 ## 2026-11-18 Windows N2 多 worker 与 IOCP
 
 已接入已知声明的原生闭包、模块快照、挂起清理和公开 Task 控制。Hua 前端已验顶层 spawn、taskgroup、std.task 和 std.file。1／2／4 原生 worker 用时 95.24／54.60／37.80 ms。128 MiB 文件下阻塞池／IOCP 为 31.35／25.88 ms。最终 C2／C3 逐字节相同，huaBin 已更新。N2.3 仍待 Hua 自举嵌套闭包与更广的原生 Task 数据类型。[证据](knowledge/bootstrap-performance/runs/2026-11-18-n2-windows-workers-iocp.md)

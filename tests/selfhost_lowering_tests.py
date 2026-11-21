@@ -57,6 +57,7 @@ positive={
 'defer_loop':('fn main(){for i in 0..3{defer print(i)\nif i==1{continue}\nif i==2{break}\nprint("body",i)}}\n','body 0\n0\n1\n2\n'),
 'json_buffer':('import std.json as j\nimport std.buffer as b\nfn main(){let x=unwrap(j.decode("{\\"a\\":1}"))\nvar buf=b.new()\nb.write_text(buf,unwrap(j.encode(x)))\nprint(unwrap(b.text(buf)))}\n','{"a":1}\n'),
 'escapes':('fn main(){print("\\\\r","中文",type(1))}\r\n','\\r 中文 int\n'),
+'local_closure':('fn main(){let x=4\nfn f(y int) int{return x+y}\nprint(f(2))}\n','6\n'),
 'empty':('','')
 }
 runtime_errors={
@@ -68,12 +69,12 @@ runtime_errors={
 negative={
 'readonly':('fn main(){let x=[1]\nx[0]=2}\n','E3003'),
 'const':('print("BAD")\nconst x=1\n','E8201'),
-'nested':('fn main(){fn f(){print(1)}\nf()}\n','E8201'),
+'nested_async_mut':('fn main(){async fn f(xs mut []int){print(xs)}\n}\n','E8201'),
 'nonexhaustive':('enum E{A,B}\nfn f(x E){match x{A=>{print(1)}}}\n','E3011'),
 'badreturn':('fn f() int{return "bad"}\n','E3004'),
 'badmain':('fn main(x int){}\n','E3005'),
 'unsafe':('unsafe {print(1)}\n','E8201'),
-'async':('async fn f(){}\n','E8201')
+'async_entry':('async fn main(){}\n','E8201')
 }
 def case(name,text,expected=None,error=None,files=None,source_name="input.hua"):
     global checks

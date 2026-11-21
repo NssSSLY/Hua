@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "checkpoint_id": "2026-11-20_022454_e97dce2e",
+  "project_id": "aab00f84-5a35-48b3-973b-4ccd29e3d31c",
+  "created_at": "2026-11-20T02:24:54+00:00",
+  "goal": "N2 第一优先 Task 收拢优化",
+  "summary": "消除常见数据树的废弃结果深复制。5 项定向 CTest 通过，原生差分 103 项、拒绝 12 项。四个 Task 各 75000 行时，HUAB 和原生端到端分别下降 35.1% 和 49.6%。",
+  "decisions": [
+    "显式等待继续交付独立结果。复杂数据走既有复制与诊断。"
+  ],
+  "modified_files": [
+    "\"docs/VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\"",
+    ".codex-sync/CURRENT_STATE.md",
+    ".codex-sync/TODO.md",
+    ".codex-sync/knowledge/bootstrap-performance/INDEX.md",
+    ".codex-sync/knowledge/bootstrap-performance/runs/2026-11-20-n2-task-join.md",
+    "src/tasks.cpp",
+    "tests/task_resume_tests.cpp",
+    "tests/tools/n2_task_join_bench.py"
+  ],
+  "git_branch": "perf/vm-register-r1",
+  "git_head": "5d206c4c5bcb2a8a044f19bf600e53ab17c70f93",
+  "git_status": [
+    " M .codex-sync/CURRENT_STATE.md",
+    " M .codex-sync/TODO.md",
+    " M .codex-sync/knowledge/bootstrap-performance/INDEX.md",
+    " M \"docs/VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\"",
+    " M src/tasks.cpp",
+    " M tests/task_resume_tests.cpp",
+    "?? .codex-sync/knowledge/bootstrap-performance/runs/2026-11-20-n2-task-join.md",
+    "?? tests/tools/n2_task_join_bench.py"
+  ],
+  "git_diff_summary": [
+    ".codex-sync/CURRENT_STATE.md: +4/-0",
+    ".codex-sync/TODO.md: +2/-0",
+    ".codex-sync/knowledge/bootstrap-performance/INDEX.md: +4/-0",
+    "\"docs/VM\\344\\270\\216\\350\\207\\252\\344\\270\\276\\346\\200\\247\\350\\203\\275\\346\\224\\271\\351\\200\\240\\345\\210\\206\\346\\236\\220.md\": +4/-0",
+    "src/tasks.cpp: +50/-8",
+    "tests/task_resume_tests.cpp: +69/-1"
+  ],
+  "recent_commits": [
+    "5d206c4 feat(async): expand native Windows task support",
+    "51e0061 Consolidate Hua documentation and refine bootstrap performance",
+    "0fba914 Consolidate active project documentation",
+    "f392221 perf(native): optimize closures and indirect calls",
+    "a4eec89 docs: record native release route decision"
+  ],
+  "todos": [
+    "N2.3 自举嵌套闭包与载荷矩阵，随后以测量选择定向唤醒或模块按需快照。"
+  ],
+  "blockers": []
+}

@@ -575,8 +575,14 @@ fn invoke(s mut State, e mut Environment, n ast.Node, f Function, args []Value) 
     for owner, unused in s.global_symbols { if has(e.values,owner) { actual[owner]=unwrap(e.values[owner]) } }
     for i in 0..len(f.parameters) { if i<len(args) { actual[f.parameters[i].target]=args[i]
         if f.parameters[i].writable && !args[i].root.writable { denied(s,e,get(e.unit.tree.pool,n.children[i+1]),"mut borrow requires writable argument")? } } }
-    if !has(s.summaries,f.target) { return ok(value(f.result,true)) }
-    let summary=unwrap(s.summaries[f.target])
+    if !has(s.summaries,f.target) && !rules.lexical_target(f.target) { return ok(value(f.result,true)) }
+    # A local callable can carry a different captured environment at each use.
+    # Validate its body at the declaration, and apply conservative call effects.
+    var selected=s.summaries[f.target]
+    if is_none(selected) {
+        selected=Summary{returned:value(f.result,false),unknown:true,saw_return:false,writes:map[string]View{},required:map[string]bool{}}
+    }
+    let summary=unwrap(selected)
     if summary.unknown {
         for owner, input in e.values { if has(s.global_symbols,owner) || has(e.visible,owner) {
             var conservative=conservative_value(input)
@@ -720,16 +726,25 @@ fn expression_body(s mut State, e mut Environment, n ast.Node) Result<Value> {
         if k=="Index" && len(rules.arguments(base.root.type_name,"map"))==2 { out.root.type_name=typ+"?" }
         return ok(out) }
     if k=="Unary" && text=="spawn" {
-        let operand=expression(s,e,n.children[0])?
-        let type=operand.root.type_name
-        if strings.starts_with(type,"Task<") { return ok(value(type,false)) }
-        return ok(value("Task<"+type+">",false))
+        let call=get(e.unit.tree.pool,n.children[0])
+        let callee=expression(s,e,call.children[0])?
+        for i in 1..len(call.children) { expression(s,e,call.children[i])? }
+        let name=callee.root.type_name
+        if strings.starts_with(name,"fn:") {
+            let target=rules.cut(name,3,len(name))
+            if has(s.functions,target) {
+                # Only evaluation of the callable and arguments runs in the parent.
+                let f=unwrap(s.functions[target])
+                return ok(value("Task<"+f.result+">",false))
+            }
+        }
+        return ok(value("",false))
     }
     if k=="Unary" && text=="await" {
         let operand=expression(s,e,n.children[0])?
         let task=rules.arguments(operand.root.type_name,"Task")
         if len(task)==1 {
-            if !rules.shared(task[0]) { return ok(value(task[0],true)) }
+            if !rules.shared(task[0]) && !record(task[0]) { return ok(value(task[0],true)) }
             var result=seeded(s,task[0],true,e.function+"!"+key(e.unit.id,n.id.index))
             result.root.deep_owned=true
             return ok(result)
@@ -863,7 +878,22 @@ fn statement(s mut State, e mut Environment, id ast.NodeId) Result<void> { let n
     tick(s,n.span)?
     let k=ast.kind(n.payload)
     let text=ast.payload_text(n.payload)
-    if alg.contains(["Function","Import","Struct","Enum","Break","Continue"],k) { return ok() }
+    if k=="Function" {
+        let name=declaration(s.declarations,e.unit.id,n)
+        if !rules.lexical_target(name) { return ok() }
+        let f=unwrap(s.functions[name])
+        var captures=map[string]Value{}
+        for owner, input in e.values {
+            if rules.lexical_target(owner) { captures[owner]=conservative_value(input) }
+            else { captures[owner]=input }
+        }
+        var inner=environment(e.unit,e.function,captures)
+        for p in f.parameters { store(inner,p.target,parameter_seeded(s,p.type_name,p.writable,p.target)) }
+        statement(s,inner,n.children[1])?
+        for target, unused in inner.callees { e.callees[target]=true }
+        return ok()
+    }
+    if alg.contains(["Import","Struct","Enum","Break","Continue"],k) { return ok() }
     if k=="Block" || k=="Program" { for child in n.children { statement(s,e,child)? }
         return ok() }
     if k=="Let" || k=="Var" || k=="Const" { var input=expression(s,e,n.children[len(n.children)-1])?
@@ -1088,7 +1118,7 @@ pub fn analyze(graph modules.Graph, refs map[string]string, declarations map[str
         statement(s,e,e.unit.tree.root)?
         for name, input in e.values { globals[name]=input } }
     for owner, unused in globals { s.global_symbols[owner]=true }
-    for name, unused in functions { s.dirty[name]=true }
+    for name, unused in functions { if !rules.lexical_target(name) { s.dirty[name]=true } }
     var passes=0
     var changed=true
     var first []string=[]

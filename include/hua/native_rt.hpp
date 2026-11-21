@@ -429,7 +429,11 @@ template<class T,class E> struct Result {
     }
 };
 template<class T,class E> inline constexpr bool tracks_native_edges<Result<T,E>> = tracks_native_edges<T>||tracks_native_edges<E>;
-template<class T> struct OkV { T value;template<class E> operator Result<T,E>()&&{return Result<T,E>{true,std::move(value),E{}};} };
+template<class T> struct OkV {
+    T value;
+    template<class E> operator Result<T,E>()&&{return {true,std::move(value),E{}};}
+    template<class E> operator Result<Opt<T>,E>()&&{return {true,Opt<T>{std::move(value)},E{}};}
+};
 template<class E> struct ErrV { E error;Trace trace;template<class T> operator Result<T,E>()&&{return Result<T,E>{false,T{},std::move(error),std::move(trace)};} };
 // `[]` before its context gives it an element type.
 struct EmptySlice {};
@@ -1394,7 +1398,18 @@ struct SyncDefers {
 };
 template<bool Tasks> using Defers = std::conditional_t<Tasks,TaskDefers,SyncDefers>;
 
-// Only scalar leaves and these acyclic containers can cross this native
+inline Value task_record_field(const Value& input, const std::string& name) {
+    if (auto record = hua::cget_if<hua::PlainRecord>(&input.data)) {
+        if (auto field = hua::plain_record_field(*record, name)) return std::move(*field);
+    }
+    if (auto record = hua::cget_if<hua::StructValue>(&input.data)) {
+        const auto& fields = std::as_const(record->data->fields);
+        if (auto field = fields.find(name); field != fields.end()) return field->second;
+    }
+    bad_unbox("Task record field");
+}
+
+// Only supported leaves and acyclic composites can cross this native
 // boundary. Build an independent typed tree before publishing the task:
 // the native string and container reference counts are not atomic.
 template<class T> requires std::is_arithmetic_v<T>
@@ -1402,6 +1417,10 @@ T task_input(T value) { return value; }
 template<ExactName Name, class Rep>
 Exact<Name, Rep> task_input(Exact<Name, Rep> value) { return value; }
 inline Str task_input(const Str& value) { return Str(value.text()); }
+inline Unit task_input(Unit value) { return value; }
+inline Opaque<BytesTag> task_input(const Opaque<BytesTag>& value) { return value; }
+template<class T> Opt<T> task_input(const Opt<T>& value);
+template<class T, class E> Result<T,E> task_input(const Result<T,E>& value);
 template<class T> Slice<T> task_input(const Slice<T>& value);
 template<class T, std::size_t N> Fixed<T, N> task_input(const Fixed<T, N>& value);
 template<class T> List<T> task_input(const List<T>& value);
@@ -1431,6 +1450,16 @@ template<class K, class V> Map<K, V> task_input(const Map<K, V>& value) {
     for (const auto& [key, item] : value.data->items)
         result.data->insert_or_assign(task_input(key), task_input(item));
     return capture_value(std::move(result));
+}
+
+template<class T> Opt<T> task_input(const Opt<T>& value) {
+    if (!value) return std::nullopt;
+    return task_input(*value);
+}
+template<class T, class E> Result<T,E> task_input(const Result<T,E>& value) {
+    if (value.ok) return {true, task_input(value.value), E{}, {}};
+    auto trace = value.trace ? Trace::make(*value.trace) : Trace{};
+    return {false, T{}, task_input(value.error), std::move(trace)};
 }
 
 template<class T> std::optional<T> task_module_input(const std::optional<T>& slot) {

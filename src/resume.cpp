@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <bit>
+#include <unordered_map>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -16,13 +17,15 @@
 #endif
 
 namespace hua {
-struct BlockingState {std::atomic<bool> done{false};Value value;std::exception_ptr error;};
+struct BlockingState {CompletionEvent done;Value value;std::exception_ptr error;};
 namespace {
 struct Frame {
     RuntimeContext context;std::shared_ptr<TaskState> state;TaskResumeJob job;
     std::ostringstream output;std::optional<Routine<Value>> root;
     std::coroutine_handle<> next;std::function<bool()> ready;Clock::time_point deadline=Clock::time_point::max();
     unsigned ticks{};
+    const CompletionEvent* completion{};
+    bool yielded{},poll_completion{};
     std::optional<unsigned> worker;
 };
 thread_local Frame* active_frame=nullptr;
@@ -50,13 +53,29 @@ Routine<Value> execute_frame(Frame* f){
 }
 struct Scheduler {
     std::mutex mutex;std::condition_variable changed;bool stopping{};
-    unsigned count;std::vector<std::shared_ptr<Frame>> ready,waiting;std::vector<std::jthread> threads;
-    Scheduler():count(workers()){
-        ready.reserve(64);waiting.reserve(64);threads.reserve(count);
-        try{for(unsigned i=0;i<count;++i)threads.emplace_back([this,i]{worker(i);});}
-        catch(...){std::lock_guard lock(mutex);stopping=true;changed.notify_all();throw;}
+    unsigned count;
+    std::array<std::condition_variable,8> worker_changed;
+    std::vector<std::shared_ptr<Frame>> ready,waiting;
+    std::unordered_map<const CompletionEvent*,std::shared_ptr<Frame>> completions;
+    unsigned interruptible_completions{};
+    std::vector<std::jthread> threads;
+
+    void wake_all(){
+        changed.notify_all();
+        for(unsigned i=0;i<count;++i)worker_changed[i].notify_one();
     }
-    ~Scheduler(){{std::lock_guard lock(mutex);stopping=true;}changed.notify_all();}
+    void make_ready(std::shared_ptr<Frame> frame){
+        const auto owner=frame->worker;
+        ready.push_back(std::move(frame));
+        if(owner)worker_changed[*owner].notify_one();
+        else for(unsigned i=0;i<count;++i)worker_changed[i].notify_one();
+    }
+    Scheduler():count(workers()){
+        ready.reserve(64);waiting.reserve(64);completions.reserve(64);threads.reserve(count);
+        try{for(unsigned i=0;i<count;++i)threads.emplace_back([this,i]{worker(i);});}
+        catch(...){std::lock_guard lock(mutex);stopping=true;wake_all();throw;}
+    }
+    ~Scheduler(){{std::lock_guard lock(mutex);stopping=true;}wake_all();}
     void worker(unsigned index){
         for(;;){
             std::shared_ptr<Frame> f;
@@ -66,9 +85,18 @@ struct Scheduler {
                     for(std::size_t i=0;i<waiting.size();){
                         auto& w=waiting[i];
                         if(w->ready()||Clock::now()>=w->deadline){
-                            ready.push_back(std::move(w));waiting.erase(waiting.begin()+i);
-                            changed.notify_all();
+                            make_ready(std::move(w));waiting.erase(waiting.begin()+i);
                         }else ++i;
+                    }
+                    if(interruptible_completions){
+                        for(auto item=completions.begin();item!=completions.end();){
+                            auto& frame=item->second;
+                            if(frame->poll_completion&&frame->ready()){
+                                --interruptible_completions;
+                                make_ready(std::move(frame));
+                                item=completions.erase(item);
+                            }else ++item;
+                        }
                     }
                     auto next=std::find_if(ready.begin(),ready.end(),[&](const auto& frame){
                         return !frame->worker || *frame->worker==index;
@@ -78,9 +106,10 @@ struct Scheduler {
                         if(f->context.task_worker_affine)f->worker=index;
                         break;
                     }
-                    if(stopping&&waiting.empty()&&ready.empty())return;
+                    if(stopping&&waiting.empty()&&ready.empty()&&completions.empty())return;
                     // Cancellation ancestors can change without a direct dependency notification.
-                    if(waiting.empty())changed.wait(lock);else changed.wait_for(lock,std::chrono::milliseconds(1));
+                    if(waiting.empty()&&!interruptible_completions)worker_changed[index].wait(lock);
+                    else worker_changed[index].wait_for(lock,std::chrono::milliseconds(1));
                 }
             }
             {
@@ -98,11 +127,26 @@ struct Scheduler {
                 {std::lock_guard lock(state->mutex);state->result=error?Value{}:std::move(result);state->error=error;
                     if(error)try{std::rethrow_exception(error);}catch(const Diagnostic& d){state->canceled_failure=d.code()=="E4101";}catch(...){}
                     state->output=std::move(text);state->finished=true;}
-                release_task_admission();state->changed.notify_all();changed.notify_all();
+                release_task_admission();state->changed.notify_all();wake_all();
             }else{
                 std::lock_guard lock(mutex);
-                if(!f->ready)std::terminate(); // Every external suspension must register its continuation.
-                waiting.push_back(std::move(f));changed.notify_all();
+                if(f->yielded){
+                    f->yielded=false;
+                    make_ready(std::move(f));
+                }else if(const auto* completion=f->completion){
+                    f->completion=nullptr;
+                    if(completion->await_ready()||(f->poll_completion&&f->ready())){
+                        make_ready(std::move(f));
+                    }else{
+                        const bool interruptible=f->poll_completion;
+                        if(!completions.emplace(completion,std::move(f)).second)std::terminate();
+                        if(interruptible)++interruptible_completions;
+                    }
+                }else{
+                    if(!f->ready)std::terminate(); // Every external suspension registers its continuation.
+                    waiting.push_back(std::move(f));
+                    wake_all();
+                }
             }
         }
     }
@@ -120,7 +164,7 @@ struct BlockPool {
         }
         try{job.state->value=job.function();}catch(...){job.state->error=std::current_exception();}
         job.function={};{std::lock_guard lock(mutex);--admitted;}
-        job.state->done.store(true,std::memory_order_release);notify_task_scheduler();
+        job.state->done.signal();
         }
     });}catch(...){std::lock_guard lock(mutex);stopping=true;changed.notify_all();throw;}}
     ~BlockPool(){{std::lock_guard lock(mutex);stopping=true;}changed.notify_all();}
@@ -137,26 +181,50 @@ void enqueue_task(const std::shared_ptr<TaskState>& state,TaskResumeJob job,Runt
     auto f=std::make_shared<Frame>();f->state=state;f->job=std::move(job);
     f->context=std::move(child);f->context.heap=state->heap;
     f->root.emplace(execute_frame(f.get()));f->next=f->root->handle;
-    // Entry waiters also share this condition; wake every class of waiter so a root
-    // cannot consume the sole ready notification while all compute workers sleep.
-    std::lock_guard lock(pool.mutex);pool.ready.push_back(std::move(f));pool.changed.notify_all();
+    std::lock_guard lock(pool.mutex);
+    pool.make_ready(std::move(f));
 }
 void Suspend::await_suspend(std::coroutine_handle<> h){
     if(!active_frame)throw std::logic_error("suspension outside Hua execution frame");
-    active_frame->next=h;active_frame->ready=std::move(ready);active_frame->deadline=deadline;
+    active_frame->next=h;
+    active_frame->ready=std::move(ready);
+    active_frame->deadline=deadline;
+    active_frame->completion=completion;
+    active_frame->poll_completion=poll_completion;
+}
+void CompletionEvent::await_suspend(std::coroutine_handle<> handle) const {
+    Suspend{[this]{return await_ready();}, Clock::time_point::max(), this}.await_suspend(handle);
+}
+void CompletionEvent::signal() noexcept {
+    auto& pool=scheduler();
+    std::lock_guard lock(pool.mutex);
+    const auto found=pool.completions.find(this);
+    completed.store(true,std::memory_order_release);
+    if(found!=pool.completions.end()){
+        auto frame=std::move(found->second);
+        if(frame->poll_completion)--pool.interruptible_completions;
+        pool.completions.erase(found);
+        pool.make_ready(std::move(frame));
+    }else{
+        pool.changed.notify_all(); // Root wait or completion before registration.
+    }
+    if(pool.stopping)pool.wake_all();
 }
 bool Yield::await_ready()const{if(force)return false;if(!active_frame)return true;auto before=active_frame->ticks;active_frame->ticks+=weight;return before/1024==active_frame->ticks/1024;}
-void Yield::await_suspend(std::coroutine_handle<> h){Suspend{[]{return true;},Clock::now()}.await_suspend(h);}
+void Yield::await_suspend(std::coroutine_handle<> h){
+    Suspend{[]{return true;},Clock::now()}.await_suspend(h);
+    active_frame->yielded=true;
+}
 Blocking::Blocking(std::function<Value()> f):job(std::move(f)),state(std::make_shared<BlockingState>()){}
 void Blocking::await_suspend(std::coroutine_handle<> h){
     auto state_copy=state;
     // Registration occurs before submission; an immediate completion cannot be lost.
-    Suspend{[state_copy]{return state_copy->done.load(std::memory_order_acquire);}}.await_suspend(h);
+    state_copy->done.await_suspend(h);
     blockers().submit({state,std::move(job)});
 }
 Value Blocking::await_resume(){if(state->error)std::rethrow_exception(state->error);return std::move(state->value);}
 unsigned task_worker_count(){return scheduler().count;}
-void notify_task_scheduler()noexcept{scheduler().changed.notify_all();}
+void notify_task_scheduler()noexcept{scheduler().wake_all();}
 Value sync_wait(Routine<Value> routine,RuntimeContext& context){
     Frame frame;frame.context=context;frame.root.emplace(std::move(routine));frame.next=frame.root->handle;
     for(;;){

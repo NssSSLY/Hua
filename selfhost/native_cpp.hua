@@ -1,0 +1,918 @@
+# N4 C++ backend over the verified C05 Core.
+import lowering as lower
+import type_rules as rules
+import std.list as list
+import std.strings as strings
+import std.bytes as bytes
+import std.json as json
+import std.alg as alg
+
+struct Emitter { core lower.Core
+    values map[string]string
+    functions map[string]int
+    records map[string]int
+    fields map[string]int
+    tags map[string]int
+    files map[string]string
+    globals map[string]bool
+    value_types map[string]string }
+struct Layout { active map[int]bool
+    done map[int]bool
+    definitions List<string>
+    names List<string>
+    boxing List<string>
+    copies List<string> }
+struct Receiver { code string
+    value string }
+
+fn node(core lower.Core, id int) lower.Node { return unwrap(list.get(core.nodes,id)) }
+fn fail(n lower.Node, message string) string {
+    return "E8001@"+str(n.line)+":"+str(n.column)+" ["+n.module+"] "+message
+}
+fn record_name(t string) string {
+    if strings.starts_with(t,"struct:") { return rules.cut(t,7,len(t)) }
+    return t
+}
+fn record_type(id int) string { return "record"+str(id) }
+fn record_body(id int) string { return "body"+str(id) }
+fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
+    if t=="int" { return ok("hn::I") }
+    if t=="float" { return ok("hn::F") }
+    if t=="Json" { return ok("hn::Opaque<hn::JsonTag>") }
+    if t=="Buffer" { return ok("hn::Opaque<hn::BufferTag>") }
+    let tuple=rules.arguments(t,"multi")
+    if len(tuple)>0 {
+        var code="std::tuple<"
+        for i in 0..len(tuple) {
+            if i>0 { code+="," }
+            code+=cpp_type(e,n,tuple[i])?
+        }
+        return ok(code+">")
+    }
+    if t=="string" { return ok("hn::Str") }
+    if t=="bool" || t=="void" { return ok(t) }
+    if t=="Bytes" { return ok("hn::Opaque<hn::BytesTag>") }
+    if strings.ends_with(t,"?") { return ok("hn::Opt<"+cpp_type(e,n,rules.cut(t,0,len(t)-1))?+">") }
+    if strings.starts_with(t,"[]") { return ok("hn::Slice<"+cpp_type(e,n,rules.cut(t,2,len(t)))?+">") }
+    let list_args=rules.arguments(t,"List")
+    if len(list_args)==1 { return ok("hn::List<"+cpp_type(e,n,list_args[0])?+">") }
+    let map_args=rules.arguments(t,"map")
+    if len(map_args)==2 { return ok("hn::Map<"+cpp_type(e,n,map_args[0])?+","+cpp_type(e,n,map_args[1])?+">") }
+    let result_args=rules.arguments(t,"Result")
+    if len(result_args)==2 {
+        var payload="hn::Unit"
+        if result_args[0]!="void" { payload=cpp_type(e,n,result_args[0])? }
+        return ok("hn::Result<"+payload+","+cpp_type(e,n,result_args[1])?+">")
+    }
+    let name=record_name(t)
+    if has(e.records,name) { return ok(record_type(unwrap(e.records[name]))) }
+    return err(fail(n,"unsupported native type "+t))
+}
+fn type_text(core lower.Core, n lower.Node) string {
+    if n.kind=="MutableType" { return type_text(core,node(core,n.children[0])) }
+    if n.kind=="OptionalType" { return type_text(core,node(core,n.children[0]))+"?" }
+    if n.kind=="SliceType" { return "[]"+type_text(core,node(core,n.children[0])) }
+    if n.kind=="GenericType" {
+        var text=n.text+"<"
+        for i in 0..len(n.children) {
+            if i>0 { text+="," }
+            text+=type_text(core,node(core,n.children[i]))
+        }
+        if n.text=="Result" && len(n.children)==1 { text+=",string" }
+        return text+">"
+    }
+    return n.text
+}
+fn enum_decl(n lower.Node) string {
+    if n.role=="enum-layout" { return rules.cut(n.text,0,len(n.text)-5) }
+    return n.text
+}
+fn enum_part(field string) []string {
+    return strings.split(field,"#")
+}
+fn enum_box(e Emitter, decl lower.Node, record string) Result<string> {
+    let owner=enum_decl(decl)
+    var layout="static const auto shape=[](){auto shape=std::make_shared<hua::EnumLayout>();shape->name="+quote(owner)+";\n"
+    var values="auto data=hua::managed<hua::StructData>();data->name="+quote(owner)+";data->enumeration=shape;\n"
+    for id in decl.children {
+        let field=node(e.core,id)
+        if field.text=="$case" { continue }
+        let parts=enum_part(field.text)
+        let label=rules.cut(parts[0],1,len(parts[0]))
+        let tag=unwrap(e.tags[owner+":"+label])
+        let q=quote(label)
+        let name=quote(field.text)
+        let t=quote(bridge_name(field.type_name))
+        layout+="{auto& variant=shape->variants["+q+"];variant.name="+q+";variant.fields.emplace("+name+","+t+");"
+        layout+="shape->fields.emplace("+name+",hua::EnumField{"+q+","+t+","+parts[1]+"});}\n"
+        let active="if(v.fields.get().tag=="+str(tag)+"){"
+        if parts[1]=="0" { values+=active+"data->variant=&shape->variants.at("+q+");data->fields.emplace(\"$case\",hn::Value(std::string("+q+")));}\n" }
+        var payload="hn::Value{}"
+        if field.type_name!="void" { payload="to_value(v.fields.get().f"+str(id)+")" }
+        values+=active+"data->fields.emplace("+name+","+payload+");}\n"
+    }
+    return ok("inline hn::Value to_value(const "+record+"& v){\n"+layout
+        +"return shape;}();\n"+values+"return hn::Value(hua::StructValue{data,true});}\n")
+}
+fn layout(e Emitter, state mut Layout, id int) Result<void> {
+    if has(state.done,id) { return ok() }
+    let decl=node(e.core,id)
+    if has(state.active,id) { return err(fail(decl,"cyclic native structure layout")) }
+    state.active[id]=true
+    let owner=enum_decl(decl)
+    let enumeration=decl.role=="enum-layout"
+    let body=record_body(id)
+    let record=record_type(id)
+    var code="struct "+body+" {\n"
+    var capture="inline "+record+" capture_value("+record+" v){\n"
+    var copying="inline "+record+" clone(const "+record+"& v){"+record+" out{};\n"
+    var box=("inline hn::Value to_value(const "+record+"& v){\n"
+          +"auto data=hua::managed<hua::StructData>();data->name="+quote(decl.text)+";\n")
+    if enumeration {
+        code+="int tag{};\n"
+        copying+="out.fields.get().tag=v.fields.get().tag;\n"
+    }
+    for child in decl.children {
+        let field=node(e.core,child)
+        if field.kind!="Field" { return err(fail(field,"unsupported native structure member")) }
+        let t=node(e.core,field.children[0])
+        var field_type=type_text(e.core,t)
+        var guard=""
+        if enumeration {
+            if field.text=="$case" || field.type_name=="void" { continue }
+            field_type=field.type_name
+            let label=enum_part(field.text)[0]
+            guard="if(v.fields.get().tag=="+str(unwrap(e.tags[owner+":"+rules.cut(label,1,len(label))]))+")"
+        }
+        let name=record_name(field_type)
+        if has(e.records,name) { layout(e,state,unwrap(e.records[name]))? }
+        let field_access="v.fields.get().f"+str(child)
+        code+=cpp_type(e,t,field_type)?+" f"+str(child)+"{};\n"
+        capture+=guard+field_access+"=capture_value(std::move("+field_access+"));\n"
+        copying+=guard+"out.fields.get().f"+str(child)+"=clone("+field_access+");\n"
+        box+="data->fields.emplace("+quote(field.text)+",to_value("+field_access+"));\n"
+    }
+    code+="};\nstruct "+record+" { hn::RecordStorage<"+body+"> fields; };\n"
+    list.append(state.definitions,code)?
+    list.append(state.copies,capture+"return v;}\n"+copying+"return out;}\n")?
+    list.append(state.names,"template<> struct hn::TypeName<"+record+">{static std::string get(){return "+quote(owner)+";}};\n")?
+    if enumeration { list.append(state.boxing,enum_box(e,decl,record)?)? }
+    else { list.append(state.boxing,box+"return hn::Value(hua::StructValue{data,true});}\n")? }
+    delete(state.active,id)
+    state.done[id]=true
+    return ok()
+}
+fn quote(text string) string {
+    let raw=bytes.from_text(text)
+    let digits="0123456789abcdef"
+    var escaped="\""
+    for i in 0..bytes.len(raw) {
+        let b=unwrap(bytes.at(raw,i))
+        let hi=b//16
+        let lo=b%16
+        escaped+="\\x"+rules.cut(digits,hi,hi+1)+rules.cut(digits,lo,lo+1)
+    }
+    return escaped+"\""
+}
+fn location(n lower.Node) string { return "sp"+str(n.id) }
+fn site(e Emitter, n lower.Node) string {
+    return "static const hn::SourceSpan "+location(n)+"{"+unwrap(e.files[n.module])+","+str(n.start)+","+str(n.end)+","+str(n.line)+","+str(n.column)+"};\n"
+}
+fn literal(n lower.Node, negative bool) Result<string> {
+    let normalized=rules.integer_literal(n.text,negative)
+    if is_err(normalized) { return err(fail(n,unwrap_err(normalized))) }
+    let text=unwrap(normalized)
+    if text=="-9223372036854775808" { return ok("(-9223372036854775807LL-1LL)") }
+    return ok("("+text+"LL)")
+}
+fn integer_operator(op string) string {
+    if op=="+" { return "add" }
+    if op=="-" { return "sub" }
+    if op=="*" { return "mul" }
+    if op=="//" { return "floor_div" }
+    if op=="%" { return "mod" }
+    return ""
+}
+fn binding_name(n lower.Node) string {
+    if n.kind=="Parameter" && strings.ends_with(n.text," mut") { return rules.cut(n.text,0,len(n.text)-4) }
+    return n.text
+}
+fn variable(e Emitter, n lower.Node) Result<string> {
+    let key=binding_name(n)
+    if !has(e.values,key) { return err(fail(n,"expected native variable "+n.text)) }
+    return ok(unwrap(e.values[key]))
+}
+fn read_variable(e Emitter, n lower.Node) Result<string> {
+    let storage=variable(e,n)?
+    if has(e.globals,n.text) { return ok("global_slot("+storage+","+location(n)+")") }
+    return ok(storage)
+}
+fn optional_name(e Emitter, n lower.Node) bool {
+    return n.kind=="Name" && strings.ends_with(unwrap_or(e.value_types[n.text],""),"?")
+}
+fn optional_operand(e Emitter, n lower.Node) Result<string> {
+    if optional_name(e,n) { return read_variable(e,n) }
+    return expression(e,n)
+}
+fn field_id(e Emitter, n lower.Node, owner string) Result<int> {
+    let key=record_name(owner)+":"+n.text
+    if !has(e.fields,key) { return err(fail(n,"unsupported native field "+n.text)) }
+    return ok(unwrap(e.fields[key]))
+}
+fn return_type(e Emitter, n lower.Node) Result<string> {
+    for id in n.children {
+        let part=node(e.core,id)
+        if part.kind!="ReturnTypes" { continue }
+        var result=""
+        for child in part.children {
+            let t=node(e.core,child)
+            if result!="" { result+="," }
+            result+=cpp_type(e,t,type_text(e.core,t))?
+        }
+        if len(part.children)>1 { return ok("std::tuple<"+result+">") }
+        return ok(result)
+    }
+    return ok("void")
+}
+fn function_name(id int) string { return "fn"+str(id) }
+fn signature(e Emitter, n lower.Node) Result<string> {
+    let result=return_type(e,n)?
+    var parameters=""
+    for i in 0..len(n.children)-1 {
+        let part=node(e.core,n.children[i])
+        if part.kind=="ReturnTypes" { continue }
+        if strings.ends_with(part.text," mut") && !shared_type(part.type_name) && !has(e.records,record_name(part.type_name)) {
+            return err(fail(part,"unsupported native mutable parameter "+part.type_name))
+        }
+        if parameters!="" { parameters+="," }
+        parameters+=cpp_type(e,part,part.type_name)?+" "+variable(e,part)?
+    }
+    return ok("static "+result+" "+function_name(n.id)+"("+parameters+")")
+}
+fn map_type(t string) bool { return strings.starts_with(t,"map<") }
+fn slice_type(t string) bool { return strings.starts_with(t,"[]") }
+fn shared_type(t string) bool { return t=="Buffer" || map_type(t) || slice_type(t) || strings.starts_with(t,"List<") }
+fn bridge_name(t string) string {
+    if map_type(t) {
+        let parts=rules.arguments(t,"map")
+        return "map["+bridge_name(parts[0])+"]"+bridge_name(parts[1])
+    }
+    return t
+}
+fn bridged(name string) bool {
+    return alg.contains([
+        "int","str","max","$std$alg$contains",
+        "$std$alg$sorted","$std$alg$upper_bound","$std$strings$replace","$std$strings$contains",
+        "$std$strings$index","$std$strings$join","$std$strings$len_bytes","$std$strings$lower_ascii",
+        "$std$bytes$at","$std$bytes$from_text","$std$bytes$to_ints","$std$bytes$len",
+        "$std$bytes$to_text","$std$bytes$from_ints","$std$bytes$concat","$std$bytes$crc32",
+        "$std$os$args","$std$os$cwd","$std$os$getenv","$std$fs$read_text",
+        "$std$fs$write_text","$std$fs$stat","$std$fs$canonical","$std$fs$remove",
+        "$std$fs$replace","$std$fs$temp_file","$std$fs$write_bytes","$std$path$basename",
+        "$std$path$dirname","$std$path$ext","$std$path$join","$std$path$normalize",
+        "$std$path$relative","$std$json$as_float","$std$json$as_int","$std$json$as_string",
+        "$std$json$encode","$std$json$decode","$std$json$get","$std$buffer$append",
+        "$std$buffer$bytes","$std$buffer$new","$std$buffer$text","$std$buffer$write_i64_le","$std$buffer$write_text",
+        "$std$buffer$write_u32_le","$std$buffer$write_u8"
+    ],name)
+}
+fn typed_builtin(n lower.Node, name string, args []string) string {
+    let site=location(n)
+    let joined=strings.join(args,",")
+    if name=="print" { return "hn::print("+site+",{"+joined+"})" }
+    if name=="len" || name=="has" || name=="is_ok" || name=="is_err" || name=="is_some" || name=="is_none" || name=="unwrap_or" {
+        return "hn::"+name+"("+joined+")"
+    }
+    if name=="unwrap" || name=="unwrap_err" || name=="err" {
+        return "hn::"+name+"("+joined+","+site+")"
+    }
+    if name=="ok" { return "hn::ok("+joined+")" }
+    if name=="clone" { return "clone("+joined+")" }
+    if name=="$std$strings$split" { return "hn::split("+joined+","+site+")" }
+    if name=="$std$strings$starts_with" { return "hn::starts_with("+joined+")" }
+    if name=="$std$strings$ends_with" { return "hn::ends_with("+joined+")" }
+    if name=="$std$list$clear" { return "hn::list_clear("+joined+","+site+")" }
+    if name=="$std$list$extend" { return "hn::list_extend("+joined+","+site+")" }
+    if name=="$std$strings$slice" { return "hn::text_slice("+joined+","+site+")" }
+    if name=="delete" { return "hn::erase("+joined+","+site+")" }
+    if name=="$std$list$from_slice" || name=="$std$list$len" || name=="$std$list$snapshot" {
+        return "hn::list_"+rules.cut(name,10,len(name))+"("+joined+")"
+    }
+    if name=="$std$list$append" || name=="$std$list$get" || name=="$std$list$pop" || name=="$std$list$set" {
+        return "hn::list_"+rules.cut(name,10,len(name))+"("+joined+","+site+")"
+    }
+    return ""
+}
+fn call(e Emitter, n lower.Node) Result<string> {
+    return emit_call(e,n,false)
+}
+fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
+    let callee=node(e.core,n.children[0])
+    if callee.kind!="Name" { return err(fail(callee,"native calls require a function declaration")) }
+    var code="({\n"
+    let empty []string=[]
+    var args=list.from_slice(empty)
+    var flags=list.from_slice(empty)
+    let direct=has(e.functions,callee.text)
+    var function=callee
+    var builtin=""
+    if direct { function=node(e.core,unwrap(e.functions[callee.text])) }
+    else if strings.starts_with(callee.text,"$core$") { builtin=rules.cut(callee.text,6,len(callee.text)) }
+    else { return err(fail(callee,"unsupported native callee "+callee.text)) }
+    let bridge=bridged(builtin)
+    if deferred && !direct { return err(fail(n,"unsupported native deferred intrinsic")) }
+    if deferred {
+        code="auto deferred"+str(n.id)+"=({\n"
+    }
+    for i in 1..len(n.children) {
+        let arg=node(e.core,n.children[i])
+        let name="arg"+str(i)
+        var value=""
+        if direct { value=contextual_expression(e,arg,node(e.core,function.children[i-1]).type_name)? }
+        else { value=expression(e,arg)? }
+        if !direct && (builtin=="is_some" || builtin=="is_none" || builtin=="unwrap" || builtin=="unwrap_or") && i==1 {
+            value=optional_operand(e,arg)?
+        }
+        if direct {
+            let param=node(e.core,function.children[i-1])
+            if !strings.ends_with(param.text," mut") {
+                value="capture_value("+value+")"
+            } else if has(e.records,record_name(param.type_name)) {
+                let borrowed=receiver(e,arg)?
+                code+=borrowed.code
+                value="borrow_record("+borrowed.value+")"
+            }
+            code+=cpp_type(e,param,param.type_name)?+" "+name+"="+value+";\n"
+        } else {
+            if arg.type_name=="void" { return err(fail(arg,"unsupported native argument void")) }
+            code+="auto "+name+"="+value+";\n"
+        }
+        if builtin=="print" || bridge {
+            list.append(args,"to_value("+name+")")?
+            list.append(flags,"false")?
+        } else if direct && !deferred { list.append(args,"std::move("+name+")")? }
+        else { list.append(args,name)? }
+    }
+    let arguments=list.snapshot(args)
+    if deferred {
+        return ok(code+"["+strings.join(arguments,",")+"]() mutable {auto depth=hn::enter<false,false>("
+            +location(n)+");"+function_name(function.id)+"("+strings.join(arguments,",")+");"
+            +"hn::leave<false>(depth);};});\nhn::Deferred guard"+str(n.id)+"(std::move(deferred"+str(n.id)+"));\n")
+    }
+    if direct {
+        code+="auto depth=hn::enter<false,false>("+location(n)+");\n"
+        let invoke=function_name(function.id)+"("+strings.join(arguments,",")+");\n"
+        if n.type_name=="void" { return ok(code+invoke+"hn::leave<false>(depth);})") }
+        return ok(code+"auto result="+invoke+"hn::leave<false>(depth);\nstd::move(result);})")
+    }
+    if bridge {
+        let invoke=("hn::call_builtin("+quote(builtin)+","+location(n)+",{"+strings.join(arguments,",")
+            +"},{"+strings.join(list.snapshot(flags),",")+"},"+quote(bridge_name(n.type_name))+")")
+        if n.type_name=="void" { return ok(code+invoke+";})") }
+        return ok(code+"hn::from_value<"+cpp_type(e,n,n.type_name)?+">("+invoke+");})")
+    }
+    if builtin=="is_none" || builtin=="is_some" || builtin=="unwrap" || builtin=="unwrap_or" {
+        let item=node(e.core,n.children[1])
+        if !optional_name(e,item) && !strings.ends_with(item.type_name,"?") && len(rules.arguments(item.type_name,"Result"))==0 {
+            if builtin=="is_none" { return ok(code+str(item.type_name=="nil")+";})") }
+            if builtin=="is_some" { return ok(code+str(item.type_name!="nil")+";})") }
+            if item.type_name!="nil" { return ok(code+"arg1;})") }
+            if builtin=="unwrap_or" { return ok(code+"arg2;})") }
+        }
+    }
+    let invoke=typed_builtin(n,builtin,arguments)
+    if invoke=="" { return err(fail(callee,"unsupported native intrinsic "+builtin)) }
+    return ok(code+invoke+";})")
+}
+fn index(e Emitter, n lower.Node) Result<string> {
+    let base=node(e.core,n.children[0])
+    if !slice_type(base.type_name) && !map_type(base.type_name) {
+        return err(fail(n,"unsupported native index of "+base.type_name))
+    }
+    return ok("({auto base="+expression(e,base)?+";auto key="+expression(e,node(e.core,n.children[1]))?
+        +";hn::at(base,key,"+location(n)+");})")
+}
+fn subslice(e Emitter, n lower.Node) Result<string> {
+    let base=node(e.core,n.children[0])
+    if !slice_type(base.type_name) { return err(fail(n,"unsupported native slice of "+base.type_name)) }
+    let start=node(e.core,n.children[1])
+    let end=node(e.core,n.children[2])
+    var first="0"
+    var last="base.length"
+    if start.kind!="Omitted" { first=expression(e,start)? }
+    if end.kind!="Omitted" { last=expression(e,end)? }
+    return ok("({auto base="+expression(e,base)?+";hn::I first="+first+";hn::I last="+last
+        +";hn::sub_slice(std::move(base),first,last,"+location(n)+");})")
+}
+fn array_literal(e Emitter, n lower.Node, expected string) Result<string> {
+    if !slice_type(expected) {
+        if len(n.children)==0 && (expected=="" || expected=="[]") { return ok("hn::EmptySlice{}") }
+        return err(fail(n,"unsupported native array literal type "+expected))
+    }
+    let element=cpp_type(e,n,rules.cut(expected,2,len(expected)))?
+    var code="({std::vector<"+element+"> items;items.reserve("+str(len(n.children))+");\n"
+    for child in n.children {
+        code+="items.push_back("+contextual_expression(e,node(e.core,child),rules.cut(expected,2,len(expected)))?+");\n"
+    }
+    return ok(code+"hn::Slice<"+element+">::of(std::move(items));})")
+}
+fn map_literal(e Emitter, n lower.Node) Result<string> {
+    let parts=rules.arguments(n.type_name,"map")
+    if len(parts)!=2 { return err(fail(n,"unsupported native map type "+n.type_name)) }
+    let key_type=cpp_type(e,n,parts[0])?
+    let value_type=cpp_type(e,n,parts[1])?
+    var code="({auto map=hn::new_map<"+key_type+","+value_type+">();\n"
+    for i in 1..len(n.children) {
+        let item=node(e.core,n.children[i])
+        code+=("{"+key_type+" key="+expression(e,node(e.core,item.children[0]))?+";\n"
+             +value_type+" value="+expression(e,node(e.core,item.children[1]))?+";\n"
+             +"hn::put(map,std::move(key),std::move(value),"+location(item)+");}\n")
+    }
+    return ok(code+"map;})")
+}
+fn contextual_expression(e Emitter, n lower.Node, expected string) Result<string> {
+    if n.kind=="Array" { return array_literal(e,n,expected) }
+    return expression(e,n)
+}
+fn structure_literal(e Emitter, n lower.Node) Result<string> {
+    let t=cpp_type(e,n,n.type_name)?
+    var code="({"+t+" record{};\n"
+    for child in n.children {
+        let field=node(e.core,child)
+        let id=field_id(e,field,n.type_name)?
+        let value=node(e.core,field.children[0])
+        let owner=record_name(n.type_name)
+        if node(e.core,unwrap(e.records[owner])).role=="enum-layout" {
+            if field.text=="$case" {
+                code+="record.fields.get().tag="+str(unwrap(e.tags[owner+":"+value.text]))+";\n"
+                continue
+            }
+            if value.kind=="Nil" { continue }
+        }
+        let declaration=node(e.core,id)
+        var expected=declaration.type_name
+        if expected=="" { expected=type_text(e.core,node(e.core,declaration.children[0])) }
+        code+="record.fields.get().f"+str(id)+"="+contextual_expression(e,value,expected)?+";\n"
+    }
+    return ok(code+"record;})")
+}
+fn expression(e Emitter, n lower.Node) Result<string> {
+    let k=n.kind
+    if k=="Call" { return call(e,n) }
+    if k=="Nil" { return ok("std::nullopt") }
+    if k=="Pack" { return pack(e,n.children) }
+    if k=="Array" { return array_literal(e,n,n.type_name) }
+    if k=="MapLiteral" { return map_literal(e,n) }
+    if k=="Index" { return index(e,n) }
+    if k=="Slice" { return subslice(e,n) }
+    if k=="Assignment" || k=="Update" { return assignment(e,n) }
+    if k=="Propagate" {
+        let operand=node(e.core,n.children[0])
+        if len(rules.arguments(operand.type_name,"Result"))!=2 { return err(fail(n,"unsupported native propagation")) }
+        return ok("({auto pending="+expression(e,operand)?+";if(!pending.ok)return hn::propagated("
+            +"std::move(pending.error),pending.trace,"+location(n)+");std::move(pending.value);})")
+    }
+    if k=="Name" {
+        let value=read_variable(e,n)?
+        if optional_name(e,n) && !strings.ends_with(n.type_name,"?") && n.type_name!="nil" {
+            return ok("hn::unwrap("+value+","+location(n)+")")
+        }
+        return ok(value)
+    }
+    cpp_type(e,n,n.type_name)?
+    if k=="Integer" { return literal(n,false) }
+    if k=="Float" {
+        let text=strings.replace(n.text,"_","")
+        if is_err(json.decode(text)) { return err(fail(n,"unrepresentable floating literal")) }
+        return ok("static_cast<hn::F>("+text+")")
+    }
+    if k=="Boolean" { return ok(n.text) }
+    if k=="String" { return ok("text"+str(n.id)) }
+    if k=="StructLiteral" { return structure_literal(e,n) }
+    if k=="Member" {
+        let base=node(e.core,n.children[0])
+        let owner=expression(e,base)?
+        if n.text=="len" && (base.type_name=="string" || slice_type(base.type_name) || map_type(base.type_name)) { return ok("hn::len("+owner+")") }
+        let field=field_id(e,n,base.type_name)?
+        return ok("("+owner+").fields.get().f"+str(field))
+    }
+    if k=="Unary" {
+        let child=node(e.core,n.children[0])
+        if n.text=="-" && child.kind=="Integer" { return literal(child,true) }
+        if n.text!="-" && n.text!="+" && n.text!="!" { return err(fail(n,"unsupported native unary operator "+n.text)) }
+        let operand=expression(e,child)?
+        if n.text=="-" {
+            if n.type_name=="float" { return ok("(-("+operand+"))") }
+            return ok("hn::neg("+operand+","+location(n)+")")
+        }
+        return ok("("+n.text+"("+operand+"))")
+    }
+    if k=="Binary" {
+        let op=n.text
+        let left_node=node(e.core,n.children[0])
+        let right_node=node(e.core,n.children[1])
+        var left=expression(e,left_node)?
+        var right=expression(e,right_node)?
+        if left_node.kind=="Nil" || right_node.kind=="Nil" {
+            left=optional_operand(e,left_node)?
+            right=optional_operand(e,right_node)?
+        }
+        if op=="&&" || op=="||" { return ok("("+left+op+right+")") }
+        let helper=integer_operator(op)
+        let head="({auto left="+left+";\nauto right="+right+";\n"
+        if left_node.type_name=="string" && right_node.type_name=="string" {
+            if op=="+" { return ok(head+"hn::concat(left,right,"+location(n)+");})") }
+            if op=="<=" { return ok(head+"!(right<left);})") }
+            if op==">=" { return ok(head+"!(left<right);})") }
+            if op==">" { return ok(head+"right<left;})") }
+        }
+        if n.type_name=="float" && (op=="+" || op=="-" || op=="*" || op=="/") {
+            var method="fdiv"
+            if op=="+" { method="fadd" }
+            else if op=="-" { method="fsub" }
+            else if op=="*" { method="fmul" }
+            return ok(head+"hn::"+method+"(left,right,"+location(n)+");})")
+        }
+        if n.type_name=="int" && (op=="&" || op=="|" || op=="^" || op=="<<" || op==">>") {
+            return ok(head+"hn::general_binary<hn::I>("+quote(op)+",left,right,"+location(n)+");})")
+        }
+        if helper!="" && left_node.type_name=="int" && right_node.type_name=="int" {
+            return ok(head+"hn::"+helper+"(left,right,"+location(n)+");})")
+        }
+        if (op=="==" || op=="!=") && (left_node.kind=="Nil" || right_node.kind=="Nil") {
+            if left_node.kind=="Nil" && right_node.kind=="Nil" { return ok(str(op=="==")) }
+            return ok(head+"left"+op+"right;})")
+        }
+        if (left_node.type_name=="string" || left_node.type_name=="bool" || left_node.type_name=="int" || left_node.type_name=="float") && (op=="==" || op=="!=" || op=="<" || op==">" || op=="<=" || op==">=") {
+            return ok(head+"left"+op+"right;})")
+        }
+        if op=="==" || op=="!=" {
+            return ok(head+"hn::general_binary<bool>("+quote(op)+",left,right,"+location(n)+");})")
+        }
+        return err(fail(n,"unsupported native binary operator "+op))
+    }
+    return err(fail(n,"unsupported native expression "+k))
+}
+fn compound(n lower.Node, t string, read string) Result<string> {
+    if n.text=="=" { return ok("rhs") }
+    var op=rules.cut(n.text,0,len(n.text)-1)
+    if n.kind=="Update" {
+        op="+"
+        if n.text=="--" { op="-" }
+    }
+    let helper=integer_operator(op)
+    if t=="int" && helper!="" { return ok("hn::"+helper+"("+read+",rhs,"+location(n)+")") }
+    if t=="string" && op=="+" { return ok("hn::concat("+read+",rhs,"+location(n)+")") }
+    return err(fail(n,"unsupported native assignment "+n.text+" for "+t))
+}
+fn receiver(e Emitter, n lower.Node) Result<Receiver> {
+    if n.kind=="Index" {
+        let base=node(e.core,n.children[0])
+        if !slice_type(base.type_name) { return err(fail(n,"native field target needs a record or slice element")) }
+        let owner="owner"+str(n.id)
+        let key="key"+str(n.id)
+        let prefix=("auto "+owner+"="+expression(e,base)?+";\n"
+            +"auto "+key+"="+expression(e,node(e.core,n.children[1]))?+";\n")
+        return ok(Receiver{code:prefix,value:"hn::slot("+owner+","+key+","+location(n)+")"})
+    }
+    if n.kind=="Member" {
+        let base=node(e.core,n.children[0])
+        let field=field_id(e,n,base.type_name)?
+        let source=receiver(e,base)?
+        return ok(Receiver{code:source.code,value:"("+source.value+").fields.get().f"+str(field)})
+    }
+    return ok(Receiver{code:"",value:expression(e,n)?})
+}
+fn assignment(e Emitter, n lower.Node) Result<string> {
+    let target=node(e.core,n.children[0])
+    var code="({"
+    var value="hn::I{1}"
+    if n.kind!="Update" { value=contextual_expression(e,node(e.core,n.children[1]),n.type_name)? }
+    var read="slot"
+    var indirect=false
+    if target.kind=="Name" {
+        code+="auto& slot="+read_variable(e,target)?+";\n"
+    } else if target.kind=="Member" {
+        let base=node(e.core,target.children[0])
+        let name=record_name(base.type_name)
+        let field=field_id(e,target,name)?
+        let body=record_body(unwrap(e.records[name]))
+        let owner=receiver(e,base)?
+        code+=owner.code+"auto slot=field_location("+owner.value+",&"+body+"::f"+str(field)+");\n"
+        read="slot.read()"
+        indirect=true
+    } else if target.kind=="Index" {
+        let base=node(e.core,target.children[0])
+        let key=node(e.core,target.children[1])
+        code+="auto base="+expression(e,base)?+";auto key="+expression(e,key)?+";\n"
+        if map_type(base.type_name) {
+            code+="auto slot=hn::locate_map(std::move(base),std::move(key),"+location(target)+");\n"
+            read="slot.read("+location(n)+")"
+        } else if slice_type(base.type_name) {
+            code+="auto slot=hn::locate_sequence(std::move(base),key,"+location(target)+");\n"
+            read="slot.read()"
+        } else { return err(fail(target,"unsupported native indexed assignment "+base.type_name)) }
+        indirect=true
+    } else { return err(fail(target,"unsupported native assignment target "+target.kind)) }
+    let t=cpp_type(e,n,n.type_name)?
+    code+=t+" rhs="+value+";\n"
+    let updated=compound(n,n.type_name,read)?
+    code+=t+" updated="+updated+";\n"
+    if indirect { code+="slot.write(updated,"+location(n)+");\n" }
+    else { code+="slot=updated;\n" }
+    return ok(code+"updated;})")
+}
+fn loop_binding(n lower.Node, value string) string {
+    if n.text=="_" { return "" }
+    return "const auto loop"+str(n.id)+"=capture_value("+value+");\n"
+}
+fn iteration(e Emitter, n lower.Node) Result<string> {
+    let count=len(n.children)-2
+    let sequence=node(e.core,n.children[count])
+    let body=statement(e,node(e.core,n.children[count+1]))?
+    let first=node(e.core,n.children[0])
+    let last=node(e.core,n.children[count-1])
+    if sequence.kind=="Range" {
+        if count!=1 { return err(fail(n,"native range loop requires one binding")) }
+        let site=location(sequence)
+        var step="1"
+        if len(sequence.children)==3 { step=expression(e,node(e.core,sequence.children[2]))? }
+        var positive="<"
+        var negative=">"
+        if sequence.text=="..=" { positive="<="
+            negative=">=" }
+        return ok("{hn::I cursor="+expression(e,node(e.core,sequence.children[0]))?+";hn::I limit="
+            +expression(e,node(e.core,sequence.children[1]))?+";hn::I step="+step+";bool done=false;\n"
+            +"if(step==0)hn::fail("+site+",\"range step cannot be zero\",\"E4005\");\n"
+            +"while(!done&&(step>0?cursor"+positive+"limit:cursor"+negative+"limit)){\n"
+            +loop_binding(first,"cursor")
+            +"if((step>0&&cursor>std::numeric_limits<hn::I>::max()-step)||"
+            +"(step<0&&cursor<std::numeric_limits<hn::I>::min()-step))done=true;else cursor+=step;\n"
+            +body+"}\n}\n")
+    }
+    let header="{auto iterable="+expression(e,sequence)?+";\n"
+    if slice_type(sequence.type_name) {
+        var bind=""
+        if count==2 { bind=loop_binding(first,"ix") }
+        let element=cpp_type(e,sequence,rules.cut(sequence.type_name,2,len(sequence.type_name)))?
+        return ok(header+"for(hn::I ix=0;ix<iterable.length;++ix){\n"+bind
+            +loop_binding(last,element+"(hn::at(iterable,ix,"+location(sequence)+"))")+body+"}\n}\n")
+    }
+    if map_type(sequence.type_name) {
+        let parts=rules.arguments(sequence.type_name,"map")
+        let pair="std::pair<"+cpp_type(e,sequence,parts[0])?+","+cpp_type(e,sequence,parts[1])?+">"
+        var bind=loop_binding(first,"item.first")
+        if count==2 { bind+=loop_binding(last,"item.second") }
+        return ok(header+"std::vector<"+pair+"> snapshot(iterable.data->begin(),iterable.data->end());\n"
+            +"for(const auto& item:snapshot){\n"+bind+body+"}\n}\n")
+    }
+    return err(fail(sequence,"unsupported native iteration over "+sequence.type_name))
+}
+fn pack(e Emitter, children []int) Result<string> {
+    var code="({"
+    let empty []string=[]
+    var names=list.from_slice(empty)
+    for id in children {
+        let name="item"+str(id)
+        code+="auto "+name+"="+expression(e,node(e.core,id))?+";\n"
+        list.append(names,"std::move("+name+")")?
+    }
+    return ok(code+"std::make_tuple("+strings.join(list.snapshot(names),",")+");})")
+}
+fn multiple(e Emitter, n lower.Node) Result<string> {
+    let bindings=node(e.core,n.children[0])
+    let pack_name="pack"+str(n.id)
+    var setup=""
+    var writes=""
+    for i in 0..len(bindings.children) {
+        let binding=node(e.core,bindings.children[i])
+        if binding.text=="_" { continue }
+        let item="std::get<"+str(i)+">("+pack_name+")"
+        if n.kind=="MultiAssignment" {
+            if binding.kind!="Name" { return err(fail(binding,"unsupported native multiple assignment target")) }
+            let slot="target"+str(binding.id)
+            setup+="auto& "+slot+"="+read_variable(e,binding)?+";\n"
+            writes+=slot+"="+item+";\n"
+        } else {
+            let name=variable(e,binding)?
+            if n.text=="var" { writes+="auto "+name+"="+item+";\n" }
+            else { writes+="const auto "+name+"=capture_value("+item+");\n" }
+        }
+    }
+    return ok(setup+"auto "+pack_name+"="+expression(e,node(e.core,n.children[1]))?+";\n"+writes)
+}
+fn match_statement(e Emitter, n lower.Node) Result<string> {
+    let subject=node(e.core,n.children[0])
+    let owner=record_name(n.type_name)
+    var enumeration=false
+    if has(e.records,owner) { enumeration=node(e.core,unwrap(e.records[owner])).role=="enum-layout" }
+    var code="{auto subject="+expression(e,subject)?+";\n"
+    for i in 1..len(n.children) {
+        let arm=node(e.core,n.children[i])
+        let pattern=node(e.core,arm.children[0])
+        let bindings=node(e.core,arm.children[1])
+        let any=pattern.kind=="Name" && pattern.text=="_"
+        if i>1 { code+="else " }
+        var label=""
+        if !any {
+            if enumeration {
+                let parts=strings.split(pattern.text,".")
+                label=parts[len(parts)-1]
+                code+="if(subject.fields.get().tag=="+str(unwrap(e.tags[owner+":"+label]))+")"
+            } else {
+                var value=expression(e,pattern)?
+                if pattern.kind=="Nil" { value="std::nullopt" }
+                code+="if(subject=="+value+")"
+            }
+        }
+        code+="{\n"
+        for j in 0..len(bindings.children) {
+            let binding=node(e.core,bindings.children[j])
+            if binding.text=="_" { continue }
+            let key=owner+":$"+label+"#"+str(j)+"#"+binding.type_name
+            if !has(e.fields,key) { return err(fail(binding,"unsupported native match payload "+key)) }
+            code+="const auto "+variable(e,binding)?+"=capture_value(subject.fields.get().f"+str(unwrap(e.fields[key]))+");\n"
+        }
+        code+=block_contents(e,node(e.core,arm.children[2]))?+"}\n"
+    }
+    return ok(code+"}\n")
+}
+fn statement(e Emitter, n lower.Node) Result<string> {
+    let k=n.kind
+    if k=="Block" { return ok("{\n"+block_contents(e,n)?+"}\n") }
+    if k=="Let" || k=="Var" {
+        var value=contextual_expression(e,node(e.core,n.children[len(n.children)-1]),n.type_name)?
+        if k=="Let" { value="capture_value("+value+")" }
+        if n.text=="_" { return ok("(void)("+value+");\n") }
+        let name=variable(e,n)?
+        if has(e.globals,n.text) { return ok(name+".emplace("+value+");\n") }
+        let t=cpp_type(e,n,n.type_name)?
+        if k=="Let" { return ok("const "+t+" "+name+"="+value+";\n") }
+        return ok(t+" "+name+"="+value+";\n")
+    }
+    if k=="ExpressionStatement" {
+        let child=node(e.core,n.children[0])
+        return ok("(void)("+expression(e,child)?+");\n")
+    }
+    if k=="If" || k=="While" {
+        let condition=expression(e,node(e.core,n.children[0]))?
+        var result="if"
+        if k=="While" { result="while" }
+        result+="("+condition+")"+statement(e,node(e.core,n.children[1]))?
+        if len(n.children)==3 { result+="else "+statement(e,node(e.core,n.children[2]))? }
+        return ok(result)
+    }
+    if k=="For" { return iteration(e,n) }
+    if k=="Match" { return match_statement(e,n) }
+    if k=="Defer" { return emit_call(e,node(e.core,n.children[0]),true) }
+    if k=="MultiBinding" || k=="MultiAssignment" { return multiple(e,n) }
+    if k=="Break" { return ok("break;\n") }
+    if k=="Continue" { return ok("continue;\n") }
+    if k=="Return" {
+        if len(n.children)==0 { return ok("return;\n") }
+        if len(n.children)>1 { return ok("return "+pack(e,n.children)?+";\n") }
+        return ok("return "+expression(e,node(e.core,n.children[0]))?+";\n")
+    }
+    return err(fail(n,"unsupported native statement "+k))
+}
+fn block_contents(e Emitter, n lower.Node) Result<string> {
+    let empty []string=[]
+    var lines=list.from_slice(empty)
+    for id in n.children { list.append(lines,statement(e,node(e.core,id))?)? }
+    return ok(strings.join(list.snapshot(lines),""))
+}
+pub fn emit(core lower.Core) Result<string> {
+    var e=Emitter{core:core,values:map[string]string{},functions:map[string]int{},
+        records:map[string]int{},fields:map[string]int{},tags:map[string]int{},files:map[string]string{},globals:map[string]bool{},value_types:map[string]string{}}
+    let empty []int=[]
+    var functions=list.from_slice(empty)
+    var records=list.from_slice(empty)
+    var initializers=list.from_slice(empty)
+    for unit in list.snapshot(core.initialization) {
+        for id in unit.roots {
+            let n=node(core,id)
+            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" { return err(fail(n,"unsupported native declaration "+n.role)) }
+            if n.kind=="Function" {
+                e.functions[n.text]=id
+                list.append(functions,id)?
+            } else if n.kind=="Struct" {
+                let owner=enum_decl(n)
+                if strings.contains(owner," ") { return err(fail(n,"unsupported native structure "+owner)) }
+                e.records[owner]=id
+                for child in n.children {
+                    let field=node(core,child)
+                    e.fields[owner+":"+field.text]=child
+                    if n.role=="enum-layout" && field.text!="$case" {
+                        let label=enum_part(field.text)[0]
+                        let key=owner+":"+rules.cut(label,1,len(label))
+                        if !has(e.tags,key) { e.tags[key]=child }
+                    }
+                }
+                list.append(records,id)?
+            } else {
+                if (n.kind=="Let" || n.kind=="Var") && n.text!="_" { e.globals[n.text]=true }
+                list.append(initializers,id)?
+            }
+        }
+    }
+    var code=list.from_slice(["// Generated by Hua N4 backend.\n#include \"hua/native_rt.hpp\"\nnamespace {\n"])
+    list.append(code,"using hn::capture_value;using hn::to_value;using hn::clone;\n")?
+    if list.len(records)>0 {
+        list.append(code,"template<class T> auto borrow_record(T&& owner){"
+            +"using Record=std::remove_cvref_t<T>;using Storage=std::remove_cvref_t<decltype(owner.fields)>;"
+            +"return Record{Storage::alias(owner.fields.pin())};}\n")?
+        list.append(code,"template<class Record,class Body,class Field> "
+            +"auto field_location(Record&& owner,Field Body::* field){return hn::locate_field(owner.fields,field);}\n")?
+    }
+    if len(e.globals)>0 {
+        list.append(code,"template<class T> T& global_slot(std::optional<T>& value,const hn::SourceSpan& site){"
+                         +"if(!value)hn::fail(site,\"global binding is not initialized\",\"E4001\");return *value;}\n")?
+    }
+    for unit in list.snapshot(core.initialization) {
+        let name="source"+str(len(e.files))
+        e.files[unit.module]=name
+        list.append(code,"static const char "+name+"[]="+quote(unit.module)+";\n")?
+    }
+    for n in list.snapshot(core.nodes) {
+        if n.kind=="Let" || n.kind=="Var" || n.kind=="Parameter" {
+            e.values[binding_name(n)]="v"+str(n.id)
+            e.value_types[binding_name(n)]=n.type_name
+        }
+        if n.kind=="For" {
+            for i in 0..len(n.children)-2 {
+                let binding=node(core,n.children[i])
+                e.values[binding.text]="loop"+str(binding.id)
+            }
+        }
+        if n.kind=="BindingList" {
+            for id in n.children {
+                let binding=node(core,id)
+                if binding.kind!="Name" || binding.text=="_" || has(e.values,binding.text) { continue }
+                e.values[binding.text]="v"+str(id)
+                e.value_types[binding.text]=binding.type_name
+            }
+        }
+        list.append(code,site(e,n))?
+        if n.kind=="String" {
+            list.append(code,"static hn::StrRep raw"+str(n.id)+"{hn::StrRep::immortal,std::string("
+                +quote(n.text)+","+str(len(n.text))+")};\nstatic const hn::Str text"+str(n.id)+"(&raw"+str(n.id)+");\n")?
+        }
+    }
+    let definitions []string=[]
+    var order=Layout{active:map[int]bool{},done:map[int]bool{},definitions:list.from_slice(definitions),
+        names:list.from_slice(definitions),boxing:list.from_slice(definitions),copies:list.from_slice(definitions)}
+    for id in list.snapshot(records) {
+        list.append(code,"struct "+record_type(id)+";\n")?
+        layout(e,order,id)?
+    }
+    for definition in list.snapshot(order.definitions) { list.append(code,definition)? }
+    list.append(code,"}\n")?
+    for item in list.snapshot(order.names) { list.append(code,item)? }
+    list.append(code,"namespace {\n")?
+    for id in list.snapshot(records) {
+        let t=record_type(id)
+        list.append(code,"inline "+t+" capture_value("+t+");inline "+t+" clone(const "+t+"&);inline hn::Value to_value(const "+t+"&);\n")?
+    }
+    for item in list.snapshot(order.copies) { list.append(code,item)? }
+    for item in list.snapshot(order.boxing) { list.append(code,item)? }
+    for id in list.snapshot(initializers) {
+        let n=node(core,id)
+        if (n.kind=="Var" || n.kind=="Let") && has(e.globals,n.text) {
+            list.append(code,"static std::optional<"+cpp_type(e,n,n.type_name)?+"> "+variable(e,n)?+";\n")?
+        }
+    }
+    let declarations=list.snapshot(functions)
+    for id in declarations { list.append(code,signature(e,node(core,id))?+";\n")? }
+    var problems=list.from_slice(definitions)
+    for id in declarations {
+        let n=node(core,id)
+        let body=node(core,n.children[len(n.children)-1])
+        let lines=block_contents(e,body)
+        if is_err(lines) {
+            list.append(problems,unwrap_err(lines))?
+            if list.len(problems)>=32 { break }
+            continue
+        }
+        var tail="}\n"
+        if strings.starts_with(return_type(e,n)?,"hn::Opt<") { tail="return std::nullopt;\n"+tail }
+        list.append(code,signature(e,n)?+"{\n"+unwrap(lines)+tail)?
+    }
+    if list.len(problems)>0 { return err(strings.join(list.snapshot(problems),"\n")) }
+    list.append(code,"static void initialize(){\n")?
+    for id in list.snapshot(initializers) { list.append(code,statement(e,node(core,id))?)? }
+    list.append(code,"}\nstatic const hn::SourceSpan entry_site{};\n")?
+    var entry="return hn::Value{};"
+    var main_site="entry_site"
+    for id in declarations {
+        let n=node(core,id)
+        if n.text!="main" { continue }
+        main_site=location(n)
+        # The entry contract ignores values other than a Result failure.
+        let invoke=function_name(id)+"()"
+        if strings.starts_with(return_type(e,n)?,"hn::Result<") { entry="return hn::to_value("+invoke+");" }
+        else { entry=invoke+";"+entry }
+    }
+    list.append(code,"static hn::Value entry(){initialize();"+entry+"}\n}\n"
+         +"int main(int argc,char** argv){return hn::run_main(argc,argv,"+main_site+",&entry);}\n")?
+    return ok(strings.join(list.snapshot(code),""))
+}

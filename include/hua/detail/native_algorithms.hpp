@@ -7,6 +7,16 @@ inline void check_text_bound(const Str& value,const SourceSpan& site){
     if(value.text().size()>hua::text_format::max_text)[[unlikely]]
         fail(site,"standard library text exceeds 16 MiB","E4099");
 }
+inline Result<Str,Str> text_slice(const Str& input,I first,I last,const SourceSpan& site){
+    check_text_bound(input,site);
+    const auto& text=input.text();
+    if(first<0||last<first||static_cast<std::uint64_t>(last)>text.size())
+        return err(Str("string slice bounds are invalid"),site);
+    const auto view=std::string_view(text).substr(static_cast<std::size_t>(first),static_cast<std::size_t>(last-first));
+    if(!hua::text_utf8_error(view).empty())
+        return err(Str("string slice cuts a UTF-8 character"),site);
+    return ok(Str(std::string(view)));
+}
 inline I text_last_index(const Str& text,const Str& pattern,const SourceSpan& site){
     check_text_bound(text,site);check_text_bound(pattern,site);
     if(pattern.text().empty())return static_cast<I>(text.text().size());

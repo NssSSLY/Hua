@@ -146,7 +146,7 @@ def validate_lowering(report,contract):
     choice={"If":{2,3},"Range":{2,3},"Parameter":{0,1},"Let":{1,2},"Var":{1,2},"Field":{1,2},"For":{3,4}}
     minimum={k:1 for k in ("Call","ReturnTypes","GenericType","MapLiteral","Match","Function")};minimum["Pack"]=2
     free={"Struct","Block","Array","StructLiteral","BindingList","Return"}
-    parents=[0]*len(nodes);depths=[];declarations=set()
+    parents=[0]*len(nodes);depths=[];declarations={};copied_parameters=set()
     symbols={(x["module"],x["node"]):x for x in analysis["graph"]["symbols"]}
     typed={x["target"]:x for x in analysis["symbols"]}
     references={(x["module"],x["node"]):x["target"] for x in analysis["graph"]["references"]}
@@ -168,6 +168,8 @@ def validate_lowering(report,contract):
         marker="fn:"+prefixes[report["entry"]]+"main"
         for end in (",",">","?"):t=t.replace(marker+end,"fn:main"+end)
         return t[:-len(marker)]+"fn:main" if t.endswith(marker) else t
+    async_bodies={"$async$"+runtime_name(f["target"]):f for f in functions.values() if f.get("asynchronous") is True}
+    task_intrinsics={"$core$task_start":"builtin:task_start","$core$task_await":"builtin:task_await"}
     unary={"+","-","!","~"}
     binary={"+","-","*","/","//","%","**","==","!=","<","<=",">",">=","&&","||","&","|","^","<<",">>"}
     assignments={"=","+=","-=","*=","/=","//=","%=","**="}
@@ -176,13 +178,47 @@ def validate_lowering(report,contract):
         if any(type(n[k]) is not int for k in ("start","end","line","column")) or not 0<=n["start"]<=n["end"]<=modules[n["module"]]["input_bytes"] or min(n["line"],n["column"])<1:raise ValueError("invalid C05 source")
         raw,lines=positions[n["module"]]
         if n["end"]>len(raw) or n["line"]>len(lines) or lines[n["line"]-1]+n["column"]-1!=n["start"] or (n["line"]<len(lines) and n["start"]>=lines[n["line"]]):raise ValueError("invalid C05 normalized position")
-        if not isinstance(n["text"],str) or not isinstance(n["type_name"],str) or type(n["writable"]) is not bool or n["role"] not in ("source","enum-layout","enum-constructor"):raise ValueError("invalid C05 metadata")
+        if not isinstance(n["text"],str) or not isinstance(n["type_name"],str) or type(n["writable"]) is not bool or n["role"] not in ("source","enum-layout","enum-constructor","async-body","local-function"):raise ValueError("invalid C05 metadata")
         c=n["children"];k=n["kind"]
         if not isinstance(c,list) or any(type(x) is not int or not 0<=x<i for x in c):raise ValueError("invalid C05 children")
         if not (k in free or k in exact and len(c)==exact[k] or k in choice and len(c) in choice[k] or k in minimum and len(c)>=minimum[k]):raise ValueError("invalid C05 shape")
         if k=="Unary" and n["text"] not in unary or k=="Binary" and n["text"] not in binary or k=="Assignment" and n["text"] not in assignments or k=="Range" and n["text"] not in ("..","..=") or k=="Update" and n["text"] not in ("++","--"):raise ValueError("invalid C05 operator")
-        if n["role"]=="source":
-            identity=(n["module"],n["origin"]);symbol=symbols.get(identity);fact=facts.get(identity);ref=references.get(identity)
+        identity=(n["module"],n["origin"])
+        symbol,fact,ref=symbols.get(identity),facts.get(identity),references.get(identity)
+        function=functions.get(symbol["target"]) if symbol else None
+        role=n["role"]
+        text=n["text"]
+        typed_name=n["type_name"]
+        asynchronous=function is not None and function.get("asynchronous") is True
+        if k=="Function" and asynchronous:
+            wrapper=runtime_name(function["target"])
+            body="$async$"+wrapper
+            nested=bool(symbol["scope"])
+            expected_roles={wrapper:"local-function" if nested else "source",
+                            body:"local-function" if nested else "async-body"}
+            if (text not in expected_roles or role!=expected_roles[text] or typed_name!="fn:"+text or
+                    n["writable"]!=(text==body and function["writable"])):
+                raise ValueError("invalid C05 async function projection")
+        elif role=="source" and asynchronous:
+            wrapper=runtime_name(function["target"])
+            task="Task<"+function["result"]+">"
+            expected={
+                ("Name","$core$task_start"):"builtin:task_start",
+                ("Name","$async$"+wrapper):"fn:$async$"+wrapper,
+                ("TypeName",task):"",
+                ("ReturnTypes",""):"",
+                ("Call",""):runtime_type(task),
+                ("Return",""):"",
+                ("Block",""):"",
+            }
+            if (k,text) not in expected or typed_name!=expected[k,text] or n["writable"]:
+                raise ValueError("invalid C05 async wrapper node")
+        elif role=="source" and k=="Name" and fact and fact["kind"] in ("Call","Unary") and (
+                text in task_intrinsics or text in async_bodies):
+            expected=task_intrinsics.get(text,"fn:"+text)
+            if typed_name!=expected or n["writable"]:
+                raise ValueError("invalid C05 task operand")
+        elif role=="source":
             if symbol and k in ("Function","Struct","Let","Var","Parameter","Name"):
                 expected=runtime_name(symbol["target"])
                 if k=="Parameter" and n["text"].endswith(" mut"):expected+=" mut"
@@ -217,8 +253,14 @@ def validate_lowering(report,contract):
         if k in ("Let","Var","Call","Match") and not n["type_name"]:raise ValueError("missing C05 execution type")
         if k in ("Function","Struct","Let","Var","Parameter") and n["text"]!="_":
             name=n["text"].split(" ")[0]
-            if name in declarations:raise ValueError("duplicate C05 declaration")
-            declarations.add(name)
+            if name in declarations:
+                previous=declarations[name]
+                if (k!="Parameter" or previous[:2]!=(k,identity) or
+                        {role,previous[2]}!={"source","async-body"} or name in copied_parameters):
+                    raise ValueError("duplicate C05 declaration")
+                copied_parameters.add(name)
+            else:
+                declarations[name]=(k,identity,role)
     inits=report["initialization"]
     if not isinstance(inits,list) or [x["module"] for x in inits]!=analysis["graph"]["initialization"]:raise ValueError("invalid C05 initialization")
     for init in inits:
@@ -227,18 +269,20 @@ def validate_lowering(report,contract):
             if type(root) is not int or not 0<=root<len(nodes) or nodes[root]["module"]!=init["module"]:raise ValueError("invalid C05 root")
             parents[root]+=1
     if any(x!=1 for x in parents):raise ValueError("C05 shared/disconnected core")
-    # Inspect each node once. Nested declarations and closure captures are outside SB1.
+    # Inspect each node once and start each function with its own loop scope.
     stack=[(x,False,0,0) for init in inits for x in reversed(init["roots"])]
     while stack:
         i,function,loops,depth=stack.pop();n=nodes[i];k=n["kind"];c=n["children"]
         if depth>limits["depth"]:raise ValueError("invalid C05 nesting")
-        if k in ("Function","Struct") and depth!=0:raise ValueError("nested C05 declaration")
+        if k=="Struct" and depth:raise ValueError("nested C05 structure")
+        if n["role"]=="local-function" and k!="Function":raise ValueError("invalid C05 local function role")
+        if k=="Function" and ((bool(depth) and not function) or (n["role"]=="local-function")!=bool(depth)):raise ValueError("invalid C05 function scope")
         if k in ("Break","Continue") and not loops:raise ValueError("C05 loop exit outside loop")
         if k=="Return" and not function:raise ValueError("C05 return outside function")
         if k in ("Defer","Propagate") and not function:raise ValueError("C05 cleanup/propagation outside function")
         for j,x in enumerate(c):
             nested_function=function or k=="Function"
-            nested_loops=loops+int(k in ("While","For") and j==len(c)-1)
+            nested_loops=0 if k=="Function" else loops+int(k in ("While","For") and j==len(c)-1)
             stack.append((x,nested_function,nested_loops,depth+1))
 
 
@@ -312,7 +356,7 @@ def validate_bytecode(report,contract):
         if site["line"]!=1+prefix.count(b"\n") or site["column"]!=start-prefix.rfind(b"\n"):raise ValueError("invalid C06 position")
         if site["node"]==-1:
             if site["origin"]!=-1 or site["role"]!="initializer" or start!=0 or end!=0 or site["module"]!=report["entry"]:raise ValueError("invalid C06 initializer site")
-        elif not 0<=site["node"]<contract["lowering"]["nodes"] or not 0<=site["origin"]<contract["compiler_budget"]["parser"]["nodes"] or site["role"] not in ("source","enum-layout","enum-constructor"):raise ValueError("invalid C06 origin")
+        elif not 0<=site["node"]<contract["lowering"]["nodes"] or not 0<=site["origin"]<contract["compiler_budget"]["parser"]["nodes"] or site["role"] not in ("source","enum-layout","enum-constructor","async-body","local-function"):raise ValueError("invalid C06 origin")
     def small(n,empty=False):
         return isinstance(n,str) and (empty or bool(n)) and len(n.encode("utf-8"))<=4096 and "\0" not in n
     def site(n):
@@ -328,7 +372,7 @@ def validate_bytecode(report,contract):
             p=n[5:].split("$")
             return len(p)==2 and "builtin:std."+p[0]+"#"+p[1] in contract["bytecode"]["standard_intrinsics"]
         return n in core
-    primitive={"","void","nil","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json"}
+    primitive={"","void","nil","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json","std.file.File","std.file.IOFailure","std.error.Value"}
     def parts(t,name):
         if not (t.startswith(name+"<") and t.endswith(">")):return []
         raw=t[len(name)+1:-1];depth=0;begin=0;result=[]
@@ -350,7 +394,7 @@ def validate_bytecode(report,contract):
             if not a:return False
             digits=a[1].replace("_","").lstrip("0") or "0"
             return (not a[1] or bool(re.fullmatch(r"[0-9](?:_?[0-9])*",a[1])) and len(digits)<=7 and int(digits)<=1000000) and valid_type(a[2],depth+1)
-        for name,counts in [("Result",{2}),("map",{2}),("List",{1}),("multi",None)]:
+        for name,counts in [("Result",{2}),("map",{2}),("List",{1}),("Task",{1}),("multi",None)]:
             ps=parts(t,name)
             if ps:return (len(ps) in counts if counts else len(ps)>=2) and all(valid_type(p,depth+1) for p in ps)
         return False
@@ -358,9 +402,9 @@ def validate_bytecode(report,contract):
         if t=="void":return allow_void
         if t.endswith("?"):return value_type_allowed(t[:-1],False)
         if t.startswith("["):return value_type_allowed(t[t.index("]")+1:],False)
-        for name in ("Result","List","map","multi"):
+        for name in ("Result","List","Task","map","multi"):
             ps=parts(t,name)
-            if ps:return all(value_type_allowed(p,i==0 and name=="Result") for i,p in enumerate(ps))
+            if ps:return all(value_type_allowed(p,i==0 and name in ("Result","Task")) for i,p in enumerate(ps))
         return True
     for st in structures:
         if not small(st["name"]) or not site(st["site"]) or type(st["published"]) is not bool or type(st["enumeration"]) is not bool or not isinstance(st["fields"],list) or len(st["fields"])>4096:raise ValueError("invalid C06 structure")
@@ -370,6 +414,8 @@ def validate_bytecode(report,contract):
             names.add(f["name"])
     for f in functions:
         if not small(f["name"]) or not site(f["site"]) or type(f["published"]) is not bool or type(f["writable"]) is not bool or not isinstance(f["parameters"],list) or not isinstance(f["returns"],list) or max(len(f["parameters"]),len(f["returns"]))>4096 or f["name"]!=f["code"]["name"]:raise ValueError("invalid C06 function")
+        nested=f.get("nested",False)
+        if type(nested) is not bool or nested and (f["published"] or f["name"]=="main"):raise ValueError("invalid C06 local function")
         names=set()
         for p in f["parameters"]:
             if not small(p["name"]) or p["name"] in names or not valid_type(p["type_name"]) or not value_type_allowed(p["type_name"],False) or not site(p["site"]) or type(p["writable"]) is not bool:raise ValueError("invalid C06 parameter")
@@ -377,7 +423,15 @@ def validate_bytecode(report,contract):
         if not all(valid_type(t) and value_type_allowed(t,len(f["returns"])==1) for t in f["returns"]) or f["name"]=="main" and f["parameters"]:raise ValueError("invalid C06 return/entry")
     initializer=report["initializer"]
     if initializer["name"]!="<initialize>":raise ValueError("invalid C06 initializer")
-    globals_=fn|{op["text"] for op in initializer["instructions"] if op["op"]==2}|{n for op in initializer["instructions"] if op["op"]==35 for n in op["names"]}
+    nested_functions={f["name"] for f in functions if f.get("nested",False)}
+    lexicals=set()
+    if nested_functions:
+        for f in functions:
+            lexicals.update(p["name"] for p in f["parameters"])
+            for op in f["code"]["instructions"]:
+                if op["op"]==2:lexicals.add(op["text"])
+                if op["op"] in (25,35):lexicals.update(op["names"])
+    globals_=(fn-nested_functions)|{op["text"] for op in initializer["instructions"] if op["op"]==2}|{n for op in initializer["instructions"] if op["op"]==35 for n in op["names"]}
     total=0
     for code,owner in [(initializer,None)]+[(f["code"],f) for f in functions]:
         ops=code["instructions"]
@@ -405,7 +459,8 @@ def validate_bytecode(report,contract):
                 ps=parts(op["type_name"],"map")
                 if len(ps)!=2 or ps[0] not in ("bool","int","string") or ps[1] in ("","void") or ps[1].startswith("Result<"):raise ValueError("invalid C06 map")
             if tag==37 and (not owner or len(owner["returns"])!=1 or len(parts(owner["returns"][0],"Result"))!=2):raise ValueError("invalid C06 propagation")
-            if tag==19 and op["text"] not in sn or tag in (1,12) and op["text"]!="_" and op["text"] not in names and not (tag==1 and intrinsic(op["text"])):raise ValueError("invalid C06 reference")
+            if tag==39 and op["text"] not in nested_functions:raise ValueError("invalid C06 closure reference")
+            if tag==19 and op["text"] not in sn or tag in (1,12) and op["text"]!="_" and op["text"] not in names and not (tag==1 and (intrinsic(op["text"]) or owner and owner.get("nested",False) and op["text"] in lexicals)):raise ValueError("invalid C06 reference")
             if tag==27 and (op["type_name"]!="E4002" or not op["text"]):raise ValueError("invalid C06 failure")
             if tag==4 and op["text"] not in ("+","-","!","~") or tag==5 and op["text"] not in ("+","-","*","/","//","%","**","&","|","^","<<",">>","==","!=","<",">","<=",">=","&&","||") or tag==15 and op["text"] not in ("=","+=","-=","*=","/=","//=","%=","**="):raise ValueError("invalid C06 operator")
     if type(report["instructions"]) is not int or report["instructions"]!=total or total>limits["instructions"] or type(report["work"]) is not int or not total<=report["work"]<=limits["work"]:raise ValueError("invalid C06 totals")
