@@ -1,5 +1,17 @@
 # 待办与下一次选择
 
+## 跨电脑交接与下一步任务优先级（2026-11-25）
+
+- **当前远端基线（`main`）**：已完成 C04 算法改造后的全部 P0 收尾。仓内 `huaBin/` 已更新为 15 模块自举版（含 `src/compiler/origin_pool.hua`、`hua-generator.exe` `858be9fc...`、`hua-archive.exe` `140f610c...`、`compiler.huab` `b5acb320...`；15 模块 `C2 == C3` 不动点 SHA-256 为 `566b7a698e394c9f0f1b9475d74b921b97a2c8294460fafabe17dc6edf0781ec`，`682,337,327` 步，两台实体机逐字节一致）。9 项 C04 CTest 与 4 套仓库外 SDK 验收全部通过。[本轮记录](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)
+- **另一台电脑接手方式**：
+  1. `git switch main` 并拉取最新提交后，仓库内的 `huaBin/` 可直接使用（无需先编译 C++ 即可执行 `huaBin/bin/hua.exe run`、`build --release`、`run --release`）。
+  2. 如需修改或构建 C++ 宿主/运行测试探针，准备好本机 `.tools/` 后执行：`powershell -ExecutionPolicy Bypass -File .tools\build.ps1 -BuildDirectory tests/build -Parallel 8 -SkipTests`（切勿复用其他电脑的 CMake 缓存）。
+- **下一步可选任务（按优先级排序，由用户选择启动）**：
+  1. **【P1 · 首选性能/编译器】非 C04 编译阶段剖析与提速 + `HUA-D010` 警告清理**：当前 C04 仅占 VM 总步数 `47.9%`（`~299.3M`），非 C04 阶段（`Parse / Modules / Types / Lowering / Bytecode Verify / Archive`）合计占 `52.1%`（`325.4M` 步）。先做 15 模块完整自举的非 C04 逐阶段墙钟与步数拆解（如核查 `selfhost/archive.hua` 双重扫描与逐字段写 `Buffer`、类型/降级热点），双端（原生 + VM）同步受益；顺带为原生后端枚举穷尽分支补齐非法标签终止路径，消除 Clang 返回警告（`HUA-D010`）。
+  2. **【P1 · 测试健康度】处理 `HUA-D036` 与 `HUA-D037`**：定位宿主 C++ 前端 `src/sema.cpp` 检查大型自举模块耗时（`36–80s`）或拆分测试构建与用例计时以解除约 9 项测试超时（`HUA-D036`）；核对并修复 3 项既有断言漂移（`ast_pool` 错误码、`frontend_extended` 拒绝位置、`lowering` pass 上限）及 `archives_extensions` 坏产物变异（`HUA-D037`），使全量 CTest 归零噪音。
+  3. **【P1 · 工具链与标准库扩面】`L0-4` 自举标准库签名同步 + `N3.5` 完整运行时减体积**：将 `since 9–29` 标准库函数签名与版本门禁按需同步进 `selfhost/signatures.hua` 与 `selfhost/archive.hua`（支持用 Hua 自身编译器/原生发布编译调用新标准库的程序），继续推进纯 Hua 标准模块迁移；评估裁剪链接完整运行时的原生 EXE 体积（当前约 `1.84 MiB`）。
+  4. **【P2 · 包生态与阶段总验收】本地包与外部适配 → `C09 / B10 / A12`（`G1–G3`）**：基于 SDK 模块身份与清单交付纯 Hua 本地包、Native ABI 1 包装及可选 Python 包装；补齐 `C09` 发行覆盖/兼容、`B10` 本地数据工具链与 `A12` 汇总验收。VM 底层存储/分配器/GC 策略改动（`HUA-D004 / D035 / D029`）按后续剖析与用户决策独立启动。
+
 ## 当前待办 · Hua 自身工具链与发行（2026-11-18）
 
 已完成第 1 项。Windows huaBin 在仓库外完成搬移、样例、缺依赖及 C2/C3 验收。[记录](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)
@@ -10,8 +22,8 @@ P0 剩余两项已验收。[源码标准模块](knowledge/bootstrap-performance/
 
 Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、局部 async fn 及直接递归、实际在途 IOCP 取消和最终代际检查。[Windows N2 验收](knowledge/bootstrap-performance/runs/2026-11-20-n2-final.md)
 
-1. P1 Windows N3.5 已交付便携 ZIP，小型标量应用已达到冷构建和尺寸目标。完整运行时应用体积及第二台实体机验收继续登记。[实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
-2. 并行自举提速已完成 C04 核心算法改造（原生 C04 `6.80×` / 整次 `3.11×`，VM C04 `4.58×` / 整次 `2.04×` / 步数 `2.02×`，A07 `206/206` 与 `C2 == C3` 通过，见[实测](knowledge/bootstrap-performance/runs/2026-11-24-c04-incremental-dataflow.md)）。后续余项：(a) 适配 `tests/capability_fixture_support.py` 覆盖 3 项白盒私有存储单测；(b) 如需更新官方 `huaBin` 预装二进制，重新装配 N3.5 发布包；(c) 下一轮自举提速转入已占 VM `52.1%` 步数的非 C04 阶段（Parse / Types / Lower / Verify）及 VM 运行时值/GC 剖析。
+1. P1 Windows N3.5 便携 ZIP、15 模块 `huaBin` 重装配与第二台独立 Windows x64 实体机搬移及跨机字节复现已验收（[记录](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)）。完整运行时应用体积优化继续登记。[N3.5 实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
+2. 并行自举提速已完成 C04 核心算法改造、3 项白盒单测适配及官方 `huaBin` 同步（[C04 实测](knowledge/bootstrap-performance/runs/2026-11-24-c04-incremental-dataflow.md) · [P0 收尾](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)）。后续主选方向：(a) 剖析并提速已占 VM `52.1%` 步数的非 C04 编译阶段（Parse / Types / Lower / Verify / Archive）及清理 `HUA-D010` 枚举警告；(b) 处理 `HUA-D036`（宿主 `sema` 耗时与测试时限）和 `HUA-D037`（3 项既有断言漂移）；(c) `L0-4` 同步自举编译器 `since 9–29` 标准库签名。
 3. P2 本地包及可选 C ABI／Python 适配。跨平台暂缓。完整依赖与退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
 
 以下为按日期保存的既有任务和交接。
@@ -134,3 +146,5 @@ Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、
 - 完整运行时应用尺寸与跨实体机验收，继续 C04 性能和本地包路线。
 
 - 后续可按应用负载继续测量本地 VM 及原生运行时效。
+
+- 下一阶段可选：剖析并提速占 VM 52.1% 步数的非 C04 编译阶段，或清理 HUA-D036/D037 测试问题，或按需提交推送本轮改动。

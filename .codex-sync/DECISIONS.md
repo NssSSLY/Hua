@@ -1,5 +1,7 @@
 # 已确定决定与当前方案
 
+2026-11-25 用户确认后续 Git 提交包含 `huaBin/`（`.gitignore` 取消忽略 `/huaBin/` 并放行 `/huaBin/**/*.huab`，防止跨机更新 SDK 时新增模块或 `.huab` 被静默漏提）。C04 白盒单测通过夹具派生层适配 `origin_pool`，保持生产编译器零修改与实验分支 `--source` 兼容。[记录](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)
+
 2026-11-24 Windows 原生直跑使用 hua run --release 复用发布驱动，临时 EXE 使用当前工作目录和终端句柄运行，保留程序参数与退出码。[记录](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)
 
 
@@ -144,3 +146,5 @@ Entry尺寸下降未产生整体收益；两个接入候选撤回默认，保留
 - 按 Core 规模选择合并单元，标量运行时与完整运行时分别链接，便携 PCH 依赖按内容和 NTFS 快照核定。
 
 - 复用 N3.5 发布驱动、缓存和现有 Windows 参数转义。
+
+- 仅在测试夹具派生层适配 origin_pool 私有存储并保留实验分支 --source 兼容；生产编译器与运行时源码保持零修改。

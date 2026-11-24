@@ -209,7 +209,7 @@ def scale_regression(sdk, work):
     baseline = work / "generator.exe"
     report = {}
     report["cold"] = build(sdk, entry, baseline, cache)
-    assert report["cold"]["layout"] == "modules" and report["cold"]["compile_calls"] == 13, report["cold"]
+    assert report["cold"]["layout"] == "modules" and report["cold"]["compile_calls"] == 14, report["cold"]
     print("generator cold", report["cold"]["wall_ms"], flush=True)
     report["hot"] = build(sdk, entry, baseline, cache)
     assert report["hot"]["sha256"] == report["cold"]["sha256"] and report["hot"]["compile_calls"] == 0, report["hot"]

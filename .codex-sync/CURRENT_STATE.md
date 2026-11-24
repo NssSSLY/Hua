@@ -1,5 +1,12 @@
 # 当前状态
 
+## 2026-11-25 P0 收尾：C04 白盒单测恢复、第二台实体机复现与 huaBin 更新
+
+在第二台 Windows x64 实体机基于 `main@60dcb67` 完成 C04 改造后的 P0 收尾（生产编译器与 C++ 运行时源码未改，尚未提交 Git）：
+- **白盒单测恢复**：适配 `tests/capability_fixture_support.py` 及 3 项 C04 白盒单测，同步 `native_main.hua` 14 单元计数断言；定向 9 项 C04 CTest（含 3 项实验 `--source` 兼容测试）`9/9` 全部通过。
+- **跨实体机字节复现与 `huaBin` 更新**：本机重编宿主后用 `hua build --release` 自举生成新版 `hua-generator.exe`（`17.45 MiB`，完整生成器 C++ 生成耗时 `30.16s → 6.41s`，`G1 == G2` PE 与 C++ 逐字节一致）和 `hua-archive.exe`（`16.97 MiB`）；原生编译 15 模块自身 `C2` `6.620s`、VM 运行 `C2` 编译 `C3` `61.855s`（`682,337,327` 步），`C2 == C3` 逐字节一致且与原机 SHA-256（`566b7a698e394c9f...`）100% 相同。
+- **SDK 四套仓库外验收**：重装配官方 `huaBin/`（`5,129` 个清单文件，含 `src/compiler/origin_pool.hua`）与便携 ZIP（`127.32 MiB`），通过源码标准库、中文空格搬移与候选编译器修改重建（`113.68s`）、`hua run --release`（热运行 `98.4–106.0 ms`）及 29 项增量缓存验收。[完整记录](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)
+
 ## 2026-11-24 C04 能力分析算法改造（分解式短 ID 来源池 + 只读操作表 + SCC 局部不动点）
 
 已完成 `selfhost/capabilities.hua` 与新增 `selfhost/origin_pool.hua` 的四阶段改造并落盘（未改 C++ 运行时，未提交 Git）。

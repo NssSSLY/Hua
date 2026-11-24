@@ -1,13 +1,13 @@
 {
   "compiler_entry": "src/compiler/archive_main.hua",
   "compiler_seed": {
-    "crc32": 1197141048,
+    "crc32": 522930559,
     "format": 17,
     "invocation": "bin/hua.exe run <compiler.huab> --execution-profile compiler -- <source> <output.huab>",
     "native_abi": 1,
     "path": "lib/bootstrap/compiler.huab",
     "producer": "bin/hua.exe build",
-    "producer_sha256": "6d9fdc3e24c206bd2b2cd1ae0019da918e0c8805fb5009fe1ea615651d369331"
+    "producer_sha256": "a95c9fbecc0d30abc81f632f44a78f1fb9f9c9759e0a3b03eb40b1dfbbd67d84"
   },
   "files": {
     "bin/hua-build.ps1": {
@@ -17,16 +17,16 @@
       "source": "scripts/hua-build.ps1"
     },
     "bin/hua.exe": {
-      "bytes": 6041088,
+      "bytes": 6034944,
       "role": "host",
-      "sha256": "6d9fdc3e24c206bd2b2cd1ae0019da918e0c8805fb5009fe1ea615651d369331",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/hua.exe"
+      "sha256": "a95c9fbecc0d30abc81f632f44a78f1fb9f9c9759e0a3b03eb40b1dfbbd67d84",
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/hua.exe"
     },
     "bin/wasmtime.dll": {
       "bytes": 22389760,
       "role": "host_dependency",
       "sha256": "2867257c069c5fa01f2a823bdb66c9ae3ab98dfcea016991cfd0f709f35fc837",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/wasmtime.dll"
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/wasmtime.dll"
     },
     "examples/frontend_modules/main.hua": {
       "bytes": 216,
@@ -241,13 +241,13 @@
     "include/hua/release_runtime.json": {
       "bytes": 139456,
       "role": "precompiled_header",
-      "sha256": "e8a286cbfac04af99bfb1c6eb02a76c12ce30227ac919263304340cc13e50b44",
+      "sha256": "15099989864b8a306c59bc28543fc7669e9eb8f588e8a9201b9151a2eb225882",
       "source": "include/hua/native_rt.hpp"
     },
     "include/hua/release_runtime.pch": {
-      "bytes": 33402916,
+      "bytes": 33402372,
       "role": "precompiled_header",
-      "sha256": "86fbb84accf379f2cb6480f4f0cdfb3a25b0ef4f684cfc378f70509630859f5f",
+      "sha256": "8d364b17569f83c5e9cb616dd03d1e89b02950eee976ea7aebb79bee9bc80675",
       "source": "include/hua/native_rt.hpp"
     },
     "include/hua/resources.hpp": {
@@ -335,46 +335,46 @@
       "source": "include/hua/vm.hpp"
     },
     "lib/bootstrap/compiler.huab": {
-      "bytes": 3939273,
+      "bytes": 4395389,
       "role": "compiler_seed",
-      "sha256": "bda388de1e5cd625db5710a3d51609a9db0b4490648e405bd9c3e1eebb18bd74",
+      "sha256": "b5acb3205a644bb7bc39e91010a84bff33bc5cdbb5debbe916c35870a4b3b3cf",
       "source": "src/compiler/archive_main.hua"
     },
     "lib/compiler/hua-archive.exe": {
-      "bytes": 22029824,
+      "bytes": 16971264,
       "role": "native_compiler",
-      "sha256": "b076a29ae11a4f04980d4b01e1a088b3ebc24b053cd7d7416758e22c4357ab07",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/archive.exe"
+      "sha256": "140f610cabb75fd6bbb2a8f03b863e106a0fe5c5da0e0bf5b31686aef2f78298",
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/archive.exe"
     },
     "lib/compiler/hua-generator.exe": {
-      "bytes": 24388608,
+      "bytes": 17451008,
       "role": "native_compiler",
-      "sha256": "827ab5b2cd7237220c4ada9b6921e883b8b7e9e8a53fc245ded65c06d9adff76",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/generator.exe"
+      "sha256": "858be9fc1a67181fbc704bc48df389f49be5e5c2b8b0dc712f867b36365256e5",
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/generator.exe"
     },
     "lib/compiler/release.huab": {
-      "bytes": 285941,
+      "bytes": 285869,
       "role": "release_driver",
-      "sha256": "14204580886180289944d9bff9abeeb208e53e019b445c713c1f621e94f01cca",
+      "sha256": "a7c884c8fac499878978d20ef0299e7e5f71dbcc65d0f03ee7ba7a4c3aed04d2",
       "source": "src/compiler/release_main.hua"
     },
     "lib/windows-x86_64/hua_native_scalar.obj": {
       "bytes": 59020,
       "role": "target_runtime",
-      "sha256": "832c5d525316d1742271cbe51f64bda7eb5f0f1a87cd026b1485269d143aad2e",
+      "sha256": "366226600e66301ba429475e2c3f66fa684ac0457025ae16da74ce38b0814f27",
       "source": "src/native_scalar.cpp"
     },
     "lib/windows-x86_64/libhua_frontend.a": {
       "bytes": 308308,
       "role": "target_runtime",
-      "sha256": "7332623facd85ddfbf0c18ce5b9c6370d9f442de134adfa6870098f09f07c6e4",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/libhua_frontend.a"
+      "sha256": "0dca5d165895ef62fef8a01e414ca77c9483204090517ba844094791ef441364",
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/libhua_frontend.a"
     },
     "lib/windows-x86_64/libhua_semantics.a": {
-      "bytes": 10939338,
+      "bytes": 10938918,
       "role": "target_runtime",
-      "sha256": "30a609b64b558883e9070612b3414b9663112eb2aad4bbd1d3f34c9bb35e14fe",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/libhua_semantics.a"
+      "sha256": "277f5312c77ec0c7d6205e2dbabe23d40ac2ff49edd210c8d81cb449f0d98e93",
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/libhua_semantics.a"
     },
     "licenses/Hua.txt": {
       "bytes": 11357,
@@ -392,7 +392,7 @@
       "bytes": 12243,
       "role": "license",
       "sha256": "268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5",
-      "source": "tests/artifacts/n3-5-local-run/kit-input/wasmtime-LICENSE.txt"
+      "source": "tests/artifacts/p0-huabin-20261125/kit-input/wasmtime-LICENSE.txt"
     },
     "src/compiler/archive.hua": {
       "bytes": 8552,
@@ -425,9 +425,9 @@
       "source": "selfhost/bytecode_verify.hua"
     },
     "src/compiler/capabilities.hua": {
-      "bytes": 63168,
+      "bytes": 73638,
       "role": "compiler_source",
-      "sha256": "2332e46ec89d27d366eda0e14ca4ac8ab2be41a19ecfd39fa3644a4c02ae7bcd",
+      "sha256": "c74732b057cf1b03f0728e678643ba6d6b25a8ab961e9ef0c78dd0f2ce59d299",
       "source": "selfhost/capabilities.hua"
     },
     "src/compiler/catalog.hua": {
@@ -471,6 +471,12 @@
       "role": "compiler_source",
       "sha256": "1deb00a5cdb902cd3ad6e9a088954c44e27f61334ac7af157d91ba1110ae5872",
       "source": "selfhost/native_main.hua"
+    },
+    "src/compiler/origin_pool.hua": {
+      "bytes": 23954,
+      "role": "compiler_source",
+      "sha256": "51df3768f02e1a859ac3b8931cbb2eae8e673f9bb5f6c7593f60b02f2677d039",
+      "source": "selfhost/origin_pool.hua"
     },
     "src/compiler/parser.hua": {
       "bytes": 39829,
@@ -543,7 +549,7 @@
     "clang_version": "clang version 23.1.2 (https://github.com/llvm/llvm-project.git 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
     "driver": "lib/compiler/release.huab",
     "driver_archive": {
-      "crc32": 2769815705,
+      "crc32": 567083106,
       "format": 28,
       "native_abi": 1
     },

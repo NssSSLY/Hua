@@ -8,17 +8,20 @@ from audit_bootstrap_phases import command,save,digest
 from capability_instantiation_tests import literal,view,value
 from capability_fixture_support import adapt_fixture
 
-def extract(text,name):
+def extract(text,name,optional=False):
     match=re.search(r'(?ms)^fn '+name+r'\(.*?(?=^(?:pub )?fn |\Z)',text)
+    if not match and optional:return ''
     assert match,name
     return match.group()
 
 def source(cap,width):
     text=cap.read_text(encoding='utf-8')
+    pooled='import origin_pool as opool' in text
+    inlined={'depth','select_cached','lookup_path','same_storage','same_flags','same_view','same_fields'}
     decl=text[text.index('pub struct View {'):text.index('# Node consumers')]
     env=text[text.index('struct Environment {'):text.index('fn view(')].replace('unit modules.Unit','unit int')
     names=('view','value','record','split_origin','depth','projected','note_prefix','note_type','prefix_index','materialized','copy_view','copied','merge_view','field_fact','merge','select_root','select','select_cached','attach','path_owner','path_tail','value_path','lookup_path','commit','store','begin_updates','end_updates','editable','put','same_storage','storage_aliases','same_flags','same_view','same_fields','same_value','snapshot','environment')
-    functions='\n'.join(extract(text,n) for n in names).replace('unit modules.Unit','unit int')
+    functions='\n'.join(filter(None,(extract(text,n,pooled and n in inlined) for n in names))).replace('unit modules.Unit','unit int')
     raw=value(view({'original|':False},typ='mod#R'),{'#@left':view({'left|':False},typ='mod#R'),'#@right':view({'right|':True},w=False,ro=True,typ='mod#R'),**{'#@left#@f'+str(i):view({'left|#@f'+str(i):False},typ='[]int') for i in range(width)},**{'#@right#@f'+str(i):view({'right|#@f'+str(i):True},w=False,ro=True,typ='[]int') for i in range(width)}})
     main=r'''fn main(){
 var input=INPUT
@@ -124,6 +127,8 @@ print(normalized.prefix=="" && !normalized.readonly_fields,same_value(normalized
 def execute(exe,root,out,cap,tag):
     dest=out/tag;dest.mkdir(parents=True,exist_ok=False)
     shutil.copyfile(root/'selfhost/type_rules.hua',dest/'type_rules.hua')
+    if (Path(cap).parent/'origin_pool.hua').is_file():
+        shutil.copyfile(Path(cap).parent/'origin_pool.hua',dest/'origin_pool.hua')
     rows=[]
     expected=['true true true true','true true','true true true','true true true','true true true','true','true true','true true','true true true true true','true true','true true','true true']
     for width in (1,9,32):

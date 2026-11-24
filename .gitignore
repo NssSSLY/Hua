@@ -5,4 +5,5 @@
 /.hua/
 __pycache__/
 *.huab
-/huaBin/
+!/huaBin/
+!/huaBin/**/*.huab

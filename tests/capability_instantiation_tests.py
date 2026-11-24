@@ -47,21 +47,34 @@ def fixture(width,nested):
     expected=value(expected["root"],expected["fields"],expected["positions"])
     return raw,actual,expected
 
+def _normalize_pooled_locals(obj):
+    if isinstance(obj,list):return [_normalize_pooled_locals(x) for x in obj]
+    if isinstance(obj,dict):
+        out={k:_normalize_pooled_locals(v) for k,v in obj.items()}
+        if 'origins' in out and isinstance(out['origins'],dict):
+            out['origins']={k:(False if '!' in k.split('|',1)[0] else v) for k,v in out['origins'].items()}
+        return out
+    return obj
+
 def source(cap,width,nested):
     text=Path(cap).read_text(encoding='utf-8');decl=text[text.index('pub struct View {'):text.index('# Node consumers')]
     functions=[]
     for name in ('view','value','key','record','split_origin','projected','copy_view','note_prefix','note_type','prefix_index','materialized','field_fact','instantiate_view_at','instantiate_at','instantiate_view','instantiate'):
         match=re.search(r'(?ms)^fn '+name+r'\(.*?(?=^(?:pub )?fn |\Z)',text)
-        if not match and name in ('instantiate_view_at','instantiate_at'):continue
+        if not match and name in ('instantiate_view_at','instantiate_at','instantiate_view','instantiate'):continue
         assert match,name
         functions.append(match.group())
     raw,actual,expected=fixture(width,nested)
+    if 'import origin_pool as opool' in text:
+        expected=_normalize_pooled_locals(expected)
     main='fn main(){\nvar input=INPUT\nvar actual=ACTUAL\nlet original=unwrap(json.encode(input))\nlet actual_before=unwrap(json.encode(actual))\nvar result=instantiate("caller","module",9,input,actual)\nprint(unwrap(json.encode(result)))\nresult.root.origins["changed"]=true\nresult.prefixes["extra"]=map[string]bool{"leaf":true}\nif has(result.prefixes,"#@f0"){var descendants=unwrap(result.prefixes["#@f0"])\ndescendants["changed"]=true}\nif len(result.fields)>0 { var first=unwrap(result.fields["#@f0"])\nfirst.origins["changed"]=true }\nif len(result.positions)>0 { var first=result.positions[0]\nfirst.root.origins["changed"]=true }\nprint(original==unwrap(json.encode(input)),actual_before==unwrap(json.encode(actual)))\nprint("@@hua.phase:begin:instantiate")\nvar checksum=0\nfor i in 0..64 { let item=instantiate("caller","module",9,input,actual)\nchecksum+=len(item.fields)+len(item.positions) }\nprint("@@hua.phase:end:instantiate")\nprint(checksum)\n}\n'
     main=main.replace('INPUT',literal(raw,'Value')).replace('ACTUAL',literal(actual,'actual'))
     return adapt_fixture('import std.list as list\nimport std.strings as strings\nimport std.json as json\nimport type_rules as rules\n'+decl+'\n'.join(functions)+main,text,export_result=True),expected,64*(len(raw['fields'])+len(raw['positions']))
 
 def execute(exe,root,out,cap,tag,probe=None):
     dest=out/tag;dest.mkdir(parents=True,exist_ok=False);shutil.copyfile(root/"selfhost/type_rules.hua",dest/"type_rules.hua");rows=[]
+    if (Path(cap).parent/"origin_pool.hua").is_file():
+        shutil.copyfile(Path(cap).parent/"origin_pool.hua",dest/"origin_pool.hua")
     for width,nested in [(0,False),(8,False),(32,False),(16,True)]:
         stem=f'w{width}-nested{int(nested)}';code,expected,checksum=source(cap,width,nested);p=dest/(stem+'.hua');p.write_text(code,encoding='utf-8',newline='\n');artifact=p.with_suffix('.huab')
         def validate(stdout):

@@ -241,7 +241,7 @@ fn main() { print(right.read(left.make(1))) }
     if benchmark:
         compiler_entry = sdk / release["generator_entry"]
         candidate = work / "candidate.exe"
-        run("compiler-cold", compiler_entry, candidate, (1, 13 if split else 1, 1))
+        run("compiler-cold", compiler_entry, candidate, (1, 14 if split else 1, 1))
         expected = sha256(candidate.read_bytes()).hexdigest()
         candidate.unlink()
         run("compiler-hot", compiler_entry, candidate, (0, 0, 0))

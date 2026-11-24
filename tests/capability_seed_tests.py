@@ -12,9 +12,11 @@ def extract(text,name,optional=False):
 
 def source(cap,width):
  text=cap.read_text(encoding='utf-8');decl=text[text.index('pub struct View {'):text.index('# Node consumers')]
+ pooled='import origin_pool as opool' in text
+ inlined={'depth','lookup_path','same_flags','same_view','same_fields'}
  env=text[text.index('struct Environment {'):text.index('fn view(')].replace('unit modules.Unit','unit int')
  names=('view','value','record','split_origin','depth','projected','child_type','note_prefix','note_type','prefix_index','field_shape','field_defaults','seeded','parameter_seeded','copy_view','materialized','copied','merge_view','field_fact','merge','select_root','select','path_owner','path_tail','value_path','lookup_path','commit','store','begin_updates','end_updates','editable','attach','put','same_flags','same_view','same_fields','same_value','snapshot','environment')
- functions='\n'.join(extract(text,n,n=='parameter_seeded') for n in names).replace('unit modules.Unit','unit int')
+ functions='\n'.join(filter(None,(extract(text,n,n=='parameter_seeded' or (pooled and n in inlined)) for n in names))).replace('unit modules.Unit','unit int')
  state='struct State{members map[string]map[string]string\nshapes map[string]map[string]View\nshape_prefixes map[string]map[string]map[string]bool\nparameter_fields map[string]map[string]View\nparameter_field_count int}\n'
  fields={f'v{i}':'int' for i in range(width)};fields['next']='[]mod#R'
  literal='map[string]string{'+','.join(json.dumps(k)+':'+json.dumps(v) for k,v in fields.items())+'}'
@@ -46,6 +48,8 @@ def main():
  os.environ['HUA_TEST_TIMEOUT_SECONDS']='45'
  os.environ['HUA_TEST_SUITE_TIMEOUT_SECONDS']='180'
  shutil.copy2(R/'selfhost/type_rules.hua',W/'type_rules.hua');rows=[]
+ if (cap.parent/'origin_pool.hua').is_file():
+  shutil.copy2(cap.parent/'origin_pool.hua',W/'origin_pool.hua')
  def call(label,args):
   before=time.monotonic();r=run([str(exe),*map(str,args)],cwd=R,capture_output=True,timeout=45)
   (W/(label+'.stdout')).write_bytes(r.stdout);(W/(label+'.stderr')).write_bytes(r.stderr)
