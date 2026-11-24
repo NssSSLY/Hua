@@ -1,0 +1,9 @@
+import std.list as list
+pub struct Token { text string
+    position int }
+pub fn labels(items []Token) []string {
+    var empty []string = []
+    var output = list.from_slice(empty)
+    for item in items { list.append(output,item.text) }
+    return list.snapshot(output)
+}

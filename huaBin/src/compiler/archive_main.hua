@@ -1,0 +1,49 @@
+# C07 构建入口：Hua 编码并写入；公共 main 的退出协议保持。
+import types as types
+import bytecode as bc
+import archive as archive
+import std.os as os
+import std.path as path
+import std.bytes as bytes
+import std.json as json
+struct Receipt { schema string
+    profile string
+    status string
+    source string
+    format int
+    file_bytes int
+    payload_bytes int
+    crc32 int
+    instructions int }
+struct Failure { schema string
+    profile string
+    status string
+    source string
+    stage string
+    error string }
+fn failure(source string, stage string, detail string) {
+    print(unwrap(json.encode(Failure{schema:"hua.archive.result.v1",profile:"C07-HUAB1",status:"error",source:source,stage:stage,error:detail})))
+}
+fn main() {
+    let args=os.args()
+    if len(args)!=2 { failure("input.hua","command","E8204@1:1 usage: entry.hua output.huab")
+        return }
+    let source=unwrap(path.basename(args[0]))
+    if unwrap(path.ext(args[1]))!=".huab" { failure(source,"command","E8204@1:1 archive output must be .huab")
+        return }
+    let checked=types.analyze(args[0])
+    if is_err(checked) { failure(source,"types",unwrap_err(checked))
+        return }
+    let emitted=bc.compile(unwrap(checked))
+    if is_err(emitted) { failure(source,"bytecode",unwrap_err(emitted))
+        return }
+    let encoded=archive.encode(unwrap(emitted),unwrap(checked))
+    if is_err(encoded) { failure(source,"archive",unwrap_err(encoded))
+        return }
+    let artifact=unwrap(encoded)
+    let receipt=unwrap(json.encode(Receipt{schema:"hua.archive.result.v1",profile:"C07-HUAB1",status:"ok",source:source,format:artifact.format,file_bytes:bytes.len(artifact.data),payload_bytes:bytes.len(artifact.data)-32,crc32:artifact.crc32,instructions:artifact.instructions}))
+    let published=archive.publish(artifact.data,args[1])
+    if is_err(published) { failure(source,"publication","E8204@1:1 "+unwrap_err(published))
+        return }
+    print(receipt)
+}
