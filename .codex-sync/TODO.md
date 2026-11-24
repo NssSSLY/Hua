@@ -11,7 +11,7 @@ P0 剩余两项已验收。[源码标准模块](knowledge/bootstrap-performance/
 Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、局部 async fn 及直接递归、实际在途 IOCP 取消和最终代际检查。[Windows N2 验收](knowledge/bootstrap-performance/runs/2026-11-20-n2-final.md)
 
 1. P1 Windows N3.5 已交付便携 ZIP，小型标量应用已达到冷构建和尺寸目标。完整运行时应用体积及第二台实体机验收继续登记。[实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
-2. 并行自举提速按真实负载细分 C04 函数体重访、摘要变化、来源展开和合并。改动先验正确性，再做同输入 A/B。
+2. 并行自举提速已完成 C04 核心算法改造（原生 C04 `6.80×` / 整次 `3.11×`，VM C04 `4.58×` / 整次 `2.04×` / 步数 `2.02×`，A07 `206/206` 与 `C2 == C3` 通过，见[实测](knowledge/bootstrap-performance/runs/2026-11-24-c04-incremental-dataflow.md)）。后续余项：(a) 适配 `tests/capability_fixture_support.py` 覆盖 3 项白盒私有存储单测；(b) 如需更新官方 `huaBin` 预装二进制，重新装配 N3.5 发布包；(c) 下一轮自举提速转入已占 VM `52.1%` 步数的非 C04 阶段（Parse / Types / Lower / Verify）及 VM 运行时值/GC 剖析。
 3. P2 本地包及可选 C ABI／Python 适配。跨平台暂缓。完整依赖与退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
 
 以下为按日期保存的既有任务和交接。

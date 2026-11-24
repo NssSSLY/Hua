@@ -1,0 +1,811 @@
+# Packed 50-bit Factored OriginPool with inline singleton encoding for C04:
+#   oid = poid + lsite * 262144 + loid * 4294967296
+#   - poid  (18 bits, 0..262143):
+#       0               => empty
+#       1..131071       => multi-set index in p.sets
+#       131072..262143  => inline singleton param atom: aid=(poid-131072)//2, readonly=((poid%2)==1)
+#   - lsite (14 bits, 0..16383):
+#       0               => no local
+#       1               => canonical "!"
+#       2..16382        => concrete call/alloc site
+#       16383           => multi-site lmap (loid = index in p.lmaps)
+#   - loid  (31 bits, when 1 <= lsite <= 16382):
+#       1..1048575      => multi-set index in p.sets
+#       >= 1048576      => inline singleton local tail atom: laid=loid-1048576
+import std.list as list
+import std.strings as strings
+
+pub struct Pool {
+    p_owner List<string>
+    p_path List<string>
+    sets List<map[int]bool>
+    sites List<string>
+    l_tails List<string>
+    lmaps List<[]int>
+    canon map[string]int
+    im map[int]int
+    sm map[string]int }
+
+fn empty_str() []string { var x []string=[]
+    return x }
+fn empty_int() []int { var x []int=[]
+    return x }
+fn empty_int_slices() [][]int { var x [][]int=[]
+    return x }
+fn empty_bool_maps() []map[int]bool { var x []map[int]bool=[]
+    return x }
+
+fn sort_ints(items mut List<int>) {
+    let n=list.len(items)
+    var gap=1
+    while gap<n // 3 { gap=gap*3+1 }
+    while gap>=1 {
+        for i in gap..n {
+            let v=unwrap(list.get(items,i))
+            var j=i
+            while j>=gap && unwrap(list.get(items,j-gap))>v {
+                unwrap(list.set(items,j,unwrap(list.get(items,j-gap))))
+                j-=gap
+            }
+            unwrap(list.set(items,j,v))
+        }
+        gap=gap // 3
+    }
+}
+
+pub fn create() Pool {
+    var sets=list.from_slice(empty_bool_maps())
+    unwrap(list.append(sets,map[int]bool{}))
+    var lmaps=list.from_slice(empty_int_slices())
+    unwrap(list.append(lmaps,empty_int()))
+    var canon=map[string]int{}
+    canon["S:!"]=1
+    return Pool{
+        p_owner:list.from_slice(empty_str()),
+        p_path:list.from_slice(empty_str()),
+        sets:sets,
+        sites:list.from_slice(["","!"]),
+        l_tails:list.from_slice(empty_str()),
+        lmaps:lmaps,
+        canon:canon,
+        im:map[int]int{},
+        sm:map[string]int{} }
+}
+
+pub fn site_id(p mut Pool, site string) int {
+    if site=="!" { return 1 }
+    let k="S:"+site
+    if has(p.canon,k) { return unwrap(p.canon[k]) }
+    let id=list.len(p.sites)
+    if id>=16383 { return 1 }
+    unwrap(list.append(p.sites,site))
+    p.canon[k]=id
+    return id
+}
+
+# ---- Non-local (param/global) origins ----
+
+pub fn param_atom(p mut Pool, owner string, path string) int {
+    let k="P:"+owner+"|"+path
+    if has(p.canon,k) { return unwrap(p.canon[k]) }
+    let id=list.len(p.p_owner)
+    unwrap(list.append(p.p_owner,owner))
+    unwrap(list.append(p.p_path,path))
+    p.canon[k]=id
+    return id
+}
+
+pub fn single_param_aid(p mut Pool, aid int, readonly bool) int {
+    var rb=0
+    if readonly { rb=1 }
+    if aid<65536 { return 131072+aid*2+rb }
+    var ck="ps:"+str(aid)+":0"
+    if readonly { ck="ps:"+str(aid)+":1" }
+    if has(p.canon,ck) { return unwrap(p.canon[ck]) }
+    let oid=list.len(p.sets)
+    var m=map[int]bool{}
+    m[aid]=readonly
+    unwrap(list.append(p.sets,m))
+    p.canon[ck]=oid
+    return oid
+}
+
+pub fn single_param(p mut Pool, owner string, path string, readonly bool) int {
+    return single_param_aid(p,param_atom(p,owner,path),readonly)
+}
+
+fn intern_param(p mut Pool, items map[int]bool) int {
+    let n=len(items)
+    if n==0 { return 0 }
+    if n==1 {
+        for aid, ro in items { return single_param_aid(p,aid,ro) }
+    }
+    var ks=list.from_slice(empty_int())
+    for aid, unused in items { unwrap(list.append(ks,aid)) }
+    sort_ints(ks)
+    var parts=list.from_slice(empty_str())
+    for i in 0..n {
+        let aid=unwrap(list.get(ks,i))
+        if unwrap(items[aid]) { unwrap(list.append(parts,str(aid)+":1")) }
+        else { unwrap(list.append(parts,str(aid)+":0")) }
+    }
+    let key="ps:"+strings.join(list.snapshot(parts),",")
+    if has(p.canon,key) { return unwrap(p.canon[key]) }
+    let oid=list.len(p.sets)
+    unwrap(list.append(p.sets,items))
+    p.canon[key]=oid
+    return oid
+}
+
+pub fn merge_param(p mut Pool, a int, b int) int {
+    if a==b || b==0 { return a }
+    if a==0 { return b }
+    if a>=131072 && b>=131072 {
+        let aa=(a-131072) // 2
+        let ab=(b-131072) // 2
+        if aa==ab {
+            if (a % 2)==1 || (b % 2)==1 { return 131072+aa*2+1 }
+            return 131072+aa*2
+        }
+        var lo=a
+        var hi=b
+        if lo>hi { lo=b
+            hi=a }
+        let mk=35184372088832+lo*1048576+hi
+        if has(p.im,mk) { return unwrap(p.im[mk]) }
+        var out=map[int]bool{}
+        out[aa]=(a % 2)==1
+        out[ab]=(b % 2)==1
+        let res=intern_param(p,out)
+        if len(p.im)<32768 { p.im[mk]=res }
+        return res
+    }
+    if a>=131072 || b>=131072 {
+        var s=a
+        var m=b
+        if b>=131072 { s=b
+            m=a }
+        let aid=(s-131072) // 2
+        let ro=(s % 2)==1
+        let sm=unwrap(list.get(p.sets,m))
+        if has(sm,aid) && (!ro || unwrap(sm[aid])) { return m }
+        let mk=35184372088832+m*1048576+s
+        if has(p.im,mk) { return unwrap(p.im[mk]) }
+        var out=clone(sm)
+        out[aid]=ro || unwrap_or(out[aid],false)
+        let res=intern_param(p,out)
+        if len(p.im)<32768 { p.im[mk]=res }
+        return res
+    }
+    var lo=a
+    var hi=b
+    if lo>hi { lo=b
+        hi=a }
+    let mk=35184372088832+lo*1048576+hi
+    if has(p.im,mk) { return unwrap(p.im[mk]) }
+    let sa=unwrap(list.get(p.sets,a))
+    let sb=unwrap(list.get(p.sets,b))
+    var a_sub=true
+    for k, v in sb {
+        if !has(sa,k) || (v && !unwrap(sa[k])) { a_sub=false
+            break }
+    }
+    if a_sub {
+        if len(p.im)<32768 { p.im[mk]=a }
+        return a
+    }
+    var b_sub=true
+    for k, v in sa {
+        if !has(sb,k) || (v && !unwrap(sb[k])) { b_sub=false
+            break }
+    }
+    if b_sub {
+        if len(p.im)<32768 { p.im[mk]=b }
+        return b
+    }
+    var out=clone(sa)
+    for k, v in sb { out[k]=v || unwrap_or(out[k],false) }
+    let res=intern_param(p,out)
+    if len(p.im)<32768 { p.im[mk]=res }
+    return res
+}
+
+pub fn overlap_param(p mut Pool, a int, b int) bool {
+    if a==0 || b==0 { return false }
+    if a==b { return true }
+    if a>=131072 && b>=131072 { return (a // 2)==(b // 2) }
+    if a>=131072 { return has(unwrap(list.get(p.sets,b)),(a-131072) // 2) }
+    if b>=131072 { return has(unwrap(list.get(p.sets,a)),(b-131072) // 2) }
+    var lo=a
+    var hi=b
+    if lo>hi { lo=b
+        hi=a }
+    let mk=52776558133248+lo*1048576+hi
+    if has(p.im,mk) { return unwrap(p.im[mk])==1 }
+    let sa=unwrap(list.get(p.sets,a))
+    let sb=unwrap(list.get(p.sets,b))
+    var found=false
+    if len(sa)<=len(sb) {
+        for k, unused in sa { if has(sb,k) { found=true
+            break } }
+    } else {
+        for k, unused in sb { if has(sa,k) { found=true
+            break } }
+    }
+    if len(p.im)<32768 {
+        if found { p.im[mk]=1 } else { p.im[mk]=0 }
+    }
+    return found
+}
+
+pub fn mark_ro_param(p mut Pool, oid int) int {
+    if oid==0 { return 0 }
+    if oid>=131072 {
+        if (oid % 2)==1 { return oid }
+        return oid+1
+    }
+    let mk=70368744177664+oid
+    if has(p.im,mk) { return unwrap(p.im[mk]) }
+    let m=unwrap(list.get(p.sets,oid))
+    var all_ro=true
+    for k, v in m { if !v { all_ro=false
+        break } }
+    if all_ro {
+        if len(p.im)<32768 { p.im[mk]=oid }
+        return oid
+    }
+    var out=map[int]bool{}
+    for k, unused in m { out[k]=true }
+    let res=intern_param(p,out)
+    if len(p.im)<32768 { p.im[mk]=res }
+    return res
+}
+
+pub fn project_param(p mut Pool, oid int, path string) int {
+    if oid==0 { return 0 }
+    if oid>=131072 {
+        let aid=(oid-131072) // 2
+        let owner=unwrap(list.get(p.p_owner,aid))
+        let base_p=unwrap(list.get(p.p_path,aid))
+        var next=base_p+path
+        var flag=(oid % 2)==1
+        if len(next)>512 {
+            next=base_p
+            let segments=strings.split(path,"#@")
+            for i in 1..len(segments) {
+                next+="#@"+segments[i]
+                if len(next)>512 { next=""
+                    flag=true }
+            }
+        }
+        return single_param_aid(p,param_atom(p,owner,next),flag)
+    }
+    let pk="pp:"+str(oid)+"|"+path
+    if has(p.sm,pk) { return unwrap(p.sm[pk]) }
+    let m=unwrap(list.get(p.sets,oid))
+    var out=map[int]bool{}
+    for aid, ro in m {
+        let owner=unwrap(list.get(p.p_owner,aid))
+        let base_p=unwrap(list.get(p.p_path,aid))
+        var next=base_p+path
+        var flag=ro
+        if len(next)>512 {
+            next=base_p
+            let segments=strings.split(path,"#@")
+            for i in 1..len(segments) {
+                next+="#@"+segments[i]
+                if len(next)>512 { next=""
+                    flag=true }
+            }
+        }
+        let naid=param_atom(p,owner,next)
+        out[naid]=flag || unwrap_or(out[naid],false)
+    }
+    let res=intern_param(p,out)
+    if len(p.sm)<16384 { p.sm[pk]=res }
+    return res
+}
+
+# ---- Canonical local tail atoms and sets ----
+
+fn local_atom(p mut Pool, tail string) int {
+    let k="L:"+tail
+    if has(p.canon,k) { return unwrap(p.canon[k]) }
+    let id=list.len(p.l_tails)
+    unwrap(list.append(p.l_tails,tail))
+    p.canon[k]=id
+    return id
+}
+
+pub fn single_local(p mut Pool, tail string) int {
+    return 1048576+local_atom(p,tail)
+}
+
+fn intern_local(p mut Pool, items map[int]bool) int {
+    let n=len(items)
+    if n==0 { return 0 }
+    if n==1 {
+        for laid, unused in items { return 1048576+laid }
+    }
+    var ks=list.from_slice(empty_int())
+    for laid, unused in items { unwrap(list.append(ks,laid)) }
+    sort_ints(ks)
+    var parts=list.from_slice(empty_str())
+    for i in 0..n { unwrap(list.append(parts,str(unwrap(list.get(ks,i))))) }
+    let key="ls:"+strings.join(list.snapshot(parts),",")
+    if has(p.canon,key) { return unwrap(p.canon[key]) }
+    let oid=list.len(p.sets)
+    unwrap(list.append(p.sets,items))
+    p.canon[key]=oid
+    return oid
+}
+
+pub fn merge_local(p mut Pool, a int, b int) int {
+    if a==b || b==0 { return a }
+    if a==0 { return b }
+    if a>=1048576 && b>=1048576 {
+        let la=a-1048576
+        let lb=b-1048576
+        var lo=la
+        var hi=lb
+        if lo>hi { lo=lb
+            hi=la }
+        let mk=105553116266496+lo*1048576+hi
+        if has(p.im,mk) { return unwrap(p.im[mk]) }
+        var out=map[int]bool{}
+        out[la]=true
+        out[lb]=true
+        let res=intern_local(p,out)
+        if len(p.im)<32768 { p.im[mk]=res }
+        return res
+    }
+    if a>=1048576 || b>=1048576 {
+        var s=a
+        var m=b
+        if b>=1048576 { s=b
+            m=a }
+        let laid=s-1048576
+        let sm=unwrap(list.get(p.sets,m))
+        if has(sm,laid) { return m }
+        let mk=105553116266496+m*1048576+laid+524288
+        if has(p.im,mk) { return unwrap(p.im[mk]) }
+        var out=clone(sm)
+        out[laid]=true
+        let res=intern_local(p,out)
+        if len(p.im)<32768 { p.im[mk]=res }
+        return res
+    }
+    var lo=a
+    var hi=b
+    if lo>hi { lo=b
+        hi=a }
+    let mk=105553116266496+lo*1048576+hi
+    if has(p.im,mk) { return unwrap(p.im[mk]) }
+    let sa=unwrap(list.get(p.sets,a))
+    let sb=unwrap(list.get(p.sets,b))
+    var a_sub=true
+    for k, unused in sb { if !has(sa,k) { a_sub=false
+        break } }
+    if a_sub {
+        if len(p.im)<32768 { p.im[mk]=a }
+        return a
+    }
+    var b_sub=true
+    for k, unused in sa { if !has(sb,k) { b_sub=false
+        break } }
+    if b_sub {
+        if len(p.im)<32768 { p.im[mk]=b }
+        return b
+    }
+    var out=clone(sa)
+    for k, unused in sb { out[k]=true }
+    let res=intern_local(p,out)
+    if len(p.im)<32768 { p.im[mk]=res }
+    return res
+}
+
+pub fn overlap_local(p mut Pool, a int, b int) bool {
+    if a==0 || b==0 { return false }
+    if a==b { return true }
+    if a>=1048576 && b>=1048576 { return false }
+    if a>=1048576 { return has(unwrap(list.get(p.sets,b)),a-1048576) }
+    if b>=1048576 { return has(unwrap(list.get(p.sets,a)),b-1048576) }
+    var lo=a
+    var hi=b
+    if lo>hi { lo=b
+        hi=a }
+    let mk=123145302310912+lo*1048576+hi
+    if has(p.im,mk) { return unwrap(p.im[mk])==1 }
+    let sa=unwrap(list.get(p.sets,a))
+    let sb=unwrap(list.get(p.sets,b))
+    var found=false
+    if len(sa)<=len(sb) {
+        for k, unused in sa { if has(sb,k) { found=true
+            break } }
+    } else {
+        for k, unused in sb { if has(sa,k) { found=true
+            break } }
+    }
+    if len(p.im)<32768 {
+        if found { p.im[mk]=1 } else { p.im[mk]=0 }
+    }
+    return found
+}
+
+pub fn project_local(p mut Pool, loid int, path string) int {
+    if loid==0 { return 0 }
+    if loid>=1048576 {
+        let base_t=unwrap(list.get(p.l_tails,loid-1048576))
+        var next=base_t+path
+        if len(next)>512 {
+            next=base_t
+            let segments=strings.split(path,"#@")
+            for i in 1..len(segments) {
+                next+="#@"+segments[i]
+                if len(next)>512 { next="" }
+            }
+        }
+        return 1048576+local_atom(p,next)
+    }
+    let pk="pl:"+str(loid)+"|"+path
+    if has(p.sm,pk) { return unwrap(p.sm[pk]) }
+    let m=unwrap(list.get(p.sets,loid))
+    var out=map[int]bool{}
+    for laid, unused in m {
+        let base_t=unwrap(list.get(p.l_tails,laid))
+        var next=base_t+path
+        if len(next)>512 {
+            next=base_t
+            let segments=strings.split(path,"#@")
+            for i in 1..len(segments) {
+                next+="#@"+segments[i]
+                if len(next)>512 { next="" }
+            }
+        }
+        out[local_atom(p,next)]=true
+    }
+    let res=intern_local(p,out)
+    if len(p.sm)<16384 { p.sm[pk]=res }
+    return res
+}
+
+# ---- Multi-site local maps stored as sorted flat []int pairs [s0,c0,s1,c1,...] ----
+
+fn intern_lmap_pairs(p mut Pool, pairs []int) int {
+    let n=len(pairs)
+    var parts=list.from_slice(empty_str())
+    var i=0
+    while i<n {
+        unwrap(list.append(parts,str(pairs[i])+":"+str(pairs[i+1])))
+        i+=2
+    }
+    let key="lm:"+strings.join(list.snapshot(parts),",")
+    if has(p.canon,key) { return unwrap(p.canon[key]) }
+    let id=list.len(p.lmaps)
+    unwrap(list.append(p.lmaps,pairs))
+    p.canon[key]=id
+    return id
+}
+
+fn merge_lmap(p mut Pool, a_site int, a_loid int, b_site int, b_loid int) int {
+    if a_site<16383 && b_site<16383 {
+        var s0=a_site
+        var c0=a_loid
+        var s1=b_site
+        var c1=b_loid
+        if s0>s1 { s0=b_site
+            c0=b_loid
+            s1=a_site
+            c1=a_loid }
+        let key="lm:"+str(s0)+":"+str(c0)+","+str(s1)+":"+str(c1)
+        if has(p.canon,key) { return unwrap(p.canon[key]) }
+        let id=list.len(p.lmaps)
+        unwrap(list.append(p.lmaps,[s0,c0,s1,c1]))
+        p.canon[key]=id
+        return id
+    }
+    if a_site==16383 && b_site==16383 {
+        if a_loid==b_loid { return a_loid }
+        var lo=a_loid
+        var hi=b_loid
+        if lo>hi { lo=b_loid
+            hi=a_loid }
+        let mk=158329674399744+lo*1048576+hi
+        if has(p.im,mk) { return unwrap(p.im[mk]) }
+        let pa=unwrap(list.get(p.lmaps,a_loid))
+        let pb=unwrap(list.get(p.lmaps,b_loid))
+        let na=len(pa)
+        let nb=len(pb)
+        var out=list.from_slice(empty_int())
+        var ia=0
+        var ib=0
+        var same_a=true
+        var same_b=true
+        while ia<na && ib<nb {
+            let sa=pa[ia]
+            let sb=pb[ib]
+            if sa==sb {
+                let ca=pa[ia+1]
+                let cb=pb[ib+1]
+                let cm=merge_local(p,ca,cb)
+                if cm!=ca { same_a=false }
+                if cm!=cb { same_b=false }
+                unwrap(list.append(out,sa))
+                unwrap(list.append(out,cm))
+                ia+=2
+                ib+=2
+            } else if sa<sb {
+                same_b=false
+                unwrap(list.append(out,sa))
+                unwrap(list.append(out,pa[ia+1]))
+                ia+=2
+            } else {
+                same_a=false
+                unwrap(list.append(out,sb))
+                unwrap(list.append(out,pb[ib+1]))
+                ib+=2
+            }
+        }
+        while ia<na {
+            same_b=false
+            unwrap(list.append(out,pa[ia]))
+            unwrap(list.append(out,pa[ia+1]))
+            ia+=2
+        }
+        while ib<nb {
+            same_a=false
+            unwrap(list.append(out,pb[ib]))
+            unwrap(list.append(out,pb[ib+1]))
+            ib+=2
+        }
+        if same_a {
+            if len(p.im)<32768 { p.im[mk]=a_loid }
+            return a_loid
+        }
+        if same_b {
+            if len(p.im)<32768 { p.im[mk]=b_loid }
+            return b_loid
+        }
+        let res=intern_lmap_pairs(p,list.snapshot(out))
+        if len(p.im)<32768 { p.im[mk]=res }
+        return res
+    }
+    var lm_id=a_loid
+    var s=b_site
+    var cl=b_loid
+    if b_site==16383 { lm_id=b_loid
+        s=a_site
+        cl=a_loid }
+    let pa=unwrap(list.get(p.lmaps,lm_id))
+    let na=len(pa)
+    var k=0
+    var pos=-1
+    while k<na {
+        let sa=pa[k]
+        if sa==s {
+            if pa[k+1]==cl { return lm_id }
+            let cm=merge_local(p,pa[k+1],cl)
+            if cm==pa[k+1] { return lm_id }
+            pos=k
+            cl=cm
+            break
+        }
+        if sa>s { break }
+        k+=2
+    }
+    let sk="ml:"+str(lm_id)+":"+str(s)+":"+str(cl)
+    if has(p.sm,sk) { return unwrap(p.sm[sk]) }
+    var out=list.from_slice(empty_int())
+    if pos>=0 {
+        for i in 0..na {
+            if i==pos+1 { unwrap(list.append(out,cl)) }
+            else { unwrap(list.append(out,pa[i])) }
+        }
+    } else {
+        var i=0
+        var inserted=false
+        while i<na {
+            let sa=pa[i]
+            if !inserted && s<sa {
+                inserted=true
+                unwrap(list.append(out,s))
+                unwrap(list.append(out,cl))
+            }
+            unwrap(list.append(out,sa))
+            unwrap(list.append(out,pa[i+1]))
+            i+=2
+        }
+        if !inserted {
+            unwrap(list.append(out,s))
+            unwrap(list.append(out,cl))
+        }
+    }
+    let res=intern_lmap_pairs(p,list.snapshot(out))
+    if len(p.sm)<16384 { p.sm[sk]=res }
+    return res
+}
+
+fn overlap_lmap(p mut Pool, a_site int, a_loid int, b_site int, b_loid int) bool {
+    if a_site==16383 && b_site==16383 {
+        if a_loid==b_loid { return true }
+        var lo=a_loid
+        var hi=b_loid
+        if lo>hi { lo=b_loid
+            hi=a_loid }
+        let mk=175921860444160+lo*1048576+hi
+        if has(p.im,mk) { return unwrap(p.im[mk])==1 }
+        let pa=unwrap(list.get(p.lmaps,a_loid))
+        let pb=unwrap(list.get(p.lmaps,b_loid))
+        let na=len(pa)
+        let nb=len(pb)
+        var ia=0
+        var ib=0
+        var found=false
+        while ia<na && ib<nb {
+            let sa=pa[ia]
+            let sb=pb[ib]
+            if sa==sb {
+                if overlap_local(p,pa[ia+1],pb[ib+1]) { found=true
+                    break }
+                ia+=2
+                ib+=2
+            } else if sa<sb { ia+=2 }
+            else { ib+=2 }
+        }
+        if len(p.im)<32768 {
+            if found { p.im[mk]=1 } else { p.im[mk]=0 }
+        }
+        return found
+    }
+    var lm_id=a_loid
+    var s=b_site
+    var cl=b_loid
+    if b_site==16383 { lm_id=b_loid
+        s=a_site
+        cl=a_loid }
+    let pa=unwrap(list.get(p.lmaps,lm_id))
+    let na=len(pa)
+    var i=0
+    while i<na {
+        let sa=pa[i]
+        if sa==s { return overlap_local(p,cl,pa[i+1]) }
+        if sa>s { return false }
+        i+=2
+    }
+    return false
+}
+
+fn project_lmap(p mut Pool, lmap_id int, path string) int {
+    let pk="pm:"+str(lmap_id)+"|"+path
+    if has(p.sm,pk) { return unwrap(p.sm[pk]) }
+    let pa=unwrap(list.get(p.lmaps,lmap_id))
+    let na=len(pa)
+    var out=list.from_slice(empty_int())
+    var i=0
+    while i<na {
+        unwrap(list.append(out,pa[i]))
+        unwrap(list.append(out,project_local(p,pa[i+1],path)))
+        i+=2
+    }
+    let res=intern_lmap_pairs(p,list.snapshot(out))
+    if len(p.sm)<16384 { p.sm[pk]=res }
+    return res
+}
+
+pub fn canon_lmap(p mut Pool, lmap_id int) int {
+    let mk=140737488355328+lmap_id
+    if has(p.im,mk) { return unwrap(p.im[mk]) }
+    let pa=unwrap(list.get(p.lmaps,lmap_id))
+    let na=len(pa)
+    var acc=0
+    var i=0
+    while i<na {
+        acc=merge_local(p,acc,pa[i+1])
+        i+=2
+    }
+    if len(p.im)<32768 { p.im[mk]=acc }
+    return acc
+}
+
+# ---- Packed 50-bit oid high-level helpers ----
+
+pub fn make_seed(p mut Pool, owner string, writable bool, is_scalar bool) int {
+    if strings.contains(owner,"!") {
+        if is_scalar { return 0 }
+        let s=site_id(p,owner)
+        let l=single_local(p,"@"+owner)
+        return s*262144+l*4294967296
+    }
+    return single_param(p,owner,"",!writable)
+}
+
+pub fn merge_oid(p mut Pool, a int, b int) int {
+    if a==b || b==0 { return a }
+    if a==0 { return b }
+    let ap=a % 262144
+    let bp=b % 262144
+    var mp=ap
+    if mp!=bp && bp!=0 {
+        if mp==0 { mp=bp }
+        else { mp=merge_param(p,mp,bp) }
+    }
+    let ah=a // 262144
+    let bh=b // 262144
+    if ah==bh || bh==0 { return mp+ah*262144 }
+    if ah==0 { return mp+bh*262144 }
+    let asite=ah % 16384
+    let al=ah // 16384
+    let bsite=bh % 16384
+    let bl=bh // 16384
+    if asite<16383 && asite==bsite {
+        let ml=merge_local(p,al,bl)
+        return mp+asite*262144+ml*4294967296
+    }
+    let ml=merge_lmap(p,asite,al,bsite,bl)
+    return mp+16383*262144+ml*4294967296
+}
+
+pub fn same_storage(p mut Pool, a int, b int) bool {
+    if a==0 || b==0 { return false }
+    if a==b { return true }
+    let ap=a % 262144
+    let bp=b % 262144
+    if ap!=0 && bp!=0 {
+        if ap==bp { return true }
+        if overlap_param(p,ap,bp) { return true }
+    }
+    let ah=a // 262144
+    let bh=b // 262144
+    if ah==0 || bh==0 { return false }
+    if ah==bh { return true }
+    let asite=ah % 16384
+    let bsite=bh % 16384
+    if asite<16383 && bsite<16383 {
+        if asite!=bsite { return false }
+        return overlap_local(p,ah // 16384,bh // 16384)
+    }
+    return overlap_lmap(p,asite,ah // 16384,bsite,bh // 16384)
+}
+
+pub fn project_oid(p mut Pool, oid int, path string, is_scalar bool) int {
+    if oid==0 { return 0 }
+    let ap=oid % 262144
+    var np=0
+    if ap!=0 { np=project_param(p,ap,path) }
+    if is_scalar { return np }
+    let ah=oid // 262144
+    if ah==0 { return np }
+    let asite=ah % 16384
+    let al=ah // 16384
+    if asite<16383 {
+        return np+asite*262144+project_local(p,al,path)*4294967296
+    }
+    return np+16383*262144+project_lmap(p,al,path)*4294967296
+}
+
+pub fn canon_oid(p mut Pool, oid int, is_scalar bool) int {
+    if oid==0 { return 0 }
+    let ap=oid % 262144
+    if is_scalar { return ap }
+    let ah=oid // 262144
+    if ah==0 { return ap }
+    let asite=ah % 16384
+    if asite==1 { return oid }
+    let al=ah // 16384
+    if asite<16383 { return ap+262144+al*4294967296 }
+    return ap+262144+canon_lmap(p,al)*4294967296
+}
+
+pub fn retag_local_oid(p mut Pool, site_id int, oid int, is_scalar bool) int {
+    if is_scalar { return 0 }
+    let ah=oid // 262144
+    if ah==0 { return 0 }
+    let asite=ah % 16384
+    let al=ah // 16384
+    if asite<16383 { return site_id*262144+al*4294967296 }
+    return site_id*262144+canon_lmap(p,al)*4294967296
+}
+
+pub fn param_map(p Pool, poid int) map[int]bool { return unwrap(list.get(p.sets,poid)) }
+pub fn param_owner(p Pool, aid int) string { return unwrap(list.get(p.p_owner,aid)) }
+pub fn param_path(p Pool, aid int) string { return unwrap(list.get(p.p_path,aid)) }

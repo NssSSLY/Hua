@@ -1,5 +1,13 @@
 # 当前状态
 
+## 2026-11-24 C04 能力分析算法改造（分解式短 ID 来源池 + 只读操作表 + SCC 局部不动点）
+
+已完成 `selfhost/capabilities.hua` 与新增 `selfhost/origin_pool.hua` 的四阶段改造并落盘（未改 C++ 运行时，未提交 Git）。
+- **冻结 14 模块普通无埋点双端对照**：原生 `52.256s → 16.822s`（`3.11×`，峰值 `175.38 → 128.22 MiB`）；VM `266.516s → 130.835s`（`2.04×`，总步数 `1,260.05M → 624.77M` = `2.02×`，峰值 `963.85 → 925.83 MiB`）；双端 HUAB 与基线逐字节一致（`db6dcfcc3d8f0ad1...`）。
+- **独立 C04 阶段独占墙钟对照**：原生 `62.608s → 9.210s`（`6.80×`），VM `336.173s → 73.469s`（`4.58×`），C04 步数 `934.62M → ~299.34M`（`3.12×`）；非 C04 阶段（`325.4M` 步）首次超过 C04。
+- **正确性与自举固定点**：`capability_c04_tests.py`（`--unbounded --compatibility --extra-cases c04_call_cases.json --subset-probe --type-oracle --execution-probe`）`206/206`（`3,670` 检查）四路径通过；`capability_dependency_tests.py` 通过；15 模块更新后 `selfhost/` 完成 `C1(Native) → C2(17.185s) → C3(VM 166.628s, 682.34M 步)`，`C2 == C3` 逐字节一致（`566b7a698e394c9f...`）。
+- **已知余项**：3 项直接抽取私有 `View.origins` 的白盒测试需适配 `tests/capability_fixture_support.py`；`huaBin` 预装二进制未重装配。[完整记录](knowledge/bootstrap-performance/runs/2026-11-24-c04-incremental-dataflow.md)
+
 ## 2026-11-24 Windows 源码原生直跑
 
 hua run --release 可从 Hua 源码直接原生构建并执行，复用 N3.5 发布缓存。官方 huaBin 与 ZIP 已更新。源码 VM 的 Hello 中位 16.875 毫秒，原生直跑首次 906.107 毫秒、热运行 190.961 毫秒。[实测](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)
