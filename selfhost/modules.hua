@@ -14,6 +14,9 @@ pub struct Unit { id string
     path string
     key string
     tree parser.Tree }
+pub struct BuildInput { path string
+    kind string
+    content string }
 pub struct Edge { source string
     target string
     namespace string
@@ -50,7 +53,8 @@ pub struct Graph { globals map[string]int
     order List<string>
     active List<string>
     total_bytes int
-    work int }
+    work int
+    build_inputs List<BuildInput> }
 struct Environment { unit string
     pool ast.Pool
     imports []Edge
@@ -117,32 +121,36 @@ fn collect(g mut Graph, u Unit) Result<void> {
     return ok()
 }
 # No canonical API exists in SB1: inspect every dependency component and fail closed on symlinks.
-fn inspect(base string, relative string, site ast.Node, source string) Result<string> {
+fn inspect(g mut Graph, base string, relative string, site ast.Node, source string) Result<string> {
     let parts = strings.split(relative,"/")
     var current = base
     for i in 0..len(parts) {
         current = path.join([current,parts[i]])?
         let info = fs.stat(current)
-        if is_err(info) { return ok("") }
+        if is_err(info) {
+            list.append(g.build_inputs,BuildInput{path:current,kind:"unavailable",content:unwrap_err(info)})?
+            return ok("")
+        }
         let kind = json.as_string(json.get(unwrap(info),"kind")?)?
+        list.append(g.build_inputs,BuildInput{path:current,kind:kind,content:""})?
         if kind == "symlink" { return err(error(source,site,"E8302","symlink dependency is outside this resolver contract")) }
         if i+1 < len(parts) && kind != "directory" { return ok("") }
         if i+1 == len(parts) && kind != "file" { return ok("") }
     }
     return ok(current)
 }
-fn resolve(g Graph, name string, site ast.Node, source string) Result<string> {
+fn resolve(g mut Graph, name string, site ast.Node, source string) Result<string> {
     let relative = strings.replace(name,".","/")
     for candidate in [relative+".hua",relative+"/package.hua"] {
-        let p = inspect(g.root,candidate,site,source)?
+        let p = inspect(g,g.root,candidate,site,source)?
         if p != "" { return ok(p) }
     }
     for candidate in [relative+".huam",relative+"/package.huam",relative+".wasm",relative+"/package.wasm"] {
-        if inspect(g.root,candidate,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
+        if inspect(g,g.root,candidate,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
     }
     return err(error(source,site,"E5001","cannot resolve module "+name))
 }
-fn std_source(site ast.Node, source string) Result<string> {
+fn std_source(g mut Graph, site ast.Node, source string) Result<string> {
     let configured = os.getenv("HUA_HOME")?
     if is_none(configured) { return err(error(source,site,"E5001","std.alg_integer requires HUA_HOME set to a Hua SDK root")) }
     let requested = path.normalize(unwrap(configured))?
@@ -152,13 +160,15 @@ fn std_source(site ast.Node, source string) Result<string> {
     let resolved = fs.canonical(requested)
     if is_err(resolved) { return err(error(source,site,"E5001","invalid Hua SDK root")) }
     let root = path.normalize(unwrap(resolved))?
-    let manifest = inspect(root,"manifest.json",site,source)?
+    let manifest = inspect(g,root,"manifest.json",site,source)?
     if manifest == "" { return err(error(source,site,"E5001","cannot read Hua SDK manifest.json")) }
     let info = fs.stat(manifest)?
     if json.as_int(json.get(info,"size_bytes")?)? > 1048576 {
         return err(error(source,site,"E5001","invalid size for Hua SDK manifest.json"))
     }
-    let parsed = json.decode(fs.read_text(manifest)?)
+    let manifest_text = fs.read_text(manifest)?
+    list.append(g.build_inputs,BuildInput{path:manifest,kind:"text",content:manifest_text})?
+    let parsed = json.decode(manifest_text)
     if is_err(parsed) { return err(error(source,site,"E5001","invalid JSON in Hua SDK manifest.json")) }
     let value = unwrap(parsed)
     let relative = "src/std/alg_integer.hua"
@@ -174,7 +184,7 @@ fn std_source(site ast.Node, source string) Result<string> {
     if is_err(role) || unwrap_or(json.as_string(unwrap(schema)),"") != "hua.sdk.v1" ||
         unwrap_or(json.as_string(unwrap(registered)),"") != relative ||
         unwrap_or(json.as_string(unwrap(role)),"") != "stdlib_source" { return err(invalid) }
-    let found = inspect(root,relative,site,source)?
+    let found = inspect(g,root,relative,site,source)?
     if found != "" {
         let actual = fs.canonical(found)
         if is_ok(actual) && cache_key(path.normalize(unwrap(actual))?) == cache_key(found) { return ok(found) }
@@ -202,6 +212,7 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
     if size > per_file || g.total_bytes+size > g.limits.source_bytes_total { return err(error(parent,site,"E5005","module byte budget")) }
     let raw = fs.read_text(normalized)
     if is_err(raw) { return err(error(parent,site,"E8204",unwrap_err(raw))) }
+    list.append(g.build_inputs,BuildInput{path:normalized,kind:"text",content:unwrap(raw)})?
     var id = sdk_id
     if id == "" {
         id = path.relative(normalized,g.root)?
@@ -241,7 +252,7 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
             let loaded = unit_index(g,"@sdk/src/std/alg_integer.hua")
             var source = ""
             if loaded >= 0 { source = list.get(g.units,loaded)?.path }
-            else { source = std_source(n,id)? }
+            else { source = std_source(g,n,id)? }
             target = visit(g,source,n,id,"@sdk/src/std/alg_integer.hua")?
         } else if strings.starts_with(name,"std.") || name == "std" {
             if !catalog.module(name) { return err(error(id,n,"E8201","standard module is outside SB1")) }
@@ -445,7 +456,8 @@ fn analyze_impl(entry string, limits Limits) Result<Graph> {
     var symbols []Symbol = []
     var references []Reference = []
     var names []string = []
-    var g = Graph{globals:map[string]int{},limits:limits,root:root,units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0}
+    let inputs []BuildInput = []
+    var g = Graph{globals:map[string]int{},limits:limits,root:root,units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0,build_inputs:list.from_slice(inputs)}
     # A validated empty source supplies the entry error location before the actual parse.
     let seed = parser.parse_extended("",path.basename(normalized)?)?
     let site = ast.get(seed.pool,seed.root)?

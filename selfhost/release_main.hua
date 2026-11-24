@@ -1,0 +1,433 @@
+# N3 Windows SDK: the host supplies the SDK root from its own executable path.
+import release_cache as cache
+import std.bytes as bytes
+import std.fs as fs
+import std.io as io
+import std.json as json
+import std.list as list
+import std.os as os
+import std.path as path
+import std.process as process
+import std.strings as strings
+import std.time as time
+
+struct Unit {
+    id string
+    module string
+    header bool
+}
+struct CompiledUnit {
+    module string
+    file string
+    status string
+    detail string
+    compile_ms int
+    calls int
+    used_pch bool
+    restore_ms int
+    key string
+    digest string
+}
+struct UnitReceipt {
+    module string
+    status string
+    detail string
+    compile_ms int
+}
+struct BuildReceipt {
+    schema string
+    status string
+    output string
+    generator string
+    clang string
+    clang_version string
+    linker string
+    runtime string
+    runtime_profile string
+    layout string
+    pch bool
+    generate_ms int
+    compile_ms int
+    link_ms int
+    total_ms int
+    cache_status string
+    cache_detail string
+    validate_ms int
+    restore_ms int
+    generate_calls int
+    compile_calls int
+    link_calls int
+    units []UnitReceipt
+}
+
+fn json_string(value Json, key string) string {
+    let item = json.get(value, key)
+    if is_err(item) { return "" }
+    return unwrap_or(json.as_string(unwrap(item)), "")
+}
+
+fn component(root string, release Json, key string) Result<string> {
+    let relative = json_string(release, key)
+    if relative == "" || strings.starts_with(relative, "/") ||
+            strings.contains(relative, "\\") || strings.contains(relative, ":") ||
+            strings.contains(relative, "..") {
+        return err("E8204 invalid SDK component " + key)
+    }
+    let location = path.join([root, relative])?
+    if !(fs.exists(location)?) { return err("E8204 missing SDK component " + location) }
+    return ok(location)
+}
+
+fn text(raw Bytes) string {
+    let decoded = bytes.to_text(raw)
+    if is_err(decoded) { return "(tool output could not be decoded as UTF-8)" }
+    return unwrap(decoded)
+}
+
+fn elapsed_ms(start int) int { return (time.monotonic_ns() - start) // 1000000 }
+
+fn run_tool(stage string, argv []string, started int, sdk string, cwd string, tool_path string) Result<string> {
+    let remaining = 600000 - elapsed_ms(started)
+    if remaining <= 0 { return err("E8204 " + stage + ": 600 second build budget exhausted") }
+    var env = map[string]string{"HUA_HOME":sdk,"HUA_RELEASE_INPUTS":"1"}
+    if tool_path != "" { env["PATH"] = tool_path }
+    if stage != "generate" { env["SOURCE_DATE_EPOCH"] = "0" }
+    let code, output, stderr, failure = process.run_with(argv, bytes.from_text(""), remaining, cwd,env)
+    let diagnostics = text(stderr)
+    if failure != "" { return err("E8204 " + stage + ": " + failure + "\n" + diagnostics) }
+    if code != 0 { return err("E8204 " + stage + " exited with code " + str(code) + "\n" + diagnostics + text(output)) }
+    if diagnostics != "" { io.write_err(diagnostics) }
+    return ok(text(output))
+}
+
+fn clang_args(command []string, arguments []string) Result<[]string> {
+    var argv = list.from_slice(command)
+    for arg in arguments { list.append(argv,arg)? }
+    return ok(list.snapshot(argv))
+}
+
+fn generated_units(generated Json, split bool) Result<[]Unit> {
+    let schema = cache.field(generated,"schema")
+    let status = cache.field(generated,"status")
+    if status == "error" && (schema == "hua.native.cpp.v1" || schema == "hua.native.modules.v1") {
+        return err(cache.field(generated,"detail"))
+    }
+    if status != "ok" { return err("E8204 invalid native generator receipt") }
+    if !split && schema == "hua.native.cpp.v1" { return ok([Unit{id:"program",module:"",header:false}]) }
+    if schema != "hua.native.modules.v1" { return err("E8204 invalid module generator receipt") }
+    let value = json.get(generated,"units")?
+    let count = json.len(value)?
+    if count <= 0 || count > 513 { return err("E8204 invalid number of native units") }
+    let empty []Unit = []
+    var output = list.from_slice(empty)
+    var seen = map[string]bool{}
+    for i in 0..count {
+        let item = json.at(value,i)?
+        let id = cache.field(item,"id")
+        let module = cache.field(item,"module")
+        if has(seen,id) { return err("E8204 duplicate native unit") }
+        if id == "entry" {
+            if module != "" || i != count-1 || count == 1 { return err("E8204 invalid native entry unit") }
+        } else {
+            if module == "" || !strings.starts_with(id,"u") || len(id)<2 || len(id)>16 {
+                return err("E8204 invalid native module name")
+            }
+            for j in 1..len(id) {
+                if strings.index("0123456789_",strings.slice(id,j,j+1)?) < 0 { return err("E8204 invalid native unit ID") }
+            }
+        }
+        seen[id] = true
+        list.append(output,Unit{id:id,module:module,header:true})?
+    }
+    if count > 1 && !has(seen,"entry") { return err("E8204 missing native entry unit") }
+    return ok(list.snapshot(output))
+}
+
+fn compile_unit(unit Unit, job string, clang []string, headers string, flags []string, started int, sdk string,
+        tool_path string, cache_dir string, identity string, pch string) Result<CompiledUnit> {
+    let cpp = path.join([job,unit.id+".cpp"])?
+    let name = unit.id+".obj"
+    let object = path.join([job,name])?
+    let size = json.as_int(json.get(fs.stat(cpp)?,"size_bytes")?)?
+    if size <= 0 { return err("E8204 native generator produced no C++ for "+unit.id) }
+    let restore_start = time.monotonic_ns()
+    var key = ""
+    var digest = ""
+    var detail = "cache unavailable"
+    if cache_dir != "" {
+        let code = cache.file_hash(cpp)?
+        var header = ""
+        if unit.header { header = cache.file_hash(path.join([job,unit.id+".hpp"])?)? }
+        key = cache.make_key(identity,json.encode([unit.module,unit.id,code,header])?)?
+        let prior = cache.read_index(cache_dir,key,".obj")
+        detail = "no cached object for these inputs"
+        if is_ok(prior) {
+            detail = "cached object missing or invalid"
+            if unwrap_or(cache.restore(cache_dir,unwrap(prior),".obj",object),false) { digest = unwrap(prior) }
+        }
+    }
+    let restore_ms = elapsed_ms(restore_start)
+    if digest != "" {
+        return ok(CompiledUnit{module:unit.module,file:name,status:"hit",detail:"",compile_ms:0,calls:0,used_pch:false,
+            restore_ms:restore_ms,key:key,digest:digest})
+    }
+    let compile_start = time.monotonic_ns()
+    let command = clang_args(clang,flags)?
+    var stage = "compile "+unit.module
+    if unit.module == "" { stage = "compile "+unit.id }
+    let arguments = ["-ffile-prefix-map="+job+"=.","-ffile-prefix-map="+sdk+"=./sdk",
+        "-I",headers,"-x","c++","-c",unit.id+".cpp","-o",name]
+    var calls = 1
+    var used_pch = false
+    if pch != "" {
+        let prepared = clang_args(command,["-isysroot",sdk,"-Xclang","-fvalidate-ast-input-files-content","-include-pch",pch])?
+        let result = run_tool(stage,clang_args(prepared,arguments)?,started,sdk,job,tool_path)
+        if is_err(result) {
+            let reason = unwrap_err(result)
+            if strings.contains(reason,"PROCESS_TIMEOUT") ||
+                    (!strings.contains(reason,"precompiled header") && !strings.contains(reason,"PCH") &&
+                     !strings.contains(reason,"redefinition of")) {
+                return err(reason)
+            }
+            calls += 1
+            run_tool(stage,clang_args(command,arguments)?,started,sdk,job,tool_path)?
+        } else { used_pch = true }
+    } else {
+        run_tool(stage,clang_args(command,arguments)?,started,sdk,job,tool_path)?
+    }
+    let ms = elapsed_ms(compile_start)
+    if key != "" { digest = unwrap_or(cache.file_hash(object),"") }
+    return ok(CompiledUnit{module:unit.module,file:name,status:"compiled",detail:detail,compile_ms:ms,calls:calls,used_pch:used_pch,
+        restore_ms:restore_ms,key:key,digest:digest})
+}
+
+fn build(args []string) Result<BuildReceipt> {
+    let started = time.monotonic_ns()
+    if len(args) < 2 || len(args) > 3 { return err("E0004 expected SDK root, source and optional output") }
+    let sdk = args[0]
+    let source = path.join([os.cwd()?,args[1]])?
+    if path.ext(source)? != ".hua" { return err("E0004 release input must end in .hua") }
+    var output = strings.slice(source, 0, strings.len_bytes(source)-4)? + ".exe"
+    if len(args) == 3 { output = path.join([os.cwd()?,args[2]])? }
+    if path.ext(output)? != ".exe" { return err("E0004 release output must end in .exe") }
+
+    let manifest = json.decode(fs.read_text(path.join([sdk, "manifest.json"])?)?)?
+    if json_string(manifest,"schema") != "hua.sdk.v1" || json_string(manifest,"target") != "windows-x86_64" {
+        return err("E8204 unsupported Hua SDK manifest")
+    }
+    let native = json.get(manifest, "native_release")
+    if is_err(native) { return err("E8204 SDK has no native_release configuration") }
+    let release = unwrap(native)
+    if json_string(release,"schema") != "hua.sdk.native.v1" {
+        return err("E8204 unsupported native release configuration")
+    }
+    let generator = component(sdk, release, "generator")?
+    let clang = component(sdk, release, "clang")?
+    let config = path.join([path.dirname(clang)?,"x86_64-w64-windows-gnu.cfg"])?
+    var tool = list.from_slice([clang])
+    if unwrap_or(fs.exists(config),false) {
+        list.append(tool,"--no-default-config")?
+        list.append(tool,"--config="+config)?
+    }
+    let clang_command = list.snapshot(tool)
+    let linker = component(sdk, release, "linker")?
+    let headers = component(sdk, release, "headers")?
+    let semantics = component(sdk, release, "semantics")?
+    let frontend = component(sdk, release, "frontend")?
+    let portable = json_string(release,"release_policy") == "small-app-v1"
+    var scalar = ""
+    var pch_manifest = ""
+    var pch_identity = ""
+    if portable {
+        scalar = component(sdk,release,"scalar_runtime")?
+        let pch_file = component(sdk,release,"pch_manifest")
+        if is_ok(pch_file) { pch_manifest = unwrap(pch_file)
+            pch_identity = unwrap_or(cache.file_hash(pch_manifest),"") }
+    }
+
+    var parent = path.dirname(output)?
+    if parent == "" { parent = "." }
+    fs.mkdir_all(parent)?
+    # Keep generated C++ away from caller files that could shadow includes.
+    let reservation = fs.temp_file(parent, ".hua-job-")?
+    defer fs.remove(reservation)
+    let job = reservation + ".d"
+    if !(fs.mkdir_all(job)?) { return err("E8204 cannot reserve a private build directory") }
+    defer fs.remove_all(job)
+    let cpp = path.join([job,"program.cpp"])?
+    let program = path.join([job,"program.exe"])?
+    let flags = ["-std=c++20","-O2","-DNDEBUG","-DHUA_NATIVE_COUNT_STEPS=0"]
+
+    let check_start = time.monotonic_ns()
+    let cache_root = cache.root()
+    var cache_dir = ""
+    var outcome = "bypass"
+    var detail = "cache directory unavailable"
+    let system = unwrap_or(os.getenv("SystemRoot"),nil)
+    var tool_path = ""
+    if is_some(system) {
+        tool_path = path.dirname(clang)? + ";" + path.join([unwrap(system),"System32"])?
+    }
+    if is_ok(cache_root) && tool_path != "" {
+        let created = fs.mkdir_all(unwrap(cache_root))
+        if is_ok(created) { cache_dir = unwrap(cache_root) }
+    } else if is_err(cache_root) { detail = unwrap_err(cache_root) }
+
+    let compile_identity = json.encode([tool_path,json.encode(flags)?,json_string(release,"generator_mode"),json_string(release,"release_policy"),
+        pch_identity,"native-units-v2"])?
+    var keys = cache.Keys{compile:"",link:"",build:""}
+    if cache_dir != "" {
+        let fingerprint = cache.keys(sdk,source,generator,headers,clang,linker,semantics,frontend,scalar,compile_identity,started)
+        if is_ok(fingerprint) { keys = unwrap(fingerprint)
+            outcome = "miss"
+            detail = "build inputs or cached executable changed"
+        } else { cache_dir = ""
+            detail = unwrap_err(fingerprint) }
+    }
+
+    var receipt = BuildReceipt{schema:"hua.build.release.v1",status:"ok",output:output,generator:generator,clang:clang,
+        clang_version:json_string(release,"clang_version"),linker:linker,runtime:semantics,runtime_profile:"",layout:"",pch:false,generate_ms:0,
+        compile_ms:0,link_ms:0,total_ms:0,cache_status:outcome,cache_detail:detail,validate_ms:0,
+        restore_ms:0,generate_calls:0,compile_calls:0,link_calls:0,units:[]}
+    if cache_dir != "" {
+        let prior = cache.load_build(cache_dir,keys.build,started)
+        receipt.validate_ms = elapsed_ms(check_start)
+        let start = time.monotonic_ns()
+        if is_ok(prior) && unwrap_or(cache.restore(cache_dir,unwrap(prior),".exe",program),false) {
+            receipt.cache_status = "hit"
+            receipt.cache_detail = ""
+            receipt.restore_ms = elapsed_ms(start)
+            if elapsed_ms(started) >= 600000 { return err("E8204 publish: 600 second build budget exhausted") }
+            fs.replace(program,output)?
+            receipt.total_ms = elapsed_ms(started)
+            return ok(receipt)
+        }
+    }
+    receipt.validate_ms = elapsed_ms(check_start)
+    let gen_start = time.monotonic_ns()
+    receipt.generate_calls = 1
+    var split = json_string(release,"generator_mode") == "modules-v1"
+    var command = [generator,"emit",source,cpp]
+    if split { command = [generator,"emit-modules",source,job] }
+    if split && portable { command = [generator,"emit-release",source,job] }
+    var generated = json.decode(run_tool("generate",command,started,sdk,"","")?)?
+    # Earlier SDK generators understand either emit-modules or only emit.
+    if split && cache.field(generated,"schema") == "hua.native.cpp.v1" &&
+            cache.field(generated,"status") == "error" && strings.starts_with(cache.field(generated,"detail"),"E8204 expected (emit|") {
+        let usage = cache.field(generated,"detail")
+        receipt.generate_calls += 1
+        if strings.contains(usage,"emit-modules") {
+            generated = json.decode(run_tool("generate",[generator,"emit-modules",source,job],started,sdk,"","")?)?
+        } else {
+            split = false
+            generated = json.decode(run_tool("generate",[generator,"emit",source,cpp],started,sdk,"","")?)?
+        }
+    }
+    let units = generated_units(generated,split)?
+    receipt.generate_ms = elapsed_ms(gen_start)
+    let profile = cache.field(generated,"runtime")
+    receipt.runtime_profile = "full"
+    receipt.layout = cache.field(generated,"layout")
+    if receipt.layout == "" {
+        receipt.layout = "combined"
+        if split { receipt.layout = "modules" }
+    }
+    let compact = profile == "scalar"
+    if compact && scalar == "" { return err("E8204 missing scalar native runtime") }
+    if compact { receipt.runtime = scalar
+        receipt.runtime_profile = "scalar" }
+    var pch = ""
+    if !compact && pch_identity != "" && cache_dir != "" {
+        let validation = time.monotonic_ns()
+        pch = unwrap_or(cache.validated_pch(sdk,pch_manifest,cache_dir,keys.compile,started),"")
+        receipt.validate_ms += elapsed_ms(validation)
+    }
+
+    let empty []CompiledUnit = []
+    var compiled = list.from_slice(empty)
+    let empty_receipts []UnitReceipt = []
+    var unit_receipts = list.from_slice(empty_receipts)
+    let empty_text []string = []
+    var digests = list.from_slice(empty_text)
+    var link_arguments = list.from_slice(["--ld-path="+linker,"-static","-Wl,--stack,8388608","-Wl,--no-insert-timestamp"])
+    if portable {
+        for arg in ["-s","-Wl,--gc-sections","-Wl,--icf=safe","-Wl,--build-id=none"] { list.append(link_arguments,arg)? }
+    }
+    var all_keyed = cache_dir != ""
+    for unit in units {
+        let result = compile_unit(unit,job,clang_command,headers,flags,started,sdk,tool_path,cache_dir,keys.compile,pch)?
+        list.append(compiled,result)?
+        list.append(unit_receipts,UnitReceipt{module:result.module,status:result.status,detail:result.detail,compile_ms:result.compile_ms})?
+        list.append(digests,result.digest)?
+        list.append(link_arguments,result.file)?
+        if result.digest == "" { all_keyed = false }
+        receipt.compile_calls += result.calls
+        if result.used_pch { receipt.pch = true }
+        receipt.compile_ms += result.compile_ms
+        receipt.restore_ms += result.restore_ms
+    }
+    receipt.units = list.snapshot(unit_receipts)
+    if receipt.compile_calls == 0 { receipt.cache_status = "object-hit" }
+    var executable_key = ""
+    var executable_digest = ""
+    var restored_exe = false
+    if all_keyed {
+        let start = time.monotonic_ns()
+        executable_key = cache.make_key(keys.link,json.encode(list.snapshot(digests))?)?
+        executable_digest = unwrap_or(cache.read_index(cache_dir,executable_key,".exe"),"")
+        restored_exe = unwrap_or(cache.restore(cache_dir,executable_digest,".exe",program),false)
+        receipt.restore_ms += elapsed_ms(start)
+        if restored_exe { receipt.cache_status = "link-hit" }
+    }
+    if !restored_exe {
+        let link_start = time.monotonic_ns()
+        receipt.link_calls = 1
+        if compact { list.append(link_arguments,scalar)? }
+        else { list.append(link_arguments,semantics)? }
+        list.append(link_arguments,frontend)?
+        if !compact {
+            for arg in ["-lpthread","-lbcrypt"] { list.append(link_arguments,arg)? }
+        }
+        for arg in ["-o","program.exe"] { list.append(link_arguments,arg)? }
+        run_tool("link",clang_args(clang_command,list.snapshot(link_arguments))?,started,sdk,job,tool_path)?
+        receipt.link_ms = elapsed_ms(link_start)
+    }
+
+    if cache_dir != "" {
+        let start = time.monotonic_ns()
+        let inputs = cache.input_list(generated,started)
+        let current = cache.keys(sdk,source,generator,headers,clang,linker,semantics,frontend,scalar,compile_identity,started)
+        if is_ok(current) && unwrap(current).build == keys.build {
+            for unit in list.snapshot(compiled) {
+                if unit.key == "" || unit.digest == "" || unit.status != "compiled" { continue }
+                let stored = cache.store_artifact(cache_dir,path.join([job,unit.file])?,".obj")
+                if is_ok(stored) { cache.store_index(cache_dir,unit.key,".obj",unwrap(stored)) }
+            }
+            if !restored_exe {
+                executable_digest = unwrap_or(cache.store_artifact(cache_dir,program,".exe"),"")
+                if executable_key != "" && executable_digest != "" {
+                    cache.store_index(cache_dir,executable_key,".exe",executable_digest)
+                }
+            }
+            if is_ok(inputs) && executable_digest != "" {
+                let stored = cache.store_build(cache_dir,keys.build,unwrap(inputs),executable_digest)
+                if is_err(stored) { receipt.cache_detail = "cache publication failed" }
+            } else if is_err(inputs) { receipt.cache_detail = unwrap_err(inputs) }
+        } else { return err("E8204 tool inputs changed during build") }
+        receipt.validate_ms += elapsed_ms(start)
+    }
+    if elapsed_ms(started) >= 600000 { return err("E8204 publish: 600 second build budget exhausted") }
+    fs.replace(program,output)?
+    receipt.total_ms = elapsed_ms(started)
+    return ok(receipt)
+}
+
+fn main() {
+    let result = build(os.args())
+    if is_err(result) {
+        let detail = unwrap_err(result)
+        io.write_err(detail + "\n")
+        os.exit(1)
+    }
+    print(unwrap(json.encode(unwrap(result))))
+}

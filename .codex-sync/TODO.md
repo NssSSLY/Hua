@@ -10,9 +10,9 @@ P0 剩余两项已验收。[源码标准模块](knowledge/bootstrap-performance/
 
 Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、局部 async fn 及直接递归、实际在途 IOCP 取消和最终代际检查。[Windows N2 验收](knowledge/bootstrap-performance/runs/2026-11-20-n2-final.md)
 
-1. P1 N4.2D 至 N4.4 已验收。继续 N3，把可复验的 Windows 原生生成器、HUAB 编译器和运行库接入发行目录及依赖缓存。[记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-full-entries.md)
+1. P1 Windows N3.5 已交付便携 ZIP，小型标量应用已达到冷构建和尺寸目标。完整运行时应用体积及第二台实体机验收继续登记。[实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
 2. 并行自举提速按真实负载细分 C04 函数体重访、摘要变化、来源展开和合并。改动先验正确性，再做同输入 A/B。
-3. P1 N3 发布驱动、依赖缓存和目标打包，P2 本地包及可选 C ABI／Python 适配。跨平台暂缓。完整依赖与退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
+3. P2 本地包及可选 C ABI／Python 适配。跨平台暂缓。完整依赖与退出条件见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。
 
 以下为按日期保存的既有任务和交接。
 
@@ -128,3 +128,9 @@ Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、
 - 原生发布路线从 N2.3 完整任务合同继续。自举提速路线从完整负载分阶段归因开始。
 
 - N2.3 原生 Task 继续扩充结构体、枚举等名义载荷并完成全范围矩阵。
+
+- N3.5 处理小项目冷构建、发行大小和原始 PE 复现；本地扩展按既定次序接续。
+
+- 完整运行时应用尺寸与跨实体机验收，继续 C04 性能和本地包路线。
+
+- 后续可按应用负载继续测量本地 VM 及原生运行时效。

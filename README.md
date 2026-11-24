@@ -7,7 +7,7 @@
 
 D002-c/E5已接入可恢复Task、共享FIFO计算域、定时器及Task内文件阻塞适配，两执行器/无源码HUAB均验证。可运行 [异步文件示例](examples/async_file.hua)，运行命令与 [POSIX实测条件](docs/开发与运行指南.md#posix-verification)见运行指南；连接/设备/公开Event与POSIX验收后续推进。
 
-写好第一个程序后：保存为main.hua，在它所在目录的VS Code终端输入 `hua run .\main.hua`。详细步骤和找不到hua时的处理见 [第一个程序怎么运行](docs/开发与运行指南.md)。
+写好第一个程序后：保存为main.hua，在它所在目录的VS Code终端输入 `hua run .\main.hua`。 Windows 原生 SDK 可用 `hua run --release .\main.hua` 一次完成原生构建与运行。详细步骤和找不到hua时的处理见 [第一个程序怎么运行](docs/开发与运行指南.md)。
 
 先读 [项目概览与进度](docs/项目概览与进度.md)：已完成什么、尚缺什么、现在能做什么，以及入门/构建/部署步骤。文档按改动涉及的内容维护，无需全量同步。
 全部文档的中文文件名和历史资料入口见 [文档目录](docs/文档目录.md)。运行耗时测量、应用模块布局和编译器目录说明见 [运行计时与模块结构](docs/开发与运行指南.md)。
@@ -48,6 +48,8 @@ ctest --test-dir tests/build -C Release --output-on-failure
 
 本机的 `scripts/build.ps1` 复用既有 Android SDK CMake/Ninja 和 `.tools/` 便携式 LLVM-MinGW。
 脚本不下载或安装工具。Windows CLI 静态链接 C++ 库，支持中文文件路径。
+
+Windows x64 原生 SDK 装配后，可用 `hua build --release .\main.hua -o .\out\hello.exe` 生成原生应用。[安装、发布与重建编译器](docs/开发与运行指南.md#windows-native-sdk)
 运行目录须保留 `hua.exe` 与 `wasmtime.dll`；Native 模块还需要其动态库。SDK 来源、许可证与校验值见 Phase 4 文档。
 本次实际验证的是 Windows Clang 23.1.2；未宣称跨平台工具链全部实测。
 

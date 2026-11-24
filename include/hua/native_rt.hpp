@@ -1,3 +1,5 @@
+#ifndef HUA_NATIVE_RT_HPP_INCLUDED
+#define HUA_NATIVE_RT_HPP_INCLUDED
 #pragma once
 // Runtime for natively compiled Hua (prototype, 2026-11-11). Generated code is statically
 // typed: no value carries a type tag and nothing re-checks what the checker proved.
@@ -1483,3 +1485,5 @@ int run_main(int argc,char** argv,const SourceSpan& main_site,Value (*body)(),bo
 
 #include "hua/detail/native_types.hpp"
 #include "hua/detail/native_algorithms.hpp"
+
+#endif

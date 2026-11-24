@@ -1,0 +1,246 @@
+# Content-addressed artifacts and replay of the native resolver's observations.
+import std.bytes as bytes
+import std.crypto as crypto
+import std.encoding as encoding
+import std.fs as fs
+import std.json as json
+import std.list as list
+import std.os as os
+import std.path as path
+import std.process as process
+import std.strings as strings
+import std.time as time
+
+pub struct Inputs {
+    path string
+    kind string
+    digest string
+}
+pub struct Receipt {
+    inputs []Inputs
+    product string
+}
+pub struct Keys {
+    compile string
+    link string
+    build string
+}
+
+pub fn field(value Json, key string) string {
+    let item = json.get(value, key)
+    if is_err(item) { return "" }
+    return unwrap_or(json.as_string(unwrap(item)), "")
+}
+pub fn hash(data Bytes) string { return encoding.hex_encode(crypto.sha256(data)) }
+fn hash_text(data string) string { return hash(bytes.from_text(data)) }
+pub fn file_hash(filename string) Result<string> { return ok(hash(fs.read_bytes(filename)?)) }
+fn expired(start int) bool { return time.monotonic_ns() - start >= 600000000000 }
+fn encode_key(values []string) Result<string> { return ok(hash_text(json.encode(values)?)) }
+
+pub fn root() Result<string> {
+    let configured = unwrap_or(os.getenv("HUA_RELEASE_CACHE"),nil)
+    if configured == "off" { return err("disabled") }
+    let local = unwrap_or(os.getenv("LOCALAPPDATA"),nil)
+    var directory = ""
+    if is_some(configured) { directory = unwrap(configured) }
+    else if is_some(local) { directory = path.join([unwrap(local),"Hua","cache","release-v1"])? }
+    if directory == "" { return err("unavailable") }
+    return ok(path.join([os.cwd()?,directory])?)
+}
+
+fn snapshot(argv []string, started int) Result<Bytes> {
+    let remaining = (600000000000 - (time.monotonic_ns() - started)) // 1000000
+    if remaining <= 0 { return err("time budget") }
+    let code, output, diagnostics, failure = process.run_with(argv,bytes.from_text(""),remaining,"",map[string]string{})
+    if code != 0 || failure != "" { return err("SDK fingerprint unavailable: "+unwrap_or(bytes.to_text(diagnostics),failure)) }
+    return ok(output)
+}
+
+fn seal(argv []string, started int) Result<string> { return ok(hash(snapshot(argv,started)?)) }
+
+fn stock_config(filename string, expected string) Result<void> {
+    var contents = ""
+    for line in strings.split(fs.read_text(filename)?,"\n") {
+        let trimmed = strings.trim(line)
+        if trimmed != "" && !strings.starts_with(trimmed,"#") { contents += trimmed + "\n" }
+    }
+    if contents != expected { return err("external Clang configuration") }
+    return ok()
+}
+
+# Seal the SDK search roots, including filenames of potential shadow headers/libs.
+# The private C++ working directory contains only generated files.
+pub fn keys(sdk string, entry string, generator string, headers string, clang string,
+        linker string, semantics string, frontend string, scalar string, flags string, started int) Result<Keys> {
+    let tool = path.join([sdk,"toolchain/windows-x86_64"])?
+    let bin = path.join([tool,"bin"])?
+    if clang != path.join([bin,"clang++.exe"])? || linker != path.join([bin,"ld.lld.exe"])? {
+        return err("unrecognized toolchain layout")
+    }
+    # These overrides can open compiler search paths outside the SDK.
+    for name in ["CPATH","CPLUS_INCLUDE_PATH","C_INCLUDE_PATH","OBJC_INCLUDE_PATH","LIBRARY_PATH",
+            "COMPILER_PATH","GCC_EXEC_PREFIX","INCLUDE","LIB","LIBPATH","CL","_CL_",
+            "CCC_OVERRIDE_OPTIONS","CLANG_CONFIG_FILE_USER_DIR","CLANG_CONFIG_FILE_SYSTEM_DIR",
+            "CCC_ADD_ARGS","CCC_PRINT_OPTIONS","CCC_PRINT_OPTIONS_FILE","CLANG_MODULE_CACHE_PATH",
+            "SDKROOT","MACOSX_DEPLOYMENT_TARGET","DEPENDENCIES_OUTPUT","SUNPRO_DEPENDENCIES"] {
+        if unwrap_or(unwrap_or(os.getenv(name),nil),"") != "" { return err("external tool configuration") }
+    }
+    stock_config(path.join([bin,"mingw32-common.cfg"])?,
+        "-rtlib=compiler-rt\n-unwindlib=libunwind\n-stdlib=libc++\n-fuse-ld=lld\n")?
+    stock_config(path.join([bin,"x86_64-w64-windows-gnu.cfg"])?,
+        "-target x86_64-w64-mingw32\n@mingw32-common.cfg\n")?
+    let host_path = path.join([sdk,"bin/hua.exe"])?
+    let driver_path = path.join([sdk,"lib/compiler/release.huab"])?
+    if scalar != "" {
+        let output = snapshot([host_path,"--release-sdk-inputs-v2",linker,
+            "f:"+host_path,"f:"+driver_path,bin,headers,path.join([tool,"include"])?,
+            path.join([tool,"lib/clang/23/include"])?,path.join([tool,"x86_64-w64-mingw32/include"])?,
+            path.join([tool,"x86_64-w64-mingw32/usr/include"])?,"|",
+            "f:"+linker,"f:"+semantics,"f:"+frontend,"f:"+scalar,
+            path.join([tool,"x86_64-w64-mingw32/lib"])?,path.join([tool,"x86_64-w64-mingw32/mingw/lib"])?,
+            path.join([tool,"lib"])?,"|","f:"+generator],started)
+        if is_ok(output) {
+            # Capture APIs normalize line endings differently across hosts.
+            let parts = strings.split(strings.replace(bytes.to_text(unwrap(output))?,"\r\n","\n"),"\n|\n")
+            if len(parts) != 3 { return err("invalid SDK fingerprint partitions") }
+            let compile = encode_key([flags,headers,hash_text(parts[0])])?
+            let link = encode_key([compile,hash_text(parts[1])])?
+            return ok(Keys{compile:compile,link:link,build:encode_key([link,entry,hash_text(parts[2])])?})
+        }
+    }
+    let driver = file_hash(driver_path)?
+    let host = file_hash(host_path)?
+    let compiler = seal([host_path,"--release-sdk-inputs",linker,bin,headers,path.join([tool,"include"])?,
+        path.join([tool,"lib/clang/23/include"])?,path.join([tool,"x86_64-w64-mingw32/include"])?,
+        path.join([tool,"x86_64-w64-mingw32/usr/include"])?],started)?
+    let compile = encode_key([driver,host,flags,headers,compiler])?
+    let libraries = seal([host_path,"--release-sdk-inputs","",path.join([tool,"x86_64-w64-mingw32/lib"])?,
+        path.join([tool,"x86_64-w64-mingw32/mingw/lib"])?,path.join([tool,"lib"])?
+        ],started)?
+    var scalar_digest = ""
+    if scalar != "" { scalar_digest = file_hash(scalar)? }
+    let link = encode_key([compile,libraries,linker,file_hash(linker)?,semantics,file_hash(semantics)?,
+        frontend,file_hash(frontend)?,scalar,scalar_digest])?
+    let build = encode_key([link,entry,generator,file_hash(generator)?])?
+    return ok(Keys{compile:compile,link:link,build:build})
+}
+
+pub fn make_key(identity string, input string) Result<string> { return encode_key([identity,input]) }
+
+fn observations(value Json, generated bool, started int) Result<[]Inputs> {
+    let count = json.len(value)?
+    if count <= 0 || count > 16384 { return err("invalid input observations") }
+    let empty []Inputs = []
+    var items = list.from_slice(empty)
+    for position in 0..count {
+        if expired(started) { return err("time budget") }
+        let item = json.at(value,position)?
+        let filename = field(item,"path")
+        let kind = field(item,"kind")
+        var digest = field(item,"digest")
+        if filename == "" { return err("invalid input path") }
+        let info = fs.stat(filename)
+        if kind == "unavailable" {
+            if is_ok(info) { return err("import candidate appeared") }
+            if generated { digest = hash_text(json.as_string(json.get(item,"content")?)?) }
+            if hash_text(unwrap_err(info)) != digest { return err("import candidate state changed") }
+        } else if kind == "text" {
+            if generated { digest = hash_text(json.as_string(json.get(item,"content")?)?) }
+            if is_err(info) || field(unwrap(info),"kind") != "file" || file_hash(filename)? != digest {
+                return err("source changed")
+            }
+        } else {
+            if is_err(info) || field(unwrap(info),"kind") != kind { return err("import path changed") }
+        }
+        list.append(items,Inputs{path:filename,kind:kind,digest:digest})?
+    }
+    return ok(list.snapshot(items))
+}
+
+pub fn input_list(generated Json, started int) Result<[]Inputs> {
+    return observations(json.get(generated,"inputs")?,true,started)
+}
+
+fn json_file(filename string) Result<Json> { return json.decode(fs.read_text(filename)?) }
+
+pub fn load_build(root string, key string, started int) Result<string> {
+    let saved = json_file(path.join([root,key+".build.json"])?)?
+    observations(json.get(saved,"inputs")?,false,started)?
+    return ok(field(saved,"product"))
+}
+
+pub fn read_index(root string, key string, suffix string) Result<string> {
+    return fs.read_text(path.join([root,key+suffix+".key"])?)
+}
+
+pub fn valid_digest(digest string) bool {
+    if strings.len_bytes(digest) != 64 { return false }
+    for i in 0..64 {
+        if strings.index("0123456789abcdef",unwrap(strings.slice(digest,i,i+1))) < 0 { return false }
+    }
+    return true
+}
+
+# Read and validate the very bytes used for restore. The destination is an
+# independent staging file so user writes cannot change the cache entry.
+pub fn restore(root string, digest string, suffix string, staging string) Result<bool> {
+    if !valid_digest(digest) { return ok(false) }
+    let data = fs.read_bytes(path.join([root,digest+suffix])?)
+    if is_err(data) || hash(unwrap(data)) != digest { return ok(false) }
+    fs.write_bytes(staging,unwrap(data))?
+    return ok(true)
+}
+
+fn atomic(root string, name string, data Bytes) Result<void> {
+    let temp = fs.temp_file(root,".publish-")?
+    defer fs.remove(temp)
+    fs.write_bytes(temp,data)?
+    fs.replace(temp,path.join([root,name])?)?
+    return ok()
+}
+
+pub fn store_artifact(root string, filename string, suffix string) Result<string> {
+    let data = fs.read_bytes(filename)?
+    let digest = hash(data)
+    atomic(root,digest+suffix,data)?
+    return ok(digest)
+}
+
+pub fn store_index(root string, key string, suffix string, digest string) Result<void> {
+    return atomic(root,key+suffix+".key",bytes.from_text(digest))
+}
+
+pub fn store_build(root string, key string, inputs []Inputs, product string) Result<void> {
+    return atomic(root,key+".build.json",bytes.from_text(json.encode(Receipt{inputs:inputs,product:product})?))
+}
+
+# The compiler identity seals the PCH and every header search directory.
+# The first use derives the proof from the packaged content digests.
+pub fn validated_pch(sdk string, manifest string, cache_dir string, identity string, started int) Result<string> {
+    let contents = fs.read_bytes(manifest)?
+    let key = make_key(identity,hash(contents))?
+    let file = path.join([sdk,"include/hua/release_runtime.pch"])?
+    let proof = read_index(cache_dir,key,".pch")
+    if is_ok(proof) && unwrap(proof) == key { return ok(file) }
+    let data = json.decode(bytes.to_text(contents)?)?
+    if field(data,"schema") != "hua.pch.v1" || file_hash(file)? != field(data,"sha256") {
+        return err("invalid SDK precompiled header")
+    }
+    let inputs = json.get(data,"inputs")?
+    let count = json.len(inputs)?
+    if count <= 0 || count > 4096 { return err("invalid precompiled header dependency count") }
+    for i in 0..count {
+        if expired(started) { return err("time budget") }
+        let entry = json.at(inputs,i)?
+        let relative = field(entry,"path")
+        if (relative == "" || strings.starts_with(relative,"/") || strings.contains(relative,":") ||
+                strings.contains(relative,"..") || strings.contains(relative,"\\")) {
+            return err("invalid precompiled header dependency path")
+        }
+        if file_hash(path.join([sdk,relative])?)? != field(entry,"sha256") {
+            return err("precompiled header dependency changed")
+        }
+    }
+    store_index(cache_dir,key,".pch",key)
+    return ok(file)
+}

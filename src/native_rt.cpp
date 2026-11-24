@@ -1,9 +1,11 @@
 #include "hua/native_rt.hpp"
 #include <sstream>
+#include <string_view>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 namespace hn {
@@ -270,10 +272,38 @@ int run_main(int argc, char** argv, const SourceSpan& main_site, Value (*body)()
     base.input = &std::cin;
     base.working_directory = std::filesystem::current_path();
     base.execution_limits = {state.step_limit, state.call_limit, 65536};
+#ifdef _WIN32
+    // Existing generated entry points use main. Read the wide command line
+    // here so both current and previously generated code keep UTF-8 arguments.
+    (void)argc;
+    (void)argv;
+    int wide_count = 0;
+    auto free_argv = [](wchar_t** values) { LocalFree(values); };
+    std::unique_ptr<wchar_t*, decltype(free_argv)> wide_args(
+        CommandLineToArgvW(GetCommandLineW(), &wide_count), free_argv);
+    if (!wide_args) {
+        std::cerr << "error[E0004]: cannot read process arguments\n";
+        return 2;
+    }
+    for (int i = 1; i < wide_count; ++i) {
+        const auto* argument = wide_args.get()[i];
+        if (i == 1 && std::wstring_view(argument) == L"--") continue;
+        const auto size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, -1, nullptr, 0, nullptr, nullptr);
+        if (size <= 0) {
+            std::cerr << "error[E0004]: invalid Unicode process argument\n";
+            return 2;
+        }
+        std::string value(static_cast<std::size_t>(size), '\0');
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, -1, value.data(), size, nullptr, nullptr);
+        value.pop_back();
+        base.arguments.push_back(std::move(value));
+    }
+#else
     for (int i = 1; i < argc; ++i) {
         if (i == 1 && std::string(argv[i]) == "--") continue;
         base.arguments.emplace_back(argv[i]);
     }
+#endif
     try {
         Value returned;
         std::exception_ptr error;

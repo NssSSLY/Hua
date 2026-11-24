@@ -1,5 +1,28 @@
 # Hua自举性能项目记忆索引
 
+## Windows 本地运行（2026-11-24）
+
+源码 VM、原生直跑和独立 EXE 的本机对照。[记录](runs/2026-11-24-local-run.md)
+
+## Windows N3.5（2026-11-24）
+
+Windows 小程序冷构建、发行体积、搬移 PCH 和原始 PE 验收。[实测](runs/2026-11-24-n3-5-windows-release.md)
+
+## Windows N3.4（2026-11-23）
+
+完整原生生成器首次编译 13 个对象，用时 385.679 秒。仅修改词法器实现后重编 `lexer.hua` 一个对象，用时 70.031 秒。修改实际 `Token` 布局并由 Parser 读取新字段时只重编 Lexer 和 Parser。[记录](runs/2026-11-23-n3-module-objects.md)
+
+
+
+## Windows N3.3（2026-11-23）
+
+[整次发布缓存、失效验收与完整生成器规模实测](runs/2026-11-23-n3-native-cache.md)
+
+## Windows N3.1／N3.2（2026-11-23）
+
+[原生发行、仓库外搬移与 Hua 候选编译器验收](runs/2026-11-23-n3-native-sdk.md)
+
+
 ## Windows N4.2D 至 N4.4（2026-11-21）
 
 [完整入口、归档一致性和代际验收](runs/2026-11-21-n4-full-entries.md)。

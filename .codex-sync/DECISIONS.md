@@ -1,5 +1,20 @@
 # 已确定决定与当前方案
 
+2026-11-24 Windows 原生直跑使用 hua run --release 复用发布驱动，临时 EXE 使用当前工作目录和终端句柄运行，保留程序参数与退出码。[记录](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)
+
+
+2026-11-24 N3.5 对最多两个源码模块且不超过 256 个 Core 节点的程序合并生成 C++。标量范围采用独立运行时，完整运行时以真实依赖清单核对可搬移 PCH。编译、链接和生成器以分组 NTFS 快照确定身份。[实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
+
+
+2026-11-23 N3.4 使用每单元的生成实现和接口摘要复用对象，显式启动单元保持 C05 顺序。缓存未整次命中时保留全程序能力与类型分析。[记录](knowledge/bootstrap-performance/runs/2026-11-23-n3-module-objects.md)
+
+
+
+2026-11-23 N3.3 发布缓存以生成器实际读取的源码与解析路径为准，用 Windows 本地 NTFS 文件标识及变更时间核对 SDK 搜索目录。源码与产物按 SHA-256 校验。对象仍以完整 C++ 翻译单元为粒度。
+
+2026-11-23 Windows 原生发布 SDK 定位由安装目录决定，发布编排由 Hua HUAB 驱动负责，原生生成器、Clang/lld 分阶段执行。应用验证只依赖 Windows 系统库，普通构建以原子替换发布。[验收](knowledge/bootstrap-performance/runs/2026-11-23-n3-native-sdk.md)
+
+
 2026-11-21 N4.4 验收通过。生成器可用 native-generator 模式直接启动上一代 EXE。代际固定点以 C++、完整 HUAB 和行为验证，PE 原始字节与时间戳归一结果独立记录。[实施记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-full-entries.md)
 
 2026-11-21 N4.2B／C 复用原生带类型容器与可写位置。Result 提前返回沿用固定 Clang 的语句表达式和错误来源链，字符串切片只复制选定片段。[验收](knowledge/bootstrap-performance/runs/2026-11-21-n4-lexer.md)
@@ -123,3 +138,9 @@ Entry尺寸下降未产生整体收益；两个接入候选撤回默认，保留
 - 用户确认现有实现作为百科基线。确认范围与执行器、平台、验证范围分别维护，未实现候选继续单独列明。
 
 - 显式等待继续交付独立结果。复杂数据走既有复制与诊断。
+
+- 保留完整 Hua 语义分析，按每个单元的生成实现和接口复用对象，维持显式初始化顺序和 600 秒预算。
+
+- 按 Core 规模选择合并单元，标量运行时与完整运行时分别链接，便携 PCH 依赖按内容和 NTFS 快照核定。
+
+- 复用 N3.5 发布驱动、缓存和现有 Windows 参数转义。

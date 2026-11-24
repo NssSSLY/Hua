@@ -1,3 +1,4 @@
+import modules as modules
 import types as types
 import lowering as lower
 import native_cpp as native
@@ -10,6 +11,17 @@ import std.strings as strings
 struct Receipt { schema string
     status string
     detail string }
+struct ReleaseReceipt { schema string
+    status string
+    detail string
+    inputs []modules.BuildInput }
+struct ModulesReceipt { schema string
+    status string
+    detail string
+    inputs []modules.BuildInput
+    units []native.BuildUnit
+    runtime string
+    layout string }
 struct Requirement { count int
     module string
     line int
@@ -50,8 +62,8 @@ fn inventory(core lower.Core) {
 }
 fn main() {
     let args=os.args()
-    if len(args)!=3 || (args[0]!="emit" && args[0]!="inventory") {
-        reply("error","E8204 expected (emit|inventory) entry.hua output.cpp")
+    if len(args)!=3 || (args[0]!="emit" && args[0]!="inventory" && args[0]!="emit-modules" && args[0]!="emit-release") {
+        reply("error","E8204 expected (emit|emit-modules|emit-release|inventory) entry.hua output.cpp")
         return
     }
     let model=types.analyze(args[1])
@@ -68,6 +80,16 @@ fn main() {
         inventory(unwrap(core))
         return
     }
+    if args[0]=="emit-modules" || args[0]=="emit-release" {
+        var generated Result<native.Split> =err("uninitialized")
+        if args[0]=="emit-release" { generated=native.emit_release(unwrap(core),args[2]) }
+        else { generated=native.emit_split(unwrap(core),args[2]) }
+        if is_err(generated) { reply("error",unwrap_err(generated))
+            return }
+        print(unwrap(json.encode(ModulesReceipt{schema:"hua.native.modules.v1",status:"ok",detail:"",
+            inputs:list.snapshot(unwrap(model).graph.build_inputs),units:unwrap(generated).units,runtime:unwrap(generated).runtime,layout:unwrap(generated).layout})))
+        return
+    }
     let generated=native.emit(unwrap(core))
     if is_err(generated) {
         reply("error",unwrap_err(generated))
@@ -75,5 +97,8 @@ fn main() {
     }
     let output=fs.write_text(args[2],unwrap(generated))
     if is_err(output) { reply("error",unwrap_err(output)) }
-    else { reply("ok","") }
+    else if unwrap_or(os.getenv("HUA_RELEASE_INPUTS"),nil) == "1" {
+        print(unwrap(json.encode(ReleaseReceipt{schema:"hua.native.cpp.v1",status:"ok",detail:"",
+            inputs:list.snapshot(unwrap(model).graph.build_inputs)})))
+    } else { reply("ok","") }
 }

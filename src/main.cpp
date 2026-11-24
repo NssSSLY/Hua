@@ -12,12 +12,15 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include "release_inputs.hpp"
+#include "native_run.hpp"
 #endif
 namespace {
 void usage(std::ostream& out) {
@@ -26,9 +29,11 @@ void usage(std::ostream& out) {
         << "       hua check <file.hua|file.huab>\n"
         << "       hua ast <file.hua>\n"
         << "       hua run <file.hua|file.huab> [--execution-profile default|compiler] [--report-budget] [-- args...]\n"
+        << "       hua run --release <file.hua> [-- args...]\n"
         << "       hua interpret <file.hua> [--execution-profile default|compiler] [--report-budget] [-- args...]\n"
         << "       hua bytecode <file.hua|file.huab>\n"
         << "       hua build <file.hua> [-o file.huab]\n"
+        << "       hua build --release <file.hua> [-o file.exe]\n"
         << "       hua test <file.hua> [--filter text]\n";
 }
 int usage_error() { std::cerr<<"error[E0004]: invalid command arguments\n";usage(std::cerr);return 2; }
@@ -76,12 +81,16 @@ int run_tests(const std::vector<std::string>& args) {
     std::cout<<passed<<" passed, "<<failed<<" failed\n";
     return failed?1:0;
 }
-int cli(const std::vector<std::string>& args) {
+int cli(const std::vector<std::string>& args, std::ostream& output = std::cout) {
+#ifdef _WIN32
+    if (args.size() >= 4 && args[1] == "--release-sdk-inputs-v2") return hua::release_inputs::grouped_command(args);
+    if (args.size() >= 4 && args[1] == "--release-sdk-inputs") return hua::release_inputs::command(args);
+#endif
     if(args.size()>=3&&args[1]=="test")return run_tests(args);
     if (args.size() == 2 && (args[1] == "version" || args[1] == "--version")) {
-        std::cout << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
+        output << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
     }
-    if (args.size() == 2 && (args[1] == "--help" || args[1] == "help")) { usage(std::cout); return 0; }
+    if (args.size() == 2 && (args[1] == "--help" || args[1] == "help")) { usage(output); return 0; }
     if(args.size()==5&&args[1]=="native"&&args[3]=="-o"){
         hua::ModuleLoader native_loader;
         try{
@@ -89,14 +98,58 @@ int cli(const std::vector<std::string>& args) {
             const auto code=hua::emit_native(tree,model);
             std::ofstream out(std::filesystem::path(std::u8string(args[4].begin(),args[4].end())),std::ios::binary);out<<code;
             if(!out){std::cerr<<"error[E0001]: cannot write "<<args[4]<<char(10);return 1;}
-            std::cout<<"Generated "<<args[4]<<char(10);return 0;
+            output<<"Generated "<<args[4]<<char(10);return 0;
         }catch(const hua::NativeUnsupported& u){std::cerr<<"native: unsupported "<<u.what<<" at "<<u.span.file_id<<':'<<u.span.line<<':'<<u.span.column<<char(10);return 2;}
         catch(const hua::Diagnostic& d){std::cerr<<"error["<<d.code()<<"]: "<<d.what()<<char(10);return 1;}
     }
     if(args.size()==3&&args[1]=="typed-ast"){
         hua::ModuleLoader typed_loader;
-        try{const auto& tree=typed_loader.load(std::filesystem::path(std::u8string(args[2].begin(),args[2].end())));auto model=hua::SemanticAnalyzer{}.analyze(tree,typed_loader.externals());std::cout<<hua::dump_typed_ast(tree,model);return 0;}
+        try{const auto& tree=typed_loader.load(std::filesystem::path(std::u8string(args[2].begin(),args[2].end())));auto model=hua::SemanticAnalyzer{}.analyze(tree,typed_loader.externals());output<<hua::dump_typed_ast(tree,model);return 0;}
         catch(const hua::Diagnostic& d){std::cerr<<"error["<<d.code()<<"]: "<<d.what()<<char(10);return 1;}
+    }
+    if (args.size() >= 3 && args[1] == "build" && args[2] == "--release") {
+        if (!(args.size() == 4 || (args.size() == 6 && args[4] == "-o"))) return usage_error();
+#ifdef _WIN32
+        const std::filesystem::path binary_dir = [] {
+            std::wstring binary(32768, L'\0');
+            const auto size = GetModuleFileNameW(nullptr, binary.data(), static_cast<DWORD>(binary.size()));
+            if (size == 0 || size >= binary.size()) throw std::runtime_error("cannot locate Hua executable");
+            binary.resize(size);
+            return std::filesystem::path(binary).parent_path();
+        }();
+        const auto sdk = binary_dir.parent_path();
+        const auto driver = sdk / "lib" / "compiler" / "release.huab";
+        const auto driver_path = driver.u8string();
+        const std::string driver_utf8(driver_path.begin(), driver_path.end());
+        if (!std::filesystem::is_regular_file(driver)) {
+            std::cerr << "error[E0001]: release driver missing from Hua SDK: " << driver_utf8 << '\n';
+            return 1;
+        }
+        const auto sdk_path = sdk.u8string();
+        std::vector<std::string> command{args[0], "run",
+            driver_utf8, "--execution-profile", "compiler", "--",
+            std::string(sdk_path.begin(), sdk_path.end())};
+        command.push_back(args[3]);
+        if (args.size() == 6) command.push_back(args[5]);
+        return cli(command, output);
+#else
+        std::cerr << "error[E0004]: release builds require the Windows x64 Hua SDK\n";
+        return 2;
+#endif
+    }
+    if (args.size() >= 3 && args[1] == "run" && args[2] == "--release") {
+        if (args.size() < 4 || (args.size() > 4 && args[4] != "--")) return usage_error();
+#ifdef _WIN32
+        const hua::native_run::TemporaryProgram program;
+        std::ostringstream receipt;
+        const auto status = cli({args[0], "build", "--release", args[3], "-o",
+                                 hua::native_run::utf8(program.image())}, receipt);
+        if (status != 0) return status;
+        return hua::native_run::execute(program.image(), args);
+#else
+        std::cerr << "error[E0004]: native runs require the Windows x64 Hua SDK\n";
+        return 2;
+#endif
     }
     bool build = args.size() >= 3 && args[1] == "build";
     bool execute=args.size()>=3&&(args[1]=="run"||args[1]=="interpret");
@@ -115,26 +168,26 @@ int cli(const std::vector<std::string>& args) {
         if(path.extension()==".huab") {
             if(build || args[1]=="ast" || args[1]=="interpret") { return usage_error(); }
             image=std::make_unique<hua::BytecodeImage>(hua::read_huab(path));
-            if(args[1]=="check")std::cout<<"OK\n";
-            else if(args[1]=="bytecode")std::cout<<hua::disassemble(image->bytecode);
-            else return hua::report_entry(hua::VirtualMachine(image->model,std::cout,&context).run(image->bytecode),std::cerr);
+            if(args[1]=="check")output<<"OK\n";
+            else if(args[1]=="bytecode")output<<hua::disassemble(image->bytecode);
+            else return hua::report_entry(hua::VirtualMachine(image->model,output,&context).run(image->bytecode),std::cerr);
             return 0;
         }
         if(build&&args.size()==5&&std::filesystem::path(std::u8string(args[4].begin(),args[4].end())).extension()!=".huab")return usage_error();
         if (args[1] != "ast") {
             const auto& tree = loader.load(path);
             auto model = hua::SemanticAnalyzer{}.analyze(tree,loader.externals());
-            if (args[1] == "check") std::cout << "OK\n";
-            else if (args[1] == "interpret") return hua::report_entry(hua::Interpreter(model, std::cout,&context).run(tree),std::cerr);
+            if (args[1] == "check") output << "OK\n";
+            else if (args[1] == "interpret") return hua::report_entry(hua::Interpreter(model, output,&context).run(tree),std::cerr);
             else {
                 auto bytecode = hua::BytecodeCompiler{}.compile(tree, model);
                 if(build) {
                     auto out=path;out.replace_extension(".huab");
                     if(args.size()==5)out=std::filesystem::path(std::u8string(args[4].begin(),args[4].end()));
                     if(out.extension()!=".huab") { return usage_error(); }
-                    hua::write_huab(out,bytecode,model,loader.sources());auto out_utf8=out.u8string();std::cout<<"Built "<<std::string(out_utf8.begin(),out_utf8.end())<<'\n';
-                } else if (args[1] == "bytecode") std::cout << hua::disassemble(bytecode);
-                else return hua::report_entry(hua::VirtualMachine(model, std::cout,&context).run(bytecode),std::cerr);
+                    hua::write_huab(out,bytecode,model,loader.sources());auto out_utf8=out.u8string();output<<"Built "<<std::string(out_utf8.begin(),out_utf8.end())<<'\n';
+                } else if (args[1] == "bytecode") output << hua::disassemble(bytecode);
+                else return hua::report_entry(hua::VirtualMachine(model, output,&context).run(bytecode),std::cerr);
             }
             return 0;
         }
@@ -153,7 +206,7 @@ int cli(const std::vector<std::string>& args) {
         hua::Lexer lexer(*source);
         hua::Parser parser(lexer.scan());
         auto ast = parser.parse();
-        std::cout << hua::print_ast(*ast);
+        output << hua::print_ast(*ast);
         return 0;
     } catch (const hua::Diagnostic& error) {
         const auto* origin = loader.source(error.span().file_id);

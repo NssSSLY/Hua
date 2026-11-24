@@ -1,5 +1,20 @@
 # Hua项目背景
 
+2026-11-24 huaBin 已支持 Windows 一条命令原生构建并运行 Hua 源码。可以直接运行源码 VM，也可发布独立 EXE。[记录](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)
+
+
+2026-11-24 Windows N3.5 小程序原生发布和 ZIP 可搬移性已在本机验收。Hello 和标量两模块冷构建中位 0.784／0.798 秒，EXE 约 0.46 MiB。带容器两模块中位 1.960 秒、最大 2.013 秒，EXE 为 1.84 MiB。正式 ZIP 通过本机搬移，四类工作负载完成原始 PE 字节复现。[实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
+
+
+2026-11-23 Windows N3.4 增量发布。完整原生生成器首次编译 13 个对象，用时 385.679 秒。仅修改词法器实现后重编 `lexer.hua` 一个对象，用时 70.031 秒。修改实际 `Token` 布局并由 Parser 读取新字段时只重编 Lexer 和 Parser。[记录](knowledge/bootstrap-performance/runs/2026-11-23-n3-module-objects.md)
+
+
+
+2026-11-23 Windows N3.3 已验收。本地 `huaBin` 已更新。接续 N3.4 模块对象与依赖失效。[记录](knowledge/bootstrap-performance/runs/2026-11-23-n3-native-cache.md)
+
+2026-11-23 Windows 原生 `huaBin` 已支持 `hua build --release`、原生 HUAB 编译、独立应用分发和用 Hua 源码重建候选生成器。[验收](knowledge/bootstrap-performance/runs/2026-11-23-n3-native-sdk.md)
+
+
 2026-11-18 用户确认现阶段以 Hua 自身扩展语法、标准库和产物生成能力为主，逐步收缩 C++ 实现职责。Windows huaBin 已按可搬移 SDK 交付，仓库外样例、缺依赖和 C2/C3 验收通过。[证据](knowledge/bootstrap-performance/runs/2026-11-18-windows-seed-sdk.md)实现、测量与 N2/N3/N4 的次序见[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain)。标量 async/await 已通过旧种子重建及两代验收。P0 已完成源码标准模块接入与完整阶段归因。C04 是后续性能工作的首要热点。[验收](knowledge/bootstrap-performance/runs/2026-11-18-selfhost-scalar-async.md)
 
 2026-11-18 原生发布进入 N2.3。Windows 第一个 Task 里程碑采用单计算线程和标量跨 Task 边界，当前验收与独立的自举工作见 CURRENT_STATE 和 TODO。

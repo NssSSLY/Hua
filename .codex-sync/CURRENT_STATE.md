@@ -1,5 +1,30 @@
 # 当前状态
 
+## 2026-11-24 Windows 源码原生直跑
+
+hua run --release 可从 Hua 源码直接原生构建并执行，复用 N3.5 发布缓存。官方 huaBin 与 ZIP 已更新。源码 VM 的 Hello 中位 16.875 毫秒，原生直跑首次 906.107 毫秒、热运行 190.961 毫秒。[实测](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)
+
+
+## 2026-11-24 Windows N3.5 发行
+
+Hello 和标量两模块冷构建中位 0.784／0.798 秒，EXE 约 0.46 MiB。带容器两模块中位 1.960 秒、最大 2.013 秒，EXE 为 1.84 MiB。正式 ZIP 通过本机搬移，四类工作负载完成原始 PE 字节复现。[实测](knowledge/bootstrap-performance/runs/2026-11-24-n3-5-windows-release.md)
+
+
+## 2026-11-23 Windows N3.4 按模块增量发布
+
+完整原生生成器首次编译 13 个对象，用时 385.679 秒。仅修改词法器实现后重编 `lexer.hua` 一个对象，用时 70.031 秒。修改实际 `Token` 布局并由 Parser 读取新字段时只重编 Lexer 和 Parser。[记录](knowledge/bootstrap-performance/runs/2026-11-23-n3-module-objects.md)
+
+
+
+## 2026-11-23 Windows N3.3 已验收
+
+Windows N3.3 已验收。相同输入整次复用 EXE，生成内容相同可复用对象，仅运行库变化可复用对象并重新链接。完整原生生成器冷构建 415.461 秒，删除输出后 0.529 秒恢复同哈希 EXE，生成、编译与链接均跳过。[记录](knowledge/bootstrap-performance/runs/2026-11-23-n3-native-cache.md)
+
+## 2026-11-23 Windows N3.1／N3.2 已验收
+
+原生 SDK 已装配到 `huaBin`。仓库外普通应用单 EXE、源码标准库、HUAB 旧入口及原生归档均通过。候选生成器用 284.219 秒完成正式发布构建，源码改动令探针输出由 13 变为 5。[验收](knowledge/bootstrap-performance/runs/2026-11-23-n3-native-sdk.md)
+
+
 ## 2026-11-21 Windows N4.2D、N4.3、N4.4 已验收
 
 原生 archive.exe 用 52.946 秒编译完整归档入口，产物与 303.662 秒的 VM 基准逐字节一致。无源码复跑及导入、预算、发布失败对照通过。原生 A → B → C 闭环通过，三份 C++ 一致，B、C 的归档同源逐字节一致，源码修改进入原生子代。[实施记录](knowledge/bootstrap-performance/runs/2026-11-21-n4-full-entries.md)
