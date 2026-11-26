@@ -112,12 +112,13 @@ Code code(Reader& r,const Sources& sources,std::size_t& total) {
 }
 unsigned required_format(const Bytecode& bytecode,const SemanticModel& model){
     unsigned format=6;
-    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=std::max(format,7u);if(value.find("std.file.File")!=std::string::npos||value.find("std.file.IOFailure")!=std::string::npos)format=std::max(format,8u);if(value.find("std.random.Rng")!=std::string::npos)format=std::max(format,13u);if(value.find("Deque<")!=std::string::npos)format=std::max(format,14u);};
+    auto type=[&](const std::string& value){if(value.find("std.error.Value")!=std::string::npos||value.find("Result<void,")!=std::string::npos)format=std::max(format,7u);if(value.find("std.file.File")!=std::string::npos||value.find("std.file.IOFailure")!=std::string::npos)format=std::max(format,8u);if(value.find("std.random.Rng")!=std::string::npos)format=std::max(format,13u);if(value.find("Deque<")!=std::string::npos)format=std::max(format,14u);if(value.find("NativeHandle")!=std::string::npos)format=std::max(format,30u);};
     std::function<void(const Node&)> declaration=[&](const Node& n){if(n.kind==NodeKind::TypeName||n.kind==NodeKind::GenericType)type(type_name(n));for(const auto& c:n.children)declaration(*c);};
     for(const auto& [_,n]:model.functions)declaration(*n);
     for(const auto& [_,n]:model.structures)declaration(*n);
     auto code=[&](const Code& c){for(const auto& op:c.instructions){type(op.type);auto name=op.text.starts_with("$core$")?op.text.substr(6):op.text;if(auto f=standard_function(name))format=std::max(format,f->since);}};
     code(bytecode.initializer);for(const auto& [_,c]:bytecode.functions)code(c);
+    if(model.external)for(const auto& m:model.external->modules())if(m.abi_version>=2)format=std::max(format,30u);
     return format;
 }
 
@@ -238,12 +239,15 @@ void write_huab(const std::filesystem::path& path,const Bytecode& b,const Semant
         w.count(rs.size());for(auto t:rs)w.str(type_name(*t));
     }
     auto ex=model.external?model.external->modules():std::vector<ExternalModule>{};w.count(ex.size());
+    const unsigned fmt=required_format(b,model);
+    std::uint32_t native_abi=1;
+    for(const auto& m:ex)if(m.abi_version>=2)native_abi=2;
     for(const auto& m:ex) {
-        w.str(m.id);w.u8(static_cast<std::uint8_t>(m.kind));w.str(m.artifact);src.write(w,m.span);w.str(m.wasm,true);w.count(m.exports.size());
+        w.str(m.id);w.u8(static_cast<std::uint8_t>(m.kind));if(fmt>=30)w.u8(static_cast<std::uint8_t>(m.abi_version));w.str(m.artifact);src.write(w,m.span);w.str(m.wasm,true);w.count(m.exports.size());
         for(const auto& e:m.exports){w.str(e.name);w.str(e.linked_name);w.str(e.result);w.count(e.parameters.size());for(const auto& t:e.parameters)w.str(t);}
     }
     code(w,b.initializer,src);w.count(b.functions.size());for(const auto& [name,n]:functions)if(auto c=b.functions.find(n);c!=b.functions.end())code(w,c->second,src);
-    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(required_format(b,model));header.u32(1);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
+    if(w.bytes.size()>max_file-32)bad({},"payload exceeds 128 MiB");Writer header;header.bytes="HUAB\r\n\x1a\n";header.u32(fmt);header.u32(native_abi);header.u64(w.bytes.size());header.u32(crc32(w.bytes));header.u32(0);
     auto tmp=path;std::random_device random;tmp+=".tmp-"+std::to_string(random())+"-"+std::to_string(random());
     try {
         std::ofstream out(tmp,std::ios::binary|std::ios::trunc);if(!out)throw Diagnostic("E0001",{utf8(path),0,0,1,1},"cannot create .huab output");out.write(header.bytes.data(),header.bytes.size());out.write(w.bytes.data(),w.bytes.size());out.flush();if(!out)throw Diagnostic("E0001",{utf8(path),0,0,1,1},"failed to write complete .huab output");out.close();if(!out)throw Diagnostic("E0001",{utf8(path),0,0,1,1},"failed to close .huab output");
@@ -258,7 +262,7 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     std::ifstream in(path,std::ios::binary|std::ios::ate);SourceSpan site{utf8(path),0,0,1,1};if(!in)bad(site,"cannot read file");auto size=in.tellg();if(size<32||size>static_cast<std::streamoff>(max_file))bad(site,"file size is outside 32 bytes..128 MiB");
     std::string data(static_cast<std::size_t>(size),'\0');in.seekg(0);if(!in.read(data.data(),size))bad(site,"truncated file");
     if(data.substr(0,8)!="HUAB\r\n\x1a\n")bad(site,"magic header mismatch");Reader header{std::string_view(data).substr(8,24),0,site};
-    auto format=header.u32();if(format!=1&&format!=2&&format!=3&&format!=4&&format!=5&&format!=6&&format!=7&&format!=8&&format!=9&&format!=10&&format!=11&&format!=12&&format!=13&&format!=14&&format!=15&&format!=16&&format!=17&&format!=18&&format!=19&&format!=20&&format!=21&&format!=22&&format!=23&&format!=24&&format!=25&&format!=26&&format!=27&&format!=28&&format!=29)bad(site,"unsupported bytecode format version");if(header.u32()!=1)bad(site,"unsupported native ABI version");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
+    auto format=header.u32();if(format<1||format>30)bad(site,"unsupported bytecode format version");auto native_abi=header.u32();if(native_abi!=1&&native_abi!=2)bad(site,"unsupported native ABI version");if(native_abi==2&&format<30)bad(site,"native ABI 2 requires HUAB 30");auto length=header.u64();auto crc=header.u32();if(header.u32()!=0)bad(site,"unknown header flags");
     if(length!=data.size()-32||crc32(std::string_view(data).substr(32))!=crc)bad(site,"payload length/checksum mismatch");Reader r{std::string_view(data).substr(32),0,site,format};BytecodeImage image;
     auto source_count=r.count(128);if(!source_count)bad(site,"missing source table");std::size_t text_bytes=0;
     for(std::size_t i=0;i<source_count;++i){auto file=r.str(),text=r.str();if(file.empty()||file.size()>16384||file.find('\0')!=std::string::npos)bad(site,"invalid source id");text_bytes+=text.size();if(text_bytes>64*1024*1024)bad(site,"source table exceeds 64 MiB");auto source=std::make_unique<Source>(file,std::move(text));if(image.source(file))bad(site,"duplicate source id");image.sources.push_back(std::move(source));}
@@ -282,7 +286,7 @@ BytecodeImage read_huab(const std::filesystem::path& path) {
     auto external_count=r.count(128);if(external_count)image.model.external=std::make_shared<ExternalRegistry>(std::filesystem::canonical(path).parent_path());
     std::unordered_set<std::string> external_names;
     for(std::size_t i=0;i<external_count;++i) {
-        ExternalModule m{};m.id=r.str();small_name(m.id,site);auto kind=r.u8();if(kind>1)bad(site,"unknown external module kind");m.kind=static_cast<ExternalKind>(kind);m.artifact=r.str();m.span=src.read(r);m.wasm=r.str(true);auto count=r.count(4096);
+        ExternalModule m{};m.id=r.str();small_name(m.id,site);auto kind=r.u8();if(kind>1)bad(site,"unknown external module kind");m.kind=static_cast<ExternalKind>(kind);m.abi_version=format>=30?r.u8():1u;if(m.abi_version!=1&&m.abi_version!=2)bad(site,"unsupported external module ABI version");if(m.abi_version==2&&native_abi<2)bad(site,"external module ABI 2 requires header native_abi 2");m.artifact=r.str();m.span=src.read(r);m.wasm=r.str(true);auto count=r.count(4096);
         for(std::size_t j=0;j<count;++j){ExternalExport e;e.name=r.str();e.linked_name=r.str();e.result=r.str();auto ps=r.count(32);for(std::size_t k=0;k<ps;++k)e.parameters.push_back(r.str());auto f=image.model.functions.find(e.linked_name);if(f==image.model.functions.end()||f->second->text.find(" external")==std::string::npos||!external_names.insert(e.linked_name).second)bad(site,"external declaration metadata mismatch");
             std::vector<std::string> types;std::string result="void";for(const auto& c:f->second->children){if(c->kind==NodeKind::Parameter)types.push_back(c->children.empty()?"":type_name(*c->children[0]));if(c->kind==NodeKind::ReturnTypes){if(c->children.size()!=1)bad(site,"invalid external return metadata");result=type_name(*c->children[0]);}}
             if(types!=e.parameters||result!=e.result)bad(site,"external signature mismatch");m.exports.push_back(std::move(e));}

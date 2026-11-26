@@ -91,28 +91,52 @@ fn code(mut out Buffer, value bc.Code, sites []bc.Site, ids map[string]int) Resu
 }
 fn type_format(t string) int {
     if t=="" { return 6 }
+    if strings.contains(t,"NativeHandle") { return 30 }
     if strings.contains(t,"std.file.") { return 8 }
     if strings.contains(t,"std.error.Value") || strings.contains(t,"Result<void,") { return 7 }
     return 6
 }
+# BEGIN GENERATED: stdlib_load_format
 fn load_format(text string) int {
+    if strings.starts_with(text,"$core$$std$buffer$") {
+        let name=rules.cut(text,18,len(text))
+        if alg.contains(["write_str","write_int","take_text","reserve"],name) { return 9 }
+        return 6
+    }
+    if strings.starts_with(text,"$core$$std$crypto$") { return 13 }
+    if strings.starts_with(text,"$core$$std$encoding$") {
+        let name=rules.cut(text,20,len(text))
+        if alg.contains(["pack_uint","pack_int","unpack_uint","unpack_int","pack_f32","pack_f64","unpack_f32","unpack_f64"],name) { return 24 }
+        if alg.contains(["utf8_valid","utf8_encode","utf8_decode"],name) { return 23 }
+        return 12
+    }
     if strings.starts_with(text,"$core$$std$error$") { return 7 }
     if strings.starts_with(text,"$core$$std$file$") {
         let name=rules.cut(text,16,len(text))
         if alg.contains(["read_line","read_all","read_exact","write_all"],name) { return 29 }
         return 8
     }
-    if strings.starts_with(text,"$core$$std$buffer$") {
-        let name=rules.cut(text,18,len(text))
-        if alg.contains(["write_str","write_int","take_text","reserve"],name) { return 9 }
+    if strings.starts_with(text,"$core$$std$fs$") {
+        let name=rules.cut(text,14,len(text))
+        if alg.contains(["walk","copy_file","copy_dir","remove_all","canonical"],name) { return 17 }
         return 6
     }
-    if strings.starts_with(text,"$core$$std$strings$") {
-        let name=rules.cut(text,19,len(text))
-        if alg.contains(["upper","lower","casefold","equal_fold"],name) { return 26 }
-        if alg.contains(["template","format_int_grouped","format_float_grouped"],name) { return 25 }
-        if alg.contains(["center","codepoints","chars","from_codepoints","slice_runes"],name) { return 23 }
-        if alg.contains(["last_index","count","repeat","split_n","fields","lines","trim_start","trim_end","trim_prefix","trim_suffix","pad_left","pad_right","replace_n","is_empty","parse_int","parse_float","format_int","format_float","format"],name) { return 9 }
+    if strings.starts_with(text,"$core$$std$io$") {
+        let name=rules.cut(text,14,len(text))
+        if alg.contains(["write_err"],name) { return 18 }
+        return 6
+    }
+    if strings.starts_with(text,"$core$$std$json$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["null","from","array","object","set","remove","append","set_at","encode_pretty","decode_lines","encode_lines"],name) { return 27 }
+        return 6
+    }
+    if strings.starts_with(text,"$core$$std$log$") { return 18 }
+    if strings.starts_with(text,"$core$$std$math$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["checked_add","checked_sub","checked_mul","checked_neg","checked_abs","checked_pow","wrapping_add","wrapping_sub","wrapping_mul","wrapping_neg","wrapping_abs","wrapping_pow","saturating_add","saturating_sub","saturating_mul","saturating_neg","saturating_abs","saturating_pow","sinh","cosh","tanh","asinh","acosh","atanh"],name) { return 22 }
+        if alg.contains(["popcount","leading_zeros","trailing_zeros","rotate_left","rotate_right"],name) { return 21 }
+        if alg.contains(["gcd","lcm","isqrt","asin","acos","atan","atan2","cbrt","fmod","pi","e","tau"],name) { return 12 }
         return 6
     }
     if strings.starts_with(text,"$core$$std$os$") {
@@ -121,19 +145,24 @@ fn load_format(text string) int {
         if alg.contains(["exit","platform","arch","pid","cpu_count"],name) { return 16 }
         return 6
     }
-    if strings.starts_with(text,"$core$$std$fs$") {
-        let name=rules.cut(text,14,len(text))
-        if alg.contains(["walk","copy_file","copy_dir","remove_all","canonical"],name) { return 17 }
+    if strings.starts_with(text,"$core$$std$process$") { return 28 }
+    if strings.starts_with(text,"$core$$std$strings$") {
+        let name=rules.cut(text,19,len(text))
+        if alg.contains(["upper","lower","casefold","equal_fold"],name) { return 26 }
+        if alg.contains(["template","format_int_grouped","format_float_grouped"],name) { return 25 }
+        if alg.contains(["center","codepoints","chars","from_codepoints","slice_runes"],name) { return 23 }
+        if alg.contains(["last_index","count","repeat","split_n","fields","lines","trim_start","trim_end","trim_prefix","trim_suffix","pad_left","pad_right","replace_n","is_empty","parse_int","parse_float","format_int","format_float","format"],name) { return 9 }
         return 6
     }
-    if text=="$core$$std$io$write_err" { return 18 }
-    if strings.starts_with(text,"$core$$std$json$") {
+    if strings.starts_with(text,"$core$$std$test$") { return 18 }
+    if strings.starts_with(text,"$core$$std$time$") {
         let name=rules.cut(text,16,len(text))
-        if alg.contains(["null","from","array","object","set","remove","append","set_at","encode_pretty","decode_lines","encode_lines"],name) { return 27 }
+        if alg.contains(["since_ns","format_duration","parse_duration","utc_parts","utc_from_parts","weekday","day_of_year","is_leap_year","days_in_month","format_rfc3339","format_rfc3339_offset","parse_rfc3339"],name) { return 15 }
         return 6
     }
     return 6
 }
+# END GENERATED: stdlib_load_format
 fn required_format(image bc.Image) int {
     var format=6
     for s in list.snapshot(image.structures) { for f in s.fields { format=max(format,type_format(f.type_name)) } }
@@ -148,6 +177,9 @@ fn required_format(image bc.Image) int {
     for op in list.snapshot(image.initializer.instructions) {
         format=max(format,type_format(op.type_name))
         if op.op==1 { format=max(format,load_format(op.text)) }
+    }
+    for em in image.external_modules {
+        if em.abi_version>=2 { format=max(format,30) }
     }
     return format
 }
@@ -201,6 +233,9 @@ pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
         list.append(names,functions[i].name)? }
     let function_names=alg.sorted(list.snapshot(names))?
     buffer.write_u32_le(out,len(function_names))?
+    let format=required_format(image)
+    var native_abi=1
+    for em in image.external_modules { if em.abi_version>=2 { native_abi=2 } }
     for name in function_names {
         let f=functions[unwrap(function_indices[name])]
         var raw=name
@@ -208,9 +243,8 @@ pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
         text(out,raw)?
         span(out,sites[f.site],ids)?
         boolean(out,f.published)?
-        # BC1 排除 unsafe/external/方法；mutating 不是返回写能力。
         boolean(out,false)?
-        boolean(out,false)?
+        boolean(out,f.external)?
         boolean(out,false)?
         buffer.write_u32_le(out,len(f.parameters))?
         for p in f.parameters { text(out,p.name)?
@@ -220,18 +254,39 @@ pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
         buffer.write_u32_le(out,len(f.returns))?
         for t in f.returns { text(out,t)? }
     }
-    # 外部模块空表仍必须写入，不能省略。
-    buffer.write_u32_le(out,0)?
+    buffer.write_u32_le(out,len(image.external_modules))?
+    for em in image.external_modules {
+        text(out,em.id)?
+        buffer.write_u8(out,0)?
+        if format>=30 { buffer.write_u8(out,em.abi_version)? }
+        text(out,em.artifact)?
+        span(out,sites[em.site],ids)?
+        text(out,"")?
+        buffer.write_u32_le(out,len(em.exports))?
+        for ex in em.exports {
+            text(out,ex.name)?
+            text(out,ex.linked_name)?
+            text(out,ex.result)?
+            buffer.write_u32_le(out,len(ex.parameters))?
+            for pt in ex.parameters { text(out,pt)? }
+        }
+    }
     code(out,image.initializer,sites,ids)?
-    buffer.write_u32_le(out,len(function_names))?
-    for name in function_names { code(out,functions[unwrap(function_indices[name])].code,sites,ids)? }
+    var code_count=0
+    for name in function_names {
+        if !functions[unwrap(function_indices[name])].external { code_count+=1 }
+    }
+    buffer.write_u32_le(out,code_count)?
+    for name in function_names {
+        let f=functions[unwrap(function_indices[name])]
+        if !f.external { code(out,f.code,sites,ids)? }
+    }
     let payload=buffer.bytes(out)
     let checksum=bytes.crc32(payload)
-    let format=required_format(image)
     var header=buffer.new()
     buffer.append(header,bytes.from_ints([72,85,65,66,13,10,26,10])?)?
     buffer.write_u32_le(header,format)?
-    buffer.write_u32_le(header,1)?
+    buffer.write_u32_le(header,native_abi)?
     buffer.write_i64_le(header,bytes.len(payload))?
     buffer.write_u32_le(header,checksum)?
     buffer.write_u32_le(header,0)?

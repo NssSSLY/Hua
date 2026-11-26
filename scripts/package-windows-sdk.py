@@ -204,6 +204,7 @@ def assemble(build, destination, toolchain=None):
         for module in compiler_sources(*entries):
             copy(ROOT / "selfhost" / module, f"src/compiler/{module}", "compiler_source")
         copy(ROOT / "selfhost/contract.json", "src/compiler/contract.json", "compiler_contract")
+        copy(ROOT / "selfhost/stdlib_manifest.json", "src/compiler/stdlib_manifest.json", "compiler_contract")
         for module in ("main.hua", "model.hua"):
             relative = f"examples/frontend_modules/{module}"
             copy(ROOT / relative, relative, "example")

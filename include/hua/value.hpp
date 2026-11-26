@@ -37,6 +37,13 @@ struct FileData;struct IOFailureData;
 struct FileValue {std::shared_ptr<FileData> data;};
 struct IOFailureValue {std::shared_ptr<const IOFailureData> data;};
 struct ErrorValue { std::shared_ptr<const ErrorData> data; };
+struct NativeHandleValue {
+    std::uint32_t slot{};
+    std::uint32_t generation{};
+    std::uint32_t module_token{};
+    std::uint32_t type_tag{};
+    bool operator==(const NativeHandleValue&) const = default;
+};
 struct ListData;
 struct DequeData;
 struct NumericValue { std::string type;std::variant<std::int64_t,std::uint64_t,double> number; };
@@ -159,7 +166,7 @@ public:
     const T& operator*()const{return get();}
 };
 struct Value {
-    using Data = Tagged<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue>;
+    using Data = Tagged<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue, NativeHandleValue>;
     Data data;
     Value() = default;
     explicit Value(const char* text):Value(std::string(text)){}

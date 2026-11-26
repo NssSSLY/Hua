@@ -10,19 +10,18 @@
 | SDK 纯 Hua 源码标准模块 | 1 模块 / 1 函数 | `std.alg_integer.lower_bound`（Host / SH-Check / SH-HUAB / Release-EXE 四路径已全通，HUAB 6） |
 | 公开全局核心内建 | 38 个 | `catalog.core` 全部已登记；`native_cpp.hua` 当前直接支持 `print/str/int/max/len/clone/has/delete/ok/err/is_ok/is_err/unwrap/unwrap_err/unwrap_or/is_some/is_none`（17 个） |
 | `Host`（解释器 / 源码 VM / 宿主 HUAB） | 374 / 374 | 全部 374 个函数在宿主三路径均已实现并验收 |
-| `SH-Check`（自举名称 + 类型能力检查） | 206 / 374 | `catalog.hua` 14 模块共导出 137 个名称（134 个函数名 + 3 个类型名 `Value`/`File`/`IOFailure`），134 个函数均已在 `signatures.hua` 登记 |
-| `SH-HUAB`（自举归档编译器 `hua-archive.exe`） | 206 / 374 | `archive.hua` 已对 `fs.canonical`(17) 与 `file.read_line` 等 4 项(29) 升级 `load_format`；其余已登记项均满足 `since <= 8` |
-| `Release-EXE`（`hua build --release` 原生生成） | 185 / 374 | `native_cpp.hua` 当前桥接 48 项 `std.*` + 内联 13 项 `std.*` = **61 项**（注：`std.file` 16 项虽已进 `catalog/archive`，但 `native_cpp.hua` 尚未映射 `FileTag`/`IOFailureTag`） |
+| `SH-Check`（自举名称 + 类型能力检查） | 297 / 374 | `catalog.hua` 14 模块共导出 137 个名称（134 个函数名 + 3 个类型名 `Value`/`File`/`IOFailure`），134 个函数均已在 `signatures.hua` 登记 |
+| `SH-HUAB`（自举归档编译器 `hua-archive.exe`） | 297 / 374 | `archive.hua` 已对 `fs.canonical`(17) 与 `file.read_line` 等 4 项(29) 升级 `load_format`；其余已登记项均满足 `since <= 8` |
+| `Release-EXE`（`hua build --release` 原生生成） | 288 / 374 | `native_cpp.hua` 当前桥接 48 项 `std.*` + 内联 13 项 `std.*` = **61 项**（注：`std.file` 16 项虽已进 `catalog/archive`，但 `native_cpp.hua` 尚未映射 `FileTag`/`IOFailureTag`） |
 
 ### 按改造机制分类（为什么不能按函数个数简单估工期）
 
 | 缺口类别 | 函数数 | 工程本质与所需动作 |
 | --- | --- | --- |
-| A · 已全路径打通 | 185 | Host、自举检查、自举 HUAB、`hua build --release` 四路径全部就绪。 |
-| B · 仅差纯表项/桥接登记 | 101 | 参数与返回类型在 `types.hua` 和 `native_cpp.hua::cpp_type` 中**均已支持**（且 C++ `src/*_stdlib.cpp` 实现已在 `libhua_semantics.a` 中）；只需补齐 `catalog` / `signatures` / `archive(since)` / `native_cpp::bridged()`（`std.math` 另需放开 `types.hua:335` 仅 `float` 检查）。 |
+| A · 已全路径打通 | 288 | Host、自举检查、自举 HUAB、`hua build --release` 四路径全部就绪。 |
 | C · 需 Task 原生/自举特化 | 9 | `std.task` 在 Host 与自举 HUAB 已通；原生 `--release` 走并发纤程特化路径。 |
 | C · 需补不透明句柄类型映射 | 5 | `include/hua/native_rt.hpp` **已经定义好** `FileTag`、`IOFailureTag`、`ErrorTag`、`Rng`；只需在 `types.hua::typename_context` 与 `native_cpp.hua::cpp_type` 补 4 个类型分支并加入 `bridged()`，即可一次打通 `std.file`(16) + `std.error`(16) + `std.random`(5)。 |
-| D · 需多态签名规则 | 41 | 签名含泛型或开放参数（`""`，如 `json.from`/`encode_pretty`、`os.parse_args`/`environ`、`maps`/`sets`/`list` 新增项、`alg` 非回调项、`test.equal`）；需在 `types.hua::standard()` 补类型推导分支。 |
+| D · 需多态签名规则 | 39 | 签名含泛型或开放参数（`""`，如 `json.from`/`encode_pretty`、`os.parse_args`/`environ`、`maps`/`sets`/`list` 新增项、`alg` 非回调项、`test.equal`）；需在 `types.hua::standard()` 补类型推导分支。 |
 | D+C · 需多态规则+类型映射 | 14 | `std.deque`(11) 与 `std.random.shuffle/choice/sample`(3)：需同时补 `Deque<T>`/`Rng` 类型映射与 `types.hua` 元素类型推导。 |
 | E · 需高阶回调支持 | 19 | L0-1 高阶函数（19 项：`alg.map/filter/fold/...`、`list.sort_by/...`、`heap.*_by_key`、`maps.update`）。`native_algorithms.hpp` 已有 C++ 模板实现，但 `selfhost` 需补函数类型参数检查与回调代码发射。 |
 
@@ -33,30 +32,30 @@
 | `std.alg` | 27 | 27 | 10 | 10 | 10 | HUAB 6–20 | 基础 3/27 全通、10/27 SH 已通（够首批 CLI 使用） |
 | `std.buffer` | 14 | 14 | 14 | 14 | 14 | HUAB 4–9 | 已基本全通（7/14 全通，余 7 项含 `write_str`/`take_text` 仅差登记+`bridged()`） |
 | `std.bytes` | 13 | 13 | 13 | 13 | 13 | HUAB 4 | 已基本全通（8/13 全通，余 5 项仅差 `bridged()`） |
-| `std.crypto` | 5 | 5 | 0 | 0 | 0 | HUAB 13 | 后续批次按需对齐 |
+| `std.crypto` | 5 | 5 | 5 | 5 | 5 | HUAB 13 | 后续批次按需对齐 |
 | `std.deque` | 11 | 11 | 0 | 0 | 0 | HUAB 14 | 后续批次按需对齐 |
-| `std.encoding` | 17 | 17 | 0 | 0 | 0 | HUAB 12–24 | 后续批次按需对齐 |
+| `std.encoding` | 17 | 17 | 17 | 17 | 17 | HUAB 12–24 | 后续批次按需对齐 |
 | `std.error` | 16 | 16 | 16 | 16 | 16 | HUAB 7 | **核心必需**（`native_rt.hpp` 已有 `ErrorTag`；补类型映射即一次打通全部 16 项结构化错误） |
 | `std.file` | 16 | 16 | 16 | 16 | 16 | HUAB 8–29 | **核心必需**（SH-HUAB 16 项已通；`native_cpp.hua` 补 `FileTag`/`IOFailureTag` 即一次打通全部 16 项含 `read_line`） |
 | `std.fs` | 19 | 19 | 19 | 19 | 19 | HUAB 3–17 | **核心必需**（7 项已通；`exists`/`mkdir_all`/`list_dir` 仅差 `bridged()`，可选补 `walk`/`copy_file`） |
-| `std.gc` | 4 | 4 | 0 | 0 | 0 | HUAB 6 | 后续批次按需对齐 |
+| `std.gc` | 4 | 4 | 4 | 4 | 4 | HUAB 6 | 后续批次按需对齐 |
 | `std.heap` | 8 | 8 | 0 | 0 | 0 | HUAB 14 | 后续批次按需对齐 |
 | `std.io` | 4 | 4 | 4 | 4 | 4 | HUAB 3–18 | **高**（补 `bridged()` 打通 `read_line`/`read_all`/`write`/`write_err` stderr 诊断输出） |
 | `std.json` | 23 | 23 | 23 | 23 | 23 | HUAB 3–27 | **核心必需**（6 项全通、6 项缺 `bridged()`；建议首批补 `decode_lines`/`encode_lines`/`object`/`array`/`set`/`from`/`encode_pretty`） |
 | `std.list` | 23 | 23 | 10 | 10 | 10 | HUAB 4–20 | 基础 9/23 已全通（够首批 CLI 使用） |
-| `std.log` | 6 | 6 | 0 | 0 | 0 | HUAB 18 | 后续批次按需对齐 |
+| `std.log` | 6 | 6 | 6 | 6 | 6 | HUAB 18 | 后续批次按需对齐 |
 | `std.maps` | 7 | 7 | 0 | 0 | 0 | HUAB 10–11 | 后续批次按需对齐 |
-| `std.math` | 53 | 53 | 12 | 12 | 0 | HUAB 6–22 | 后续批次按需对齐 |
+| `std.math` | 53 | 53 | 53 | 53 | 53 | HUAB 6–22 | 后续批次按需对齐 |
 | `std.os` | 10 | 10 | 8 | 8 | 8 | HUAB 3–28 | **核心必需**（`args`/`cwd`/`getenv` 已通；建议首批补 `parse_args`、`exit`） |
 | `std.path` | 6 | 6 | 6 | 6 | 6 | HUAB 6 | **核心必需**（6/6 已全路径打通） |
-| `std.process` | 2 | 2 | 0 | 0 | 0 | HUAB 28 | 后续批次按需对齐 |
+| `std.process` | 2 | 2 | 2 | 2 | 2 | HUAB 28 | 后续批次按需对齐 |
 | `std.random` | 8 | 8 | 0 | 0 | 0 | HUAB 13 | 后续批次按需对齐 |
 | `std.sets` | 7 | 7 | 0 | 0 | 0 | HUAB 10–21 | 后续批次按需对齐 |
 | `std.simd` | 4 | 4 | 0 | 0 | 0 | HUAB 6 | 后续批次按需对齐 |
 | `std.strings` | 44 | 44 | 44 | 44 | 44 | HUAB 3–26 | **核心必需**（13 项已通；建议首批补 `trim_*`/`lines`/`fields`/`parse_int`/`parse_float`/`format` 等 B 类项） |
 | `std.task` | 9 | 9 | 9 | 9 | 0 | HUAB 6 | 后续批次按需对齐 |
-| `std.test` | 4 | 4 | 0 | 0 | 0 | HUAB 18 | 后续批次按需对齐 |
-| `std.time` | 14 | 14 | 2 | 2 | 2 | HUAB 6–15 | 后续批次按需对齐 |
+| `std.test` | 4 | 4 | 4 | 4 | 4 | HUAB 18 | 后续批次按需对齐 |
+| `std.time` | 14 | 14 | 14 | 14 | 14 | HUAB 6–15 | 后续批次按需对齐 |
 | `std.alg_integer` *(SDK 源码)* | 1 | 1 | 1 | 1 | 1 | HUAB 6 | 纯 Hua 标准模块样板（四路径已通） |
 
 ## 3. 逐接口覆盖明细表（27 内建模块 374 函数 + 1 源码模块）
@@ -119,11 +118,11 @@
 | 52 | `std.bytes.read_u32_le` | `(Bytes, int) Result<int,string>` | HUAB 4 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `bytes.read_u32_le(...)` → 三路径结果一致 |
 | 53 | `std.bytes.read_i64_le` | `(Bytes, int) Result<int,string>` | HUAB 4 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `bytes.read_i64_le(...)` → 三路径结果一致 |
 | 54 | `std.bytes.crc32` | `(Bytes) int` | HUAB 4 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `bytes.crc32(...)` → 三路径结果一致 |
-| 55 | `std.crypto.random_bytes` | `(int) Result<Bytes,string>` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `crypto.random_bytes(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
-| 56 | `std.crypto.uuid4` | `() Result<string,string>` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `crypto.uuid4(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
-| 57 | `std.crypto.sha256` | `(Bytes) Bytes` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.hex_encode(crypto.sha256(bytes.from_text("abc")))` → `"ba7816bf..."` |
-| 58 | `std.crypto.hmac_sha256` | `(Bytes, Bytes) Bytes` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `crypto.hmac_sha256(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
-| 59 | `std.crypto.equal` | `(Bytes, Bytes) bool` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `crypto.equal(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
+| 55 | `std.crypto.random_bytes` | `(int) Result<Bytes,string>` | HUAB 13 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `crypto.random_bytes(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
+| 56 | `std.crypto.uuid4` | `() Result<string,string>` | HUAB 13 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `crypto.uuid4(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
+| 57 | `std.crypto.sha256` | `(Bytes) Bytes` | HUAB 13 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.hex_encode(crypto.sha256(bytes.from_text("abc")))` → `"ba7816bf..."` |
+| 58 | `std.crypto.hmac_sha256` | `(Bytes, Bytes) Bytes` | HUAB 13 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `crypto.hmac_sha256(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
+| 59 | `std.crypto.equal` | `(Bytes, Bytes) bool` | HUAB 13 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `crypto.equal(...)` → 正常返回随机/摘要结果；负数长度返回 `Err` |
 | 60 | `std.deque.from_slice` | `(xs []T) Deque<T> [writable]` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D+C · 需多态规则+类型映射 | `deque.from_slice(...)` → 返回预期容器结果 |
 | 61 | `std.deque.len` | `(d Deque<T>) int` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D+C · 需多态规则+类型映射 | `deque.len(...)` → 返回预期容器结果 |
 | 62 | `std.deque.push_back` | `(mut d Deque<T>, value T) Result<int,string>` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D+C · 需多态规则+类型映射 | `deque.push_back(...)` → 正常返回 `ok(...)`；空容器/越界返回 `Err`；只读容器调用静态 `E3003`/动态 `E4007` |
@@ -135,23 +134,23 @@
 | 68 | `std.deque.get` | `(d Deque<T>, index int) Result<T,string>` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D+C · 需多态规则+类型映射 | `deque.get(...)` → 返回预期容器结果 |
 | 69 | `std.deque.clear` | `(mut d Deque<T>) void` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D+C · 需多态规则+类型映射 | `deque.clear(...)` → 返回预期容器结果；只读容器调用静态 `E3003`/动态 `E4007` |
 | 70 | `std.deque.snapshot` | `(d Deque<T>) []T` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D+C · 需多态规则+类型映射 | `deque.snapshot(...)` → 返回预期容器结果 |
-| 71 | `std.encoding.hex_encode` | `(Bytes) string` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.hex_encode(...)` → 纯函数返回编码文本或布尔校验值 |
-| 72 | `std.encoding.hex_decode` | `(string) Result<Bytes,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.hex_decode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 73 | `std.encoding.base64_encode` | `(Bytes) string` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.base64_encode(...)` → 纯函数返回编码文本或布尔校验值 |
-| 74 | `std.encoding.base64_decode` | `(string) Result<Bytes,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.base64_decode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 75 | `std.encoding.base64url_encode` | `(Bytes) string` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.base64url_encode(...)` → 纯函数返回编码文本或布尔校验值 |
-| 76 | `std.encoding.base64url_decode` | `(string) Result<Bytes,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.base64url_decode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 77 | `std.encoding.utf8_valid` | `(Bytes) bool` | HUAB 23 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.utf8_valid(...)` → 纯函数返回编码文本或布尔校验值 |
-| 78 | `std.encoding.utf8_encode` | `(int) Result<Bytes,string>` | HUAB 23 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.utf8_encode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 79 | `std.encoding.utf8_decode` | `(Bytes, int) (int,int)` | HUAB 23 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.utf8_decode(...)` → 纯函数返回编码文本或布尔校验值 |
-| 80 | `std.encoding.pack_uint` | `(int, int, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.pack_uint(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 81 | `std.encoding.pack_int` | `(int, int, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.pack_int(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 82 | `std.encoding.unpack_uint` | `(Bytes, int, int, string) Result<int,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.unpack_uint(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 83 | `std.encoding.unpack_int` | `(Bytes, int, int, string) Result<int,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.unpack_int(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 84 | `std.encoding.pack_f32` | `(float, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.pack_f32(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 85 | `std.encoding.pack_f64` | `(float, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.pack_f64(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 86 | `std.encoding.unpack_f32` | `(Bytes, int, string) Result<float,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.unpack_f32(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
-| 87 | `std.encoding.unpack_f64` | `(Bytes, int, string) Result<float,string>` | HUAB 24 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `encoding.unpack_f64(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 71 | `std.encoding.hex_encode` | `(Bytes) string` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.hex_encode(...)` → 纯函数返回编码文本或布尔校验值 |
+| 72 | `std.encoding.hex_decode` | `(string) Result<Bytes,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.hex_decode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 73 | `std.encoding.base64_encode` | `(Bytes) string` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.base64_encode(...)` → 纯函数返回编码文本或布尔校验值 |
+| 74 | `std.encoding.base64_decode` | `(string) Result<Bytes,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.base64_decode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 75 | `std.encoding.base64url_encode` | `(Bytes) string` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.base64url_encode(...)` → 纯函数返回编码文本或布尔校验值 |
+| 76 | `std.encoding.base64url_decode` | `(string) Result<Bytes,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.base64url_decode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 77 | `std.encoding.utf8_valid` | `(Bytes) bool` | HUAB 23 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.utf8_valid(...)` → 纯函数返回编码文本或布尔校验值 |
+| 78 | `std.encoding.utf8_encode` | `(int) Result<Bytes,string>` | HUAB 23 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.utf8_encode(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 79 | `std.encoding.utf8_decode` | `(Bytes, int) (int,int)` | HUAB 23 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.utf8_decode(...)` → 纯函数返回编码文本或布尔校验值 |
+| 80 | `std.encoding.pack_uint` | `(int, int, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.pack_uint(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 81 | `std.encoding.pack_int` | `(int, int, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.pack_int(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 82 | `std.encoding.unpack_uint` | `(Bytes, int, int, string) Result<int,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.unpack_uint(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 83 | `std.encoding.unpack_int` | `(Bytes, int, int, string) Result<int,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.unpack_int(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 84 | `std.encoding.pack_f32` | `(float, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.pack_f32(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 85 | `std.encoding.pack_f64` | `(float, string) Result<Bytes,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.pack_f64(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 86 | `std.encoding.unpack_f32` | `(Bytes, int, string) Result<float,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.unpack_f32(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
+| 87 | `std.encoding.unpack_f64` | `(Bytes, int, string) Result<float,string>` | HUAB 24 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `encoding.unpack_f64(...)` → 合法编码往返一致；非法字节/端序名返回 `Err` |
 | 88 | `std.error.make` | `(string, string, string) Result<std.error.Value,string>` | HUAB 7 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `error.make("app.cfg", "bad_field", "missing id")` → `ok(Error)`；空 domain 返回 `Err` |
 | 89 | `std.error.wrap` | `(string, string, string, std.error.Value) Result<std.error.Value,string>` | HUAB 7 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `error.wrap(...)` → 校验或读取 `std.error.Value` 字段，非法参数返回 `Err`/空可选值 |
 | 90 | `std.error.from_string` | `(string, string) std.error.Value` | HUAB 7 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `error.from_string(...)` → 校验或读取 `std.error.Value` 字段，非法参数返回 `Err`/空可选值 |
@@ -203,10 +202,10 @@
 | 136 | `std.fs.read_bytes` | `(string) Result<Bytes,string>` | HUAB 4 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `fs.read_bytes(...)` → 合法路径返回 `ok(...)`；含 NUL 或不存在路径返回 `Err` |
 | 137 | `std.fs.write_bytes` | `(string, Bytes) Result<bool,string>` | HUAB 4 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `fs.write_bytes(...)` → 合法路径返回 `ok(...)`；含 NUL 或不存在路径返回 `Err` |
 | 138 | `std.fs.append_bytes` | `(string, Bytes) Result<bool,string>` | HUAB 4 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `fs.append_bytes(...)` → 合法路径返回 `ok(...)`；含 NUL 或不存在路径返回 `Err` |
-| 139 | `std.gc.collect` | `() int` | HUAB 6 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `gc.collect()` → 返回非负托管对象统计计数 |
-| 140 | `std.gc.live` | `() int` | HUAB 6 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `gc.live()` → 返回非负托管对象统计计数 |
-| 141 | `std.gc.allocated` | `() int` | HUAB 6 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `gc.allocated()` → 返回非负托管对象统计计数 |
-| 142 | `std.gc.collected` | `() int` | HUAB 6 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `gc.collected()` → 返回非负托管对象统计计数 |
+| 139 | `std.gc.collect` | `() int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `gc.collect()` → 返回非负托管对象统计计数 |
+| 140 | `std.gc.live` | `() int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `gc.live()` → 返回非负托管对象统计计数 |
+| 141 | `std.gc.allocated` | `() int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `gc.allocated()` → 返回非负托管对象统计计数 |
+| 142 | `std.gc.collected` | `() int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `gc.collected()` → 返回非负托管对象统计计数 |
 | 143 | `std.heap.heapify` | `(mut xs List<T>) void` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `heap.heapify(...)` → 返回预期容器结果；只读容器调用静态 `E3003`/动态 `E4007` |
 | 144 | `std.heap.push` | `(mut xs List<T>, value T) Result<int,string>` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `heap.push(...)` → 正常返回 `ok(...)`；空容器/越界返回 `Err`；只读容器调用静态 `E3003`/动态 `E4007` |
 | 145 | `std.heap.pop` | `(mut xs List<T>) Result<T,string>` | HUAB 14 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `heap.pop(...)` → 返回预期容器结果；只读容器调用静态 `E3003`/动态 `E4007` |
@@ -265,12 +264,12 @@
 | 198 | `std.list.sort_by` | `(mut xs List<T>, less fn(T,T)->bool) void` | HUAB 11 | ✓ | ✗ | ✗ | ✗ | E · 需高阶回调支持 | `list.sort_by(...)` → 正常返回转换/聚合结果；回调抛诊断或改写原容器报 `E4003` |
 | 199 | `std.list.retain` | `(mut xs List<T>, pred fn(T)->bool) int` | HUAB 11 | ✓ | ✗ | ✗ | ✗ | E · 需高阶回调支持 | `list.retain(...)` → 正常返回转换/聚合结果；回调抛诊断或改写原容器报 `E4003` |
 | 200 | `std.list.dedup` | `(mut xs List<T>) int` | HUAB 20 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `list.dedup(...)` → 返回预期容器结果；只读容器调用静态 `E3003`/动态 `E4007` |
-| 201 | `std.log.debug` | `(string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `log.debug(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
-| 202 | `std.log.info` | `(string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `log.info(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
-| 203 | `std.log.warn` | `(string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `log.warn(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
-| 204 | `std.log.error` | `(string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `log.error(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
-| 205 | `std.log.with_fields` | `(string, string, map<string,string>) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `log.with_fields(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
-| 206 | `std.log.set_level` | `(string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `log.set_level(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
+| 201 | `std.log.debug` | `(string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `log.debug(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
+| 202 | `std.log.info` | `(string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `log.info(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
+| 203 | `std.log.warn` | `(string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `log.warn(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
+| 204 | `std.log.error` | `(string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `log.error(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
+| 205 | `std.log.with_fields` | `(string, string, map<string,string>) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `log.with_fields(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
+| 206 | `std.log.set_level` | `(string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `log.set_level(...)` → 按级别向 stderr 输出 logfmt 行；非法级别报 `E4003` |
 | 207 | `std.maps.keys` | `(m map[K]V) []K` | HUAB 10 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `maps.keys(...)` → 返回预期容器结果 |
 | 208 | `std.maps.values` | `(m map[K]V) []V` | HUAB 10 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `maps.values(...)` → 返回预期容器结果 |
 | 209 | `std.maps.entries` | `(m map[K]V) ([]K, []V)` | HUAB 10 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `maps.entries(...)` → 返回预期容器结果 |
@@ -278,59 +277,59 @@
 | 211 | `std.maps.pop` | `(mut m map[K]V, key K) V?` | HUAB 10 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `maps.pop(...)` → 返回预期容器结果；只读容器调用静态 `E3003`/动态 `E4007` |
 | 212 | `std.maps.merge` | `(mut dst map[K]V, src map[K]V) int` | HUAB 10 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `maps.merge(...)` → 返回预期容器结果；只读容器调用静态 `E3003`/动态 `E4007` |
 | 213 | `std.maps.update` | `(mut m map[K]V, key K, init V, f fn(V)->V) V` | HUAB 11 | ✓ | ✗ | ✗ | ✗ | E · 需高阶回调支持 | `maps.update(...)` → 正常返回转换/聚合结果；回调抛诊断或改写原容器报 `E4003` |
-| 214 | `std.math.floor` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.floor(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 215 | `std.math.ceil` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.ceil(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 216 | `std.math.trunc` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.trunc(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 217 | `std.math.round` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.round(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 218 | `std.math.sin` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.sin(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 219 | `std.math.cos` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.cos(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 220 | `std.math.tan` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.tan(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 221 | `std.math.exp` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.exp(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 222 | `std.math.log` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.log(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 223 | `std.math.log2` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.log2(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 224 | `std.math.log10` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.log10(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 225 | `std.math.hypot` | `(float, float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | B · 仅差纯表项/桥接登记 | `math.hypot(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 226 | `std.math.gcd` | `(int, int) int` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.gcd(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 227 | `std.math.lcm` | `(int, int) int` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.lcm(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 228 | `std.math.isqrt` | `(int) int` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.isqrt(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 229 | `std.math.asin` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.asin(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 230 | `std.math.acos` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.acos(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 231 | `std.math.atan` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.atan(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 232 | `std.math.atan2` | `(float, float) Result<float,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.atan2(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 233 | `std.math.cbrt` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.cbrt(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 234 | `std.math.fmod` | `(float, float) Result<float,string>` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.fmod(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 235 | `std.math.pi` | `() float` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.pi(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 236 | `std.math.e` | `() float` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.e(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 237 | `std.math.tau` | `() float` | HUAB 12 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.tau(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 238 | `std.math.popcount` | `(int) int` | HUAB 21 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.popcount(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 239 | `std.math.leading_zeros` | `(int) int` | HUAB 21 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.leading_zeros(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 240 | `std.math.trailing_zeros` | `(int) int` | HUAB 21 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.trailing_zeros(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 241 | `std.math.rotate_left` | `(int, int) int` | HUAB 21 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.rotate_left(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 242 | `std.math.rotate_right` | `(int, int) int` | HUAB 21 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.rotate_right(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 243 | `std.math.checked_add` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.checked_add(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 244 | `std.math.checked_sub` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.checked_sub(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 245 | `std.math.checked_mul` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.checked_mul(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 246 | `std.math.checked_neg` | `(int) Result<int,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.checked_neg(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 247 | `std.math.checked_abs` | `(int) Result<int,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.checked_abs(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 248 | `std.math.checked_pow` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.checked_pow(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 249 | `std.math.wrapping_add` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.wrapping_add(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 250 | `std.math.wrapping_sub` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.wrapping_sub(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 251 | `std.math.wrapping_mul` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.wrapping_mul(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 252 | `std.math.wrapping_neg` | `(int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.wrapping_neg(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 253 | `std.math.wrapping_abs` | `(int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.wrapping_abs(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 254 | `std.math.wrapping_pow` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.wrapping_pow(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 255 | `std.math.saturating_add` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.saturating_add(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 256 | `std.math.saturating_sub` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.saturating_sub(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 257 | `std.math.saturating_mul` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.saturating_mul(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 258 | `std.math.saturating_neg` | `(int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.saturating_neg(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 259 | `std.math.saturating_abs` | `(int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.saturating_abs(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 260 | `std.math.saturating_pow` | `(int, int) int` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.saturating_pow(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
-| 261 | `std.math.sinh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.sinh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 262 | `std.math.cosh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.cosh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 263 | `std.math.tanh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.tanh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 264 | `std.math.asinh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.asinh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 265 | `std.math.acosh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.acosh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
-| 266 | `std.math.atanh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `math.atanh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 214 | `std.math.floor` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.floor(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 215 | `std.math.ceil` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.ceil(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 216 | `std.math.trunc` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.trunc(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 217 | `std.math.round` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.round(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 218 | `std.math.sin` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.sin(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 219 | `std.math.cos` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.cos(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 220 | `std.math.tan` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.tan(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 221 | `std.math.exp` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.exp(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 222 | `std.math.log` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.log(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 223 | `std.math.log2` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.log2(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 224 | `std.math.log10` | `(float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.log10(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 225 | `std.math.hypot` | `(float, float) Result<float,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.hypot(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 226 | `std.math.gcd` | `(int, int) int` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.gcd(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 227 | `std.math.lcm` | `(int, int) int` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.lcm(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 228 | `std.math.isqrt` | `(int) int` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.isqrt(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 229 | `std.math.asin` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.asin(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 230 | `std.math.acos` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.acos(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 231 | `std.math.atan` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.atan(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 232 | `std.math.atan2` | `(float, float) Result<float,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.atan2(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 233 | `std.math.cbrt` | `(float) Result<float,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.cbrt(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 234 | `std.math.fmod` | `(float, float) Result<float,string>` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.fmod(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 235 | `std.math.pi` | `() float` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.pi(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 236 | `std.math.e` | `() float` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.e(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 237 | `std.math.tau` | `() float` | HUAB 12 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.tau(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 238 | `std.math.popcount` | `(int) int` | HUAB 21 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.popcount(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 239 | `std.math.leading_zeros` | `(int) int` | HUAB 21 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.leading_zeros(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 240 | `std.math.trailing_zeros` | `(int) int` | HUAB 21 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.trailing_zeros(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 241 | `std.math.rotate_left` | `(int, int) int` | HUAB 21 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.rotate_left(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 242 | `std.math.rotate_right` | `(int, int) int` | HUAB 21 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.rotate_right(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 243 | `std.math.checked_add` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.checked_add(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 244 | `std.math.checked_sub` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.checked_sub(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 245 | `std.math.checked_mul` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.checked_mul(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 246 | `std.math.checked_neg` | `(int) Result<int,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.checked_neg(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 247 | `std.math.checked_abs` | `(int) Result<int,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.checked_abs(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 248 | `std.math.checked_pow` | `(int, int) Result<int,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.checked_pow(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 249 | `std.math.wrapping_add` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.wrapping_add(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 250 | `std.math.wrapping_sub` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.wrapping_sub(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 251 | `std.math.wrapping_mul` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.wrapping_mul(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 252 | `std.math.wrapping_neg` | `(int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.wrapping_neg(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 253 | `std.math.wrapping_abs` | `(int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.wrapping_abs(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 254 | `std.math.wrapping_pow` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.wrapping_pow(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 255 | `std.math.saturating_add` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.saturating_add(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 256 | `std.math.saturating_sub` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.saturating_sub(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 257 | `std.math.saturating_mul` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.saturating_mul(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 258 | `std.math.saturating_neg` | `(int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.saturating_neg(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 259 | `std.math.saturating_abs` | `(int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.saturating_abs(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 260 | `std.math.saturating_pow` | `(int, int) int` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.saturating_pow(...)` → 精确整数/位运算返回确定值；非默认类型静态 `E3004` |
+| 261 | `std.math.sinh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.sinh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 262 | `std.math.cosh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.cosh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 263 | `std.math.tanh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.tanh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 264 | `std.math.asinh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.asinh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 265 | `std.math.acosh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.acosh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
+| 266 | `std.math.atanh` | `(float) Result<float,string>` | HUAB 22 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `math.atanh(...)` → 有限输入返回 `ok(...)`；定义域外/溢出返回 `Err` |
 | 267 | `std.os.exit` | `(int) void` | HUAB 16 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `os.exit(3)` → 运行 `defer` 后进程退出码为 `3`；`os.exit(999)` 报 `E4003` |
 | 268 | `std.os.platform` | `() string` | HUAB 16 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `os.platform(...)` → 返回宿主环境/平台信息 |
 | 269 | `std.os.arch` | `() string` | HUAB 16 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `os.arch(...)` → 返回宿主环境/平台信息 |
@@ -347,8 +346,8 @@
 | 280 | `std.path.dirname` | `(string) Result<string,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `path.dirname(...)` → 合法路径返回 `ok(...)`；含 NUL 或不存在路径返回 `Err` |
 | 281 | `std.path.ext` | `(string) Result<string,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `path.ext(...)` → 合法路径返回 `ok(...)`；含 NUL 或不存在路径返回 `Err` |
 | 282 | `std.path.relative` | `(string, string) Result<string,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `path.relative(...)` → 合法路径返回 `ok(...)`；含 NUL 或不存在路径返回 `Err` |
-| 283 | `std.process.run` | `([]string, Bytes, int) (int,Bytes,Bytes,string)` | HUAB 28 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `process.run([exe, "version"], bytes.from_text(""), 5000)` → `(0, out, err, "")` |
-| 284 | `std.process.run_with` | `([]string, Bytes, int, string, map<string,string>) (int,Bytes,Bytes,string)` | HUAB 28 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `process.run_with(...)` → 返回 `(exit_code, stdout, stderr, failure)`；超时 `failure=="PROCESS_TIMEOUT"` |
+| 283 | `std.process.run` | `([]string, Bytes, int) (int,Bytes,Bytes,string)` | HUAB 28 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `process.run([exe, "version"], bytes.from_text(""), 5000)` → `(0, out, err, "")` |
+| 284 | `std.process.run_with` | `([]string, Bytes, int, string, map<string,string>) (int,Bytes,Bytes,string)` | HUAB 28 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `process.run_with(...)` → 返回 `(exit_code, stdout, stderr, failure)`；超时 `failure=="PROCESS_TIMEOUT"` |
 | 285 | `std.random.new` | `(int) std.random.Rng [writable]` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | C · 需补不透明句柄类型映射 | `random.new(rng, ...)` → 固定种子序列可复现；只读 `rng` 报 `E3003`/`E4007` |
 | 286 | `std.random.int` | `(mut std.random.Rng, int, int) int` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | C · 需补不透明句柄类型映射 | `random.int(rng, ...)` → 固定种子序列可复现；只读 `rng` 报 `E3003`/`E4007` |
 | 287 | `std.random.float` | `(mut std.random.Rng) float` | HUAB 13 | ✓ | ✗ | ✗ | ✗ | C · 需补不透明句柄类型映射 | `random.float(rng, ...)` → 固定种子序列可复现；只读 `rng` 报 `E3003`/`E4007` |
@@ -421,22 +420,22 @@
 | 354 | `std.task.timeout` | `(t Task<T>, ms int) Result<T,string>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | C · 需 Task 原生/自举特化 | `task.timeout(...)` → 遵循协作取消 `E4101` 与结构化作用域规则 |
 | 355 | `std.task.all` | `(a Task<T>, b Task<T>) Task<[]T>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | C · 需 Task 原生/自举特化 | `task.all(...)` → 遵循协作取消 `E4101` 与结构化作用域规则 |
 | 356 | `std.task.race` | `(a Task<T>, b Task<T>) Task<T>` | HUAB 6 | ✓ | ✓ | ✓ | ✗ | C · 需 Task 原生/自举特化 | `task.race(...)` → 遵循协作取消 `E4101` 与结构化作用域规则 |
-| 357 | `std.test.assert` | `(bool, string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `test.assert(...)` → 条件成立无输出；失败抛 `E4900` |
-| 358 | `std.test.equal` | `(actual T, expected T) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `test.equal(...)` → 条件成立无输出；失败抛 `E4900` |
-| 359 | `std.test.not_equal` | `(actual T, unexpected T) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | D · 需多态签名规则 | `test.not_equal(...)` → 条件成立无输出；失败抛 `E4900` |
-| 360 | `std.test.fail` | `(string) void` | HUAB 18 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `test.fail(...)` → 条件成立无输出；失败抛 `E4900` |
-| 361 | `std.time.since_ns` | `(int) int` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.since_ns(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 362 | `std.time.format_duration` | `(int) string` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.format_duration(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 363 | `std.time.parse_duration` | `(string) Result<int,string>` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.parse_duration(...)` → 合法时间文本/分量返回 `ok(int)`；非法格式返回 `Err` |
-| 364 | `std.time.utc_parts` | `(int) (int,int,int,int,int,int,int)` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.utc_parts(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 365 | `std.time.utc_from_parts` | `(int, int, int, int, int, int, int) Result<int,string>` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.utc_from_parts(...)` → 合法时间文本/分量返回 `ok(int)`；非法格式返回 `Err` |
-| 366 | `std.time.weekday` | `(int) int` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.weekday(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 367 | `std.time.day_of_year` | `(int) int` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.day_of_year(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 368 | `std.time.is_leap_year` | `(int) bool` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.is_leap_year(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 369 | `std.time.days_in_month` | `(int, int) int` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.days_in_month(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 370 | `std.time.format_rfc3339` | `(int) string` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.format_rfc3339(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 371 | `std.time.format_rfc3339_offset` | `(int, int) string` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.format_rfc3339_offset(...)` → 纪元毫秒/单调时钟计算确定结果 |
-| 372 | `std.time.parse_rfc3339` | `(string) Result<int,string>` | HUAB 15 | ✓ | ✗ | ✗ | ✗ | B · 仅差纯表项/桥接登记 | `time.parse_rfc3339(...)` → 合法时间文本/分量返回 `ok(int)`；非法格式返回 `Err` |
+| 357 | `std.test.assert` | `(bool, string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `test.assert(...)` → 条件成立无输出；失败抛 `E4900` |
+| 358 | `std.test.equal` | `(actual T, expected T) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `test.equal(...)` → 条件成立无输出；失败抛 `E4900` |
+| 359 | `std.test.not_equal` | `(actual T, unexpected T) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `test.not_equal(...)` → 条件成立无输出；失败抛 `E4900` |
+| 360 | `std.test.fail` | `(string) void` | HUAB 18 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `test.fail(...)` → 条件成立无输出；失败抛 `E4900` |
+| 361 | `std.time.since_ns` | `(int) int` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.since_ns(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 362 | `std.time.format_duration` | `(int) string` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.format_duration(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 363 | `std.time.parse_duration` | `(string) Result<int,string>` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.parse_duration(...)` → 合法时间文本/分量返回 `ok(int)`；非法格式返回 `Err` |
+| 364 | `std.time.utc_parts` | `(int) (int,int,int,int,int,int,int)` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.utc_parts(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 365 | `std.time.utc_from_parts` | `(int, int, int, int, int, int, int) Result<int,string>` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.utc_from_parts(...)` → 合法时间文本/分量返回 `ok(int)`；非法格式返回 `Err` |
+| 366 | `std.time.weekday` | `(int) int` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.weekday(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 367 | `std.time.day_of_year` | `(int) int` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.day_of_year(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 368 | `std.time.is_leap_year` | `(int) bool` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.is_leap_year(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 369 | `std.time.days_in_month` | `(int, int) int` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.days_in_month(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 370 | `std.time.format_rfc3339` | `(int) string` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.format_rfc3339(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 371 | `std.time.format_rfc3339_offset` | `(int, int) string` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.format_rfc3339_offset(...)` → 纪元毫秒/单调时钟计算确定结果 |
+| 372 | `std.time.parse_rfc3339` | `(string) Result<int,string>` | HUAB 15 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.parse_rfc3339(...)` → 合法时间文本/分量返回 `ok(int)`；非法格式返回 `Err` |
 | 373 | `std.time.monotonic_ns` | `() int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.monotonic_ns(...)` → 纪元毫秒/单调时钟计算确定结果 |
 | 374 | `std.time.unix_ms` | `() int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通 | `time.unix_ms(...)` → 纪元毫秒/单调时钟计算确定结果 |
 | 375 | `std.alg_integer.lower_bound` | `(values []int, key int) int` | HUAB 6 | ✓ | ✓ | ✓ | ✓ | A · 已全路径打通（SDK 源码） | `alg_integer.lower_bound([1,4,4,7], 4)` → `1`；未设 `HUA_HOME` 报 `E5001` |

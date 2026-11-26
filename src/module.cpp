@@ -51,7 +51,7 @@ bool valid_package_name(std::string_view name) {
     static const std::unordered_set<std::string_view> reserved = {
         "std", "int", "float", "bool", "string", "byte", "i8", "i16", "i32", "i64",
         "u8", "u16", "u32", "u64", "f32", "f64", "usize", "isize", "void",
-        "Json", "Bytes", "Buffer", "List", "Deque", "Result", "Task", "map",
+        "Json", "Bytes", "Buffer", "List", "Deque", "Result", "Task", "NativeHandle", "map",
         "fn", "struct", "enum", "interface", "import", "as", "let", "var", "const",
         "pub", "mut", "async", "await", "spawn", "taskgroup", "parallel", "simd",
         "match", "if", "else", "while", "for", "in", "by", "break", "continue",
@@ -209,7 +209,7 @@ void ModuleLoader::load_package_manifest(const std::string& expected_name, const
     const auto* obj = root_json ? std::get_if<JsonData::Object>(&root_json->data) : nullptr;
     if (!obj) error(site, "hua.package.json must be a JSON object", "E5004");
     for (const auto& [k, _] : *obj) {
-        if (k != "schema" && k != "name" && k != "version" && k != "deps")
+        if (k != "schema" && k != "name" && k != "version" && k != "deps" && k != "native_libs")
             error(site, "unknown field `" + k + "` in hua.package.json", "E5004");
     }
     if (!json_text_equals(json_member(root_json, "schema"), "hua.package.v1"))
@@ -252,7 +252,42 @@ void ModuleLoader::load_package_manifest(const std::string& expected_name, const
             error(site, "package dependency graph exceeds 128 packages", "E5005");
     }
 
-    PackageInfo info{pkg_name, *ver_ptr, dir, {}};
+    PackageInfo info{pkg_name, *ver_ptr, dir, {}, {}};
+    if (const auto libs_node = json_member(root_json, "native_libs")) {
+        const auto* libs_obj = std::get_if<JsonData::Object>(&libs_node->data);
+        if (!libs_obj) error(site, "`native_libs` in hua.package.json must be a JSON object", "E5004");
+#ifdef _WIN32
+        const std::string host_target = "windows-x86_64";
+#elif __APPLE__
+        const std::string host_target = "macos-arm64";
+#else
+        const std::string host_target = "linux-x86_64";
+#endif
+        for (const auto& [plat, plat_val] : *libs_obj) {
+            if (plat != "windows-x86_64" && plat != "linux-x86_64" && plat != "macos-arm64" && plat != "macos-x86_64")
+                error(site, "unsupported platform key `" + plat + "` in `native_libs`", "E5004");
+            const auto* arr = plat_val ? std::get_if<JsonData::Array>(&plat_val->data) : nullptr;
+            if (!arr) error(site, "`native_libs." + plat + "` must be a JSON array of filenames", "E5004");
+            std::unordered_set<std::string> seen_libs;
+            for (const auto& elem : *arr) {
+                const auto* fname = elem ? std::get_if<std::string>(&elem->data) : nullptr;
+                if (!fname || fname->empty() || fname->size() > 256 ||
+                    fname->find('/') != std::string::npos || fname->find('\\') != std::string::npos ||
+                    fname->find(':') != std::string::npos || *fname == "." || *fname == ".." ||
+                    !seen_libs.insert(*fname).second)
+                    error(site, "invalid or duplicate filename in `native_libs." + plat + "`", "E5004");
+                if (plat == host_target) {
+                    const auto lib_path = dir / fs::path(std::u8string(fname->begin(), fname->end()));
+                    const auto lib_st = fs::symlink_status(lib_path, ec);
+                    if (ec || lib_st.type() == fs::file_type::not_found)
+                        error(site, "missing native library `" + *fname + "` declared in hua.package.json", "E7001");
+                    if (fs::is_symlink(lib_st) || !fs::is_regular_file(lib_st))
+                        error(site, "native library `" + *fname + "` must be a regular non-symlink file", "E5001");
+                    info.native_libs.push_back(*fname);
+                }
+            }
+        }
+    }
     if (const auto deps_node = json_member(root_json, "deps")) {
         const auto* deps_obj = std::get_if<JsonData::Object>(&deps_node->data);
         if (!deps_obj) error(site, "`deps` in hua.package.json must be a JSON object", "E5004");
@@ -335,11 +370,11 @@ ModuleLoader::resolve_in_context(const Module& caller, const std::string& name, 
             auto f = base; f += ".hua";
             candidates.emplace_back(f, rel + ".hua");
             candidates.emplace_back(base / "package.hua", rel + "/package.hua");
+            auto nf = base; nf += ".huam";
+            candidates.emplace_back(nf, rel + ".huam");
+            candidates.emplace_back(base / "package.huam", rel + "/package.huam");
             if (pkg_owner.empty()) {
-                auto nf = base; nf += ".huam";
                 auto wf = base; wf += ".wasm";
-                candidates.emplace_back(nf, rel + ".huam");
-                candidates.emplace_back(base / "package.huam", rel + "/package.huam");
                 candidates.emplace_back(wf, rel + ".wasm");
                 candidates.emplace_back(base / "package.wasm", rel + "/package.wasm");
             }
@@ -433,14 +468,18 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
     const std::string source_name = !sdk_id.empty() ? sdk_id : (!logical_id.empty() ? logical_id : utf8(path));
     owned->source=std::make_unique<Source>(source_name,std::move(text));auto& module=*owned;
     modules_.push_back(std::move(owned));cache_.emplace(cache_key,&module);loading_.push_back(&module);
+    std::uint32_t native_abi_ver = 1;
     if(native) {
-        if(module.source->line_text(1)!="HUA_NATIVE 1")error(module.source->span(0,1),"native manifest requires HUA_NATIVE 1 header","E7002");
+        auto header_line = module.source->line_text(1);
+        if(header_line=="HUA_NATIVE 1") native_abi_ver = 1;
+        else if(header_line=="HUA_NATIVE 2") native_abi_ver = 2;
+        else error(module.source->span(0,1),"native manifest requires HUA_NATIVE 1 or HUA_NATIVE 2 header","E7002");
         auto parse_text=module.source->text();parse_text[0]='#';Source interface(module.source->filename(),std::move(parse_text));
         module.tree=Parser(Lexer(interface).scan()).parse();
     }else module.tree=Parser(Lexer(*module.source).scan()).parse();
     if(native||wasm) {
         ExternalModule external{};external.id=module.prefix+"module";external.span=module.tree->span;
-        external.kind=native?ExternalKind::Native:ExternalKind::Wasm;external.wasm=std::move(binary);
+        external.kind=native?ExternalKind::Native:ExternalKind::Wasm;external.abi_version=native_abi_ver;external.wasm=std::move(binary);
         auto artifact=path;
         if(native) {
 #ifdef _WIN32
@@ -450,9 +489,24 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
 #else
             artifact.replace_extension(".so");
 #endif
-            if(!std::filesystem::is_regular_file(artifact))error(site,"native manifest binary is missing","E7001");
+            std::error_code aec;
+            auto ast = std::filesystem::symlink_status(artifact, aec);
+            if(aec || std::filesystem::is_symlink(ast) || !std::filesystem::is_regular_file(ast))
+                error(site,"native manifest binary is missing","E7001");
+            external.source_artifact = artifact;
         }
-        external.artifact=utf8(std::filesystem::relative(artifact,root_));
+        if (has_manifest_) {
+            if (!owner_package.empty()) {
+                external.artifact = "native/" + owner_package + "/" + utf8(artifact.filename());
+            } else {
+                auto rel_art = utf8(std::filesystem::relative(artifact, root_));
+                std::replace(rel_art.begin(), rel_art.end(), '\\', '/');
+                external.artifact = "native/_root/" + rel_art;
+            }
+        } else {
+            external.artifact=utf8(std::filesystem::relative(artifact,root_));
+            std::replace(external.artifact.begin(), external.artifact.end(), '\\', '/');
+        }
         for(auto& n:module.tree->children) {
             if(n->kind!=N::Function || n->text.find(" pub")==std::string::npos || n->text.find(" unsafe")!=std::string::npos || declared_name(*n).find('.')!=std::string::npos || !n->children.back()->children.empty())error(n->span,"native/WASM interfaces require public bodyless scalar functions","E7003");
             ExternalExport e;e.name=declared_name(*n);e.linked_name=module.prefix+e.name;e.result="void";
@@ -475,7 +529,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
             if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
             else {try{auto [dependency, meta]=resolve_in_context(module,n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span,false,{},meta.first,meta.second));}catch(const Diagnostic& error){auto reported=error;reported.add_context(n->span,"imported from");throw reported;}}
         }else {
-            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Deque"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
+            declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Deque"||declared_name(*n)=="Task"||declared_name(*n)=="NativeHandle"))error(n->span,"reserved standard value type","E3002");
             if(n->kind==N::MultiBinding){for(const auto& p:n->children[0]->children)if(p->text!="_")module.globals.emplace(p->text,module.prefix+p->text);}
             if(n->kind==N::Function || n->kind==N::Struct || n->kind==N::Let || n->kind==N::Var || n->kind==N::Const) {
                 auto name=declared_name(*n);module.globals.emplace(name,module.prefix+name);
@@ -583,7 +637,7 @@ NodePtr ModuleLoader::link(Module& module) {
         if(name.empty())return std::string{};
         for(auto i=local_types.rbegin();i!=local_types.rend();++i)if(i->contains(name))return name;
         if(auto linked=imported(name,span,true);!linked.empty())return linked;
-        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task"};
+        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task","NativeHandle","std.error.Value"};
         if(primitives.contains(name))return name;
         if(auto found=module.globals.find(name);found!=module.globals.end())return found->second;
         return module.prefix+name;

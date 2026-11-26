@@ -1,0 +1,11 @@
+{
+  "schema": "hua.package.v1",
+  "name": "sqlite",
+  "version": "0.1.0",
+  "native_libs": {
+    "windows-x86_64": [
+      "sqlite_native.dll",
+      "sqlite3.dll"
+    ]
+  }
+}

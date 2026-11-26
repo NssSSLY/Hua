@@ -1,4 +1,5 @@
 #include "hua/native_rt.hpp"
+#include "hua/native_external.hpp"
 #include <sstream>
 #include <string_view>
 #ifdef _WIN32
@@ -21,6 +22,67 @@ namespace hn {
 Value call_builtin(const char* name, const SourceSpan& span, std::vector<Value> args, const std::vector<bool>& contextual, const char* result_type) {
     auto& running = current_state();
     return hua::invoke_builtin(name, args, span, *running.output, contextual, result_type, running.context);
+}
+
+static std::filesystem::path executable_bundle_root() {
+#ifdef _WIN32
+    std::wstring buf(32768, L'\0');
+    DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+    if (n > 0 && n < buf.size()) {
+        buf.resize(n);
+        std::error_code ec;
+        auto p = std::filesystem::canonical(std::filesystem::path(buf), ec);
+        if (!ec) return p.parent_path();
+        return std::filesystem::path(buf).parent_path();
+    }
+#endif
+    return std::filesystem::current_path();
+}
+
+static std::unique_ptr<hua::NativeExternalHost>& native_external_registry() {
+    static std::unique_ptr<hua::NativeExternalHost> reg;
+    return reg;
+}
+
+static void reset_native_externals() {
+    if (auto& reg = native_external_registry()) {
+        reg->reset();
+        reg.reset();
+    }
+}
+
+void register_external_module(const char* id, const char* artifact, std::uint32_t abi_version,
+                              std::vector<ExternalExportSpec> exports, const SourceSpan& site) {
+    auto& reg = native_external_registry();
+    if (!reg) reg = std::make_unique<hua::NativeExternalHost>(executable_bundle_root());
+    hua::ExternalModule mod{};
+    mod.id = id ? id : "";
+    mod.artifact = artifact ? artifact : "";
+    mod.kind = hua::ExternalKind::Native;
+    mod.abi_version = abi_version;
+    mod.span = site;
+    for (auto& ex : exports) {
+        hua::ExternalExport e;
+        e.name = ex.name ? ex.name : "";
+        e.linked_name = ex.linked_name ? ex.linked_name : "";
+        e.result = ex.result ? ex.result : "void";
+        e.parameters = std::move(ex.parameters);
+        mod.exports.push_back(std::move(e));
+    }
+    reg->add(std::move(mod));
+}
+
+void init_external_module(const char* id, const SourceSpan& site) {
+    auto& reg = native_external_registry();
+    if (!reg) hua::runtime_error(site, "external module registry not initialized", "E4001");
+    reg->initialize(id ? id : "", site);
+}
+
+Value call_external(const char* linked_name, const SourceSpan& site,
+                    std::vector<Value> args, const std::vector<bool>& contextual) {
+    auto& reg = native_external_registry();
+    if (!reg) hua::runtime_error(site, "external module registry not initialized", "E4001");
+    return reg->call(linked_name ? linked_name : "", args, contextual, site);
 }
 static Value resumable_bridge(const BridgeInfo&,const SourceSpan&,std::vector<Value>);
 Value call_bridge(const BridgeInfo& site, const SourceSpan& span, std::initializer_list<Value> args) {
@@ -305,6 +367,9 @@ int run_main(int argc, char** argv, const SourceSpan& main_site, Value (*body)()
     }
 #endif
     try {
+        struct ExternalCleanupGuard {
+            ~ExternalCleanupGuard() { reset_native_externals(); }
+        } external_guard;
         Value returned;
         std::exception_ptr error;
         {

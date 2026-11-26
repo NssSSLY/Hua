@@ -30,6 +30,7 @@ private:
         std::string version;
         std::filesystem::path root;
         std::unordered_map<std::string, std::string> deps;
+        std::vector<std::string> native_libs;
     };
     std::filesystem::path root_;
     bool has_manifest_{};

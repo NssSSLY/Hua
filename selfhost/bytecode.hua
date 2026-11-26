@@ -43,14 +43,21 @@ pub struct Function { name string
     site int
     published bool
     nested bool
+    external bool
     writable bool
     parameters []Parameter
     returns []string
     code Code }
+pub struct ExternalModule { id string
+    artifact string
+    abi_version int
+    site int
+    exports []lower.ExternalExport }
 pub struct Image { entry string
     sites List<Site>
     structures List<Structure>
     functions List<Function>
+    external_modules []ExternalModule
     initializer Code
     instructions int
     work int }
@@ -469,6 +476,8 @@ fn statement(s mut State, id int) Result<void> {
         let call = get(s.core,n.children[0])
         for child in call.children { expression(s,child)? }
         emit(s,n,40,"","",len(call.children)-1,false,nil_scalar(),[],flags(s.core,call.children,1))?
+    } else if k=="ExternalInit" {
+        simple(s,n,31,n.text)?
     } else { return err(fail(n,"statement outside C06")) }
     return ok()
 }
@@ -489,7 +498,8 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
     var functions []Function = []
     var loops []Loop = []
     var initial = Code{name:"<initialize>",instructions:list.from_slice(ops)}
-    var s = State{core:c,image:Image{entry:c.entry,sites:list.from_slice(sites),structures:list.from_slice(structures),functions:list.from_slice(functions),initializer:initial,instructions:0,work:0},code:initial,depth:0,loops:list.from_slice(loops),sites:map[int]int{},published:map[string]bool{},functions:list.from_slice(empty_functions)}
+    let empty_ext []ExternalModule = []
+    var s = State{core:c,image:Image{entry:c.entry,sites:list.from_slice(sites),structures:list.from_slice(structures),functions:list.from_slice(functions),external_modules:empty_ext,initializer:initial,instructions:0,work:0},code:initial,depth:0,loops:list.from_slice(loops),sites:map[int]int{},published:map[string]bool{},functions:list.from_slice(empty_functions)}
     for symbol in list.snapshot(model.graph.symbols) { s.published[symbol.module+":"+str(symbol.node)] = symbol.published }
     # 布局先于匹配生成；声明按 C03 初始化/源码次序登记。
     for init in list.snapshot(c.initialization) {
@@ -535,10 +545,19 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
             }
             if p.kind=="ReturnTypes" { for t in p.children { list.append(returns,type_text(c,t))? } }
         }
+        if n.role=="external" {
+            list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:true,nested:false,external:true,writable:false,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+            continue
+        }
         block(s,n.children[len(n.children)-1],false)?
         constant(s,n,nil_scalar())?
         simple(s,n,22,"")?
-        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),nested:n.role=="local-function",writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),nested:n.role=="local-function",external:false,writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
     }
+    var exts = list.from_slice(empty_ext)
+    for em in c.external_modules {
+        list.append(exts,ExternalModule{id:em.id,artifact:em.artifact,abi_version:em.abi_version,site:site(s,get(c,em.site_node))?,exports:em.exports})?
+    }
+    s.image.external_modules = list.snapshot(exts)
     return ok(s.image)
 }

@@ -1,0 +1,119 @@
+# High-level Hua SQLite package over narrow Native ABI v2 bindings.
+import sqlite_native as raw
+import std.error as err
+
+pub struct Db {
+    handle NativeHandle
+}
+
+pub struct Stmt {
+    handle NativeHandle
+}
+
+pub enum Param {
+    Null
+    Int(int)
+    Float(float)
+    Text(string)
+    Blob(Bytes)
+}
+
+pub fn open(path string) Result<Db, err.Value> {
+    let h = raw.open(path)?
+    return ok(Db{handle: h})
+}
+
+pub fn close(db Db) Result<void, err.Value> {
+    return raw.close(db.handle)
+}
+
+pub fn exec(db Db, sql string) Result<void, err.Value> {
+    return raw.exec(db.handle, sql)
+}
+
+pub fn changes(db Db) Result<int, err.Value> {
+    return raw.changes(db.handle)
+}
+
+pub fn last_insert_rowid(db Db) Result<int, err.Value> {
+    return raw.last_insert_rowid(db.handle)
+}
+
+pub fn prepare(db Db, sql string) Result<Stmt, err.Value> {
+    let h = raw.prepare(db.handle, sql)?
+    return ok(Stmt{handle: h})
+}
+
+pub fn finalize(stmt Stmt) Result<void, err.Value> {
+    return raw.finalize(stmt.handle)
+}
+
+pub fn reset(stmt Stmt) Result<void, err.Value> {
+    return raw.reset(stmt.handle)
+}
+
+pub fn step(stmt Stmt) Result<bool, err.Value> {
+    return raw.step(stmt.handle)
+}
+
+pub fn bind(stmt Stmt, index int, value Param) Result<void, err.Value> {
+    match value {
+        Param.Null => { return raw.bind_null(stmt.handle, index) }
+        Param.Int(v) => { return raw.bind_int(stmt.handle, index, v) }
+        Param.Float(v) => { return raw.bind_float(stmt.handle, index, v) }
+        Param.Text(v) => { return raw.bind_text(stmt.handle, index, v) }
+        Param.Blob(v) => { return raw.bind_blob(stmt.handle, index, v) }
+    }
+    return ok()
+}
+
+pub fn bind_all(stmt Stmt, params []Param) Result<void, err.Value> {
+    for i in 0..len(params) {
+        bind(stmt, i + 1, params[i])?
+    }
+    return ok()
+}
+
+pub fn query_exec(db Db, sql string, params []Param) Result<int, err.Value> {
+    let stmt = prepare(db, sql)?
+    defer finalize(stmt)
+    bind_all(stmt, params)?
+    let _ = step(stmt)?
+    return changes(db)
+}
+
+pub fn column_count(stmt Stmt) Result<int, err.Value> {
+    return raw.column_count(stmt.handle)
+}
+
+pub fn column_type(stmt Stmt, col int) Result<string, err.Value> {
+    return raw.column_type(stmt.handle, col)
+}
+
+pub fn column_int(stmt Stmt, col int) Result<int, err.Value> {
+    return raw.column_int(stmt.handle, col)
+}
+
+pub fn column_float(stmt Stmt, col int) Result<float, err.Value> {
+    return raw.column_float(stmt.handle, col)
+}
+
+pub fn column_text(stmt Stmt, col int) Result<string, err.Value> {
+    return raw.column_text(stmt.handle, col)
+}
+
+pub fn column_blob(stmt Stmt, col int) Result<Bytes, err.Value> {
+    return raw.column_blob(stmt.handle, col)
+}
+
+pub fn begin(db Db) Result<void, err.Value> {
+    return exec(db, "BEGIN IMMEDIATE")
+}
+
+pub fn commit(db Db) Result<void, err.Value> {
+    return exec(db, "COMMIT")
+}
+
+pub fn rollback(db Db) Result<void, err.Value> {
+    return exec(db, "ROLLBACK")
+}

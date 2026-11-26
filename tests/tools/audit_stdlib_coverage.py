@@ -80,20 +80,46 @@ def parse_catalog(catalog_hua: Path) -> tuple[set[str], dict[str, set[str]], set
 def parse_signatures(sig_hua: Path) -> dict[str, tuple[list[str], str, bool, bool]]:
     text = sig_hua.read_text(encoding="utf-8")
     out: dict[str, tuple[list[str], str, bool, bool]] = {}
-    pat = re.compile(
+    flat_pat = re.compile(
         r'if target == "builtin:(std\.[a-z0-9_]+#[a-z0-9_]+)" '
         r'\{ return Signature\{parameters:\[(.*?)\],result:"([^"]*)",mutates:(true|false),writable:(true|false)\} \}'
     )
-    for m in pat.finditer(text):
+    for m in flat_pat.finditer(text):
         key, params_raw, result, mut_s, writ_s = m.groups()
         out[key] = (parse_cpp_strings(params_raw), result, mut_s == "true", writ_s == "true")
+
+    cur_mod: str | None = None
+    mod_pat = re.compile(r'if module == "builtin:(std\.[a-z0-9_]+)" \{')
+    fn_pat = re.compile(
+        r'if name == "([a-z0-9_]+)" '
+        r'\{ return Signature\{parameters:\[(.*?)\],result:"([^"]*)",mutates:(true|false),writable:(true|false)\} \}'
+    )
+    for line in text.splitlines():
+        mm = mod_pat.search(line)
+        if mm:
+            cur_mod = mm.group(1)
+            continue
+        if cur_mod is not None:
+            fm = fn_pat.search(line)
+            if fm:
+                fname, params_raw, result, mut_s, writ_s = fm.groups()
+                out[f"{cur_mod}#{fname}"] = (parse_cpp_strings(params_raw), result, mut_s == "true", writ_s == "true")
+            elif line.strip() == "}":
+                cur_mod = None
     return out
 
 
 def parse_native_cpp(native_hua: Path) -> tuple[set[str], set[str]]:
     text = native_hua.read_text(encoding="utf-8")
+    bridged: set[str] = set()
     bridged_m = re.search(r"fn bridged\(name string\) bool \{\s*return alg\.contains\(\[([^\]]+)\]", text, re.S)
-    bridged = set(parse_cpp_strings(bridged_m.group(1))) if bridged_m else set()
+    if bridged_m:
+        bridged.update(parse_cpp_strings(bridged_m.group(1)))
+    else:
+        for m in re.finditer(r'if module=="([a-z0-9_]+)" \{ return alg\.contains\(\[([^\]]+)\],func\) \}', text):
+            mod = m.group(1)
+            for fname in parse_cpp_strings(m.group(2)):
+                bridged.add(f"$std${mod}${fname}")
     typed: set[str] = set()
     for name in [
         "$std$strings$split",
@@ -113,6 +139,45 @@ def parse_native_cpp(native_hua: Path) -> tuple[set[str], set[str]]:
         if name in text or name.replace("$std$list$", "") in text:
             typed.add(name)
     return bridged, typed
+
+
+def parse_archive_load_format(archive_hua: Path) -> dict[str, tuple[int, dict[str, int]]]:
+    text = archive_hua.read_text(encoding="utf-8")
+    m = re.search(r"fn load_format\(text string\) int \{(.*?)\n\}", text, re.S)
+    if not m:
+        return {}
+    body = m.group(1)
+    result: dict[str, tuple[int, dict[str, int]]] = {}
+    cur_mod: str | None = None
+    cur_overrides: dict[str, int] = {}
+    cur_default = 6
+    for line in body.splitlines():
+        s = line.strip()
+        single = re.fullmatch(r'if strings\.starts_with\(text,"\$core\$\$std\$([a-z0-9_]+)\$"\) \{ return (\d+) \}', s)
+        if single:
+            result[single.group(1)] = (int(single.group(2)), {})
+            continue
+        block = re.fullmatch(r'if strings\.starts_with\(text,"\$core\$\$std\$([a-z0-9_]+)\$"\) \{', s)
+        if block:
+            cur_mod = block.group(1)
+            cur_overrides = {}
+            cur_default = 6
+            continue
+        if cur_mod is not None:
+            bm = re.fullmatch(r'if alg\.contains\(\[([^\]]+)\],name\) \{ return (\d+) \}', s)
+            if bm:
+                ver = int(bm.group(2))
+                for fname in parse_cpp_strings(bm.group(1)):
+                    cur_overrides[fname] = ver
+                continue
+            rm = re.fullmatch(r'return (\d+)', s)
+            if rm:
+                cur_default = int(rm.group(1))
+                continue
+            if s == "}":
+                result[cur_mod] = (cur_default, cur_overrides)
+                cur_mod = None
+    return result
 
 
 POLY_SIGNATURES: dict[tuple[str, str], str] = {
@@ -395,6 +460,7 @@ def audit_function(
     in_sig = sig_key in sigs
 
     # Check types.hua blockers even if in_sig were true
+    types_text = (Path(__file__).resolve().parents[2] / "selfhost/types.hua").read_text(encoding="utf-8")
     poly_supported_in_types = False
     if (fn.module == "task" and fn.name in {"cancel", "done", "state", "timeout", "all", "race"}) or (
         fn.module == "alg"
@@ -402,30 +468,28 @@ def audit_function(
     ) or (
         fn.module == "list"
         and fn.name in {"from_slice", "len", "get", "set", "append", "extend", "pop", "snapshot", "clear", "reserve"}
-    ) or (fn.module == "json" and fn.name in {"encode", "from", "encode_pretty"}):
+    ) or (fn.module == "json" and fn.name in {"encode", "from", "encode_pretty"}) or (
+        fn.module == "test" and fn.name in {"equal", "not_equal"} and 'module == "builtin:std.test"' in types_text
+    ):
         poly_supported_in_types = True
 
     has_empty_param_or_ret = ("" in fn.params) or (fn.result == "")
-    math_int_blocked = fn.module == "math" and any(p != "float" for p in fn.params)
+    math_float_only = 'module == "builtin:std.math" && arguments[i].type_name != "float"' in types_text
+    math_int_blocked = math_float_only and fn.module == "math" and any(p != "float" for p in fn.params)
 
     sh_check = in_cat and in_sig and (not has_empty_param_or_ret or poly_supported_in_types) and not math_int_blocked
 
     # Check archive.hua format version gate
-    archive_text = (Path(__file__).resolve().parents[2] / "selfhost/archive.hua").read_text(encoding="utf-8")
+    archive_formats = parse_archive_load_format(Path(__file__).resolve().parents[2] / "selfhost/archive.hua")
     archive_fmt = 6
     all_types_str = " ".join(fn.params + [fn.result])
     if "std.file." in all_types_str:
         archive_fmt = max(archive_fmt, 8)
     if "std.error.Value" in all_types_str or "Result<void," in all_types_str:
         archive_fmt = max(archive_fmt, 7)
-    if fn.module == "error" and "$core$$std$error$" in archive_text:
-        archive_fmt = max(archive_fmt, 7)
-    if fn.module == "file" and f'"{fn.name}"' in archive_text and fn.since == 29:
-        archive_fmt = max(archive_fmt, 29)
-    if fn.module in {"buffer", "strings", "os", "fs", "json"} and f'"{fn.name}"' in archive_text:
-        archive_fmt = max(archive_fmt, fn.since)
-    if std_id == "$std$io$write_err" and "$core$$std$io$write_err" in archive_text:
-        archive_fmt = max(archive_fmt, 18)
+    if fn.module in archive_formats:
+        mod_default, mod_overrides = archive_formats[fn.module]
+        archive_fmt = max(archive_fmt, mod_overrides.get(fn.name, mod_default))
     sh_huab = sh_check and (archive_fmt >= fn.since)
 
     # Check native_cpp.hua (--release EXE)
@@ -458,6 +522,8 @@ def audit_function(
         ("list", "pop"),
         ("list", "set"),
         ("list", "reserve"),
+        ("test", "equal"),
+        ("test", "not_equal"),
     }:
         concrete_types_ok = True
     else:

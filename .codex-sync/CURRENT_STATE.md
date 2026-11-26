@@ -1,5 +1,19 @@
 # 当前状态
 
+## 2026-11-26 应用驱动路线第 3 步完成：Native ABI v2、随包 DLL 分发与 SQLite 扩展包
+
+基于 `main@94e2442` 连续完成应用驱动五步路线第 2 步与第 3 步（尚未提交/推送 Git）：
+- **Native ABI v2 与 `NativeHandle` 资源控制块**：新增 `HUA_NATIVE_ABI_V2 2`、`hua_module_entry_v2`、借用输入/宿主复制返回 `Bytes`、宿主代次 `HandleTable`（LIFO 退出析构于 `FreeLibrary` 之前，拒绝 `clone`/`spawn` 分别报 `E3008`/`E4104`）、可恢复 `Result<T, std.error.Value>` 与 `HUAB format 30 / native_abi 2`；拆分零 `wasmtime` `NativeExternalHost` 接入 `--release` 运行库。
+- **随包 DLL 分发与首个原生扩展包 `packages/sqlite/`**：`hua.package.json` 支持 `native_libs` 平台伴随库声明；`hua build --release` 发布至 `<out_dir>/native/<pkg>/` 并纳入 N3 缓存输入与缓存命中恢复。`packages/sqlite/` 提供窄 C ABI v2 包装（含 `sqlite3_initialize()` 兼容 `SQLITE_OMIT_AUTOINIT`）与 Hua 参数绑定/事务封装。
+- **代际不动点、四路径验收与百科错误码补全**：重装配 `huaBin/` 达成 `G1 == G2` PE/C++（`e17f22f9...` / `c56f1186...`）与 `C2(15.796s) == C3(124.828s, 743,192,893 步)` HUAB 逐字节不动点（`c23f98c8...`，`5,708,323` 字节）；`tests/sqlite_package_tests.py`（四路径 + 干净目录 + N3 缓存恢复 + 缺 DLL `E7001`）、`tests/native_abi_v2_tests.py`（含 6 项负向诊断）与 `stdlib_contract` CTest 全过；`docs/语言百科与设计核对.md`（`HUA-14.13`）已补齐全部 61 项现有诊断码（漏缺 0）。[验收记录](knowledge/bootstrap-performance/runs/2026-11-26-step3-sqlite-extension.md)
+
+## 2026-11-26 应用驱动路线第 2 步完成：单一权威标准库合同与 103 项纯表项双端打通
+
+基于 `main@94e2442` 完成应用驱动五步路线第 2 步（尚未提交/推送 Git）：
+- **单一权威清单与防漏门禁**：新增 `selfhost/stdlib_manifest.json`（`hua.stdlib.manifest.v1`）与 `tests/tools/sync_stdlib_contract.py`，按模块两级分桶确定性生成 `selfhost/{catalog,signatures,archive,native_cpp}.hua`，随 `huaBin/src/compiler/` 装配并注册 `stdlib_contract` CTest（含 4 项篡改负向自检，`0.47s` 通过）。
+- **8 模块 103 项双端打通**：修复 `selfhost/types.hua` 的 `std.math` 显式默认类型校验并补齐 `std.test.equal/not_equal`，一次性打通 `math`/`encoding`/`time`/`crypto`/`log`/`test`/`gc`/`process` 8 个模块。自举覆盖 `206 → 297/374`、原生 `--release` `185 → 288/374`，四路径全通内建模块 `10/27 → 18/27`，B 类纯表项缺口清零。
+- **代际不动点与全量回归**：重装配 `huaBin/` 达成 `G1 == G2` PE/C++（`fd81223a...` / `31c3686a...`）与 `C2(15.733s) == C3(125.772s, 730,265,274 步, +0.28%)` HUAB 逐字节不动点（`725d5e32...`，`5,608,748` 字节，`format 17`）；`stdlib_batch2a_parity_tests.py`（12 项 `HUAB 6–28` 门禁、4 项 `E3004` 三端拒绝、8 模块四路径实跑含 `std.process`）、`local_package_cli_tests.py` 及 4 套 SDK 回归全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-26-step2-stdlib-contract.md)
+
 ## 2026-11-26 进度全景核对与第 2 步详细方案落盘（纯文档）
 
 已完成当前五步应用路线与四大子系统的已实现程度/待办对比核对，并将第 2 步（单一权威标准库清单 `selfhost/stdlib_manifest.json` + 分桶生成/防漏校验器 + 首批 101 项纯表项与 `std.test.equal/not_equal` 共 103 项双端打通）的详细实现方案与 7 条验收标准记录至[设计文档](knowledge/bootstrap-performance/designs/2026-11-26-step2-stdlib-contract-plan.md)，同步更新 `docs/项目概览与进度.md`、`docs/设计决策与未决事项.md`、`docs/标准库设计与实现路线.md` 与 `.codex-sync/{TODO,INDEX}`。本轮仅文档更新，未修改生产代码，未新增测试运行，未提交/推送 Git。

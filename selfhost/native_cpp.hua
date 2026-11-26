@@ -74,6 +74,7 @@ fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
     if t=="std.file.File" { return ok("hn::Opaque<hn::FileTag>") }
     if t=="std.file.IOFailure" { return ok("hn::Opaque<hn::IOFailureTag>") }
     if t=="std.error.Value" { return ok("hn::Opaque<hn::ErrorTag>") }
+    if t=="NativeHandle" { return ok("hn::Opaque<hn::NativeHandleTag>") }
     let tuple=rules.arguments(t,"multi")
     if len(tuple)>0 {
         var code="std::tuple<"
@@ -332,56 +333,38 @@ fn bridge_name(t string) string {
     }
     return t
 }
+# BEGIN GENERATED: stdlib_bridged
 fn bridged(name string) bool {
-    return alg.contains([
-        "int","float","str","type","min","max","abs","clamp","sqrt",
-        "$std$alg$sorted","$std$alg$reverse","$std$alg$contains","$std$alg$index",
-        "$std$alg$lower_bound","$std$alg$upper_bound","$std$alg$binary_search",
-        "$std$alg$sum","$std$alg$min","$std$alg$max",
-        "$std$strings$contains","$std$strings$index","$std$strings$len_bytes","$std$strings$rune_count",
-        "$std$strings$trim","$std$strings$lower_ascii","$std$strings$upper_ascii","$std$strings$join",
-        "$std$strings$replace","$std$strings$last_index","$std$strings$count","$std$strings$repeat",
-        "$std$strings$split_n","$std$strings$fields","$std$strings$lines","$std$strings$trim_start",
-        "$std$strings$trim_end","$std$strings$trim_prefix","$std$strings$trim_suffix",
-        "$std$strings$pad_left","$std$strings$pad_right","$std$strings$replace_n","$std$strings$is_empty",
-        "$std$strings$parse_int","$std$strings$parse_float","$std$strings$format_int","$std$strings$format_float",
-        "$std$strings$format","$std$strings$center","$std$strings$codepoints","$std$strings$chars",
-        "$std$strings$from_codepoints","$std$strings$slice_runes","$std$strings$template",
-        "$std$strings$format_int_grouped","$std$strings$format_float_grouped",
-        "$std$strings$upper","$std$strings$lower","$std$strings$casefold","$std$strings$equal_fold",
-        "$std$bytes$from_ints","$std$bytes$from_text","$std$bytes$to_text","$std$bytes$to_ints",
-        "$std$bytes$len","$std$bytes$at","$std$bytes$slice","$std$bytes$concat",
-        "$std$bytes$u32_le","$std$bytes$i64_le","$std$bytes$read_u32_le","$std$bytes$read_i64_le","$std$bytes$crc32",
-        "$std$buffer$new","$std$buffer$len","$std$buffer$append","$std$buffer$write_u8",
-        "$std$buffer$write_u32_le","$std$buffer$write_i64_le","$std$buffer$write_text",
-        "$std$buffer$bytes","$std$buffer$text","$std$buffer$clear",
-        "$std$buffer$write_str","$std$buffer$write_int","$std$buffer$take_text","$std$buffer$reserve",
-        "$std$os$args","$std$os$cwd","$std$os$getenv","$std$os$exit","$std$os$platform",
-        "$std$os$arch","$std$os$pid","$std$os$cpu_count","$std$os$environ","$std$os$parse_args",
-        "$std$io$read_line","$std$io$read_all","$std$io$write","$std$io$write_err",
-        "$std$file$open","$std$file$read","$std$file$write","$std$file$seek","$std$file$tell",
-        "$std$file$flush","$std$file$close","$std$file$state","$std$file$close_error",
-        "$std$file$error","$std$file$transferred","$std$file$partial",
-        "$std$file$read_line","$std$file$read_all","$std$file$read_exact","$std$file$write_all",
-        "$std$fs$stat","$std$fs$rename","$std$fs$replace","$std$fs$temp_file",
-        "$std$fs$read_text","$std$fs$write_text","$std$fs$append_text","$std$fs$exists",
-        "$std$fs$canonical","$std$fs$remove","$std$fs$mkdir_all","$std$fs$list_dir",
-        "$std$fs$read_bytes","$std$fs$write_bytes","$std$fs$append_bytes",
-        "$std$fs$walk","$std$fs$copy_file","$std$fs$copy_dir","$std$fs$remove_all",
-        "$std$path$basename","$std$path$dirname","$std$path$ext","$std$path$join","$std$path$normalize","$std$path$relative",
-        "$std$json$decode","$std$json$encode","$std$json$kind","$std$json$get","$std$json$at",
-        "$std$json$len","$std$json$keys","$std$json$as_string","$std$json$as_int","$std$json$as_float",
-        "$std$json$as_bool","$std$json$is_null","$std$json$null","$std$json$from","$std$json$array",
-        "$std$json$object","$std$json$set","$std$json$remove","$std$json$append","$std$json$set_at",
-        "$std$json$encode_pretty","$std$json$decode_lines","$std$json$encode_lines",
-        "$std$error$make","$std$error$wrap","$std$error$from_string","$std$error$with_context",
-        "$std$error$with_origin","$std$error$with_native","$std$error$domain","$std$error$code",
-        "$std$error$message","$std$error$cause","$std$error$origin","$std$error$native_domain",
-        "$std$error$native_code","$std$error$contexts","$std$error$truncated","$std$error$format",
-        "$std$time$monotonic_ns","$std$time$unix_ms",
-        "$std$list$reserve"
-    ],name)
+    if !strings.starts_with(name,"$std$") {
+        return alg.contains(["str","int","float","sqrt","min","max","abs","clamp","type"],name)
+    }
+    let parts=strings.split(name,"$")
+    if len(parts)!=4 { return false }
+    let module=parts[2]
+    let func=parts[3]
+    if module=="alg" { return alg.contains(["sorted","reverse","contains","index","lower_bound","upper_bound","binary_search","sum","min","max"],func) }
+    if module=="buffer" { return alg.contains(["new","len","append","write_u8","write_u32_le","write_i64_le","write_text","bytes","text","clear","write_str","write_int","take_text","reserve"],func) }
+    if module=="bytes" { return alg.contains(["from_ints","from_text","to_text","to_ints","len","at","slice","concat","u32_le","i64_le","read_u32_le","read_i64_le","crc32"],func) }
+    if module=="crypto" { return alg.contains(["random_bytes","uuid4","sha256","hmac_sha256","equal"],func) }
+    if module=="encoding" { return alg.contains(["hex_encode","hex_decode","base64_encode","base64_decode","base64url_encode","base64url_decode","utf8_valid","utf8_encode","utf8_decode","pack_uint","pack_int","unpack_uint","unpack_int","pack_f32","pack_f64","unpack_f32","unpack_f64"],func) }
+    if module=="error" { return alg.contains(["make","wrap","from_string","with_context","with_origin","with_native","domain","code","message","cause","origin","native_domain","native_code","contexts","truncated","format"],func) }
+    if module=="file" { return alg.contains(["open","read","write","seek","tell","flush","close","state","close_error","error","transferred","partial","read_line","read_all","read_exact","write_all"],func) }
+    if module=="fs" { return alg.contains(["stat","rename","replace","temp_file","walk","copy_file","copy_dir","remove_all","canonical","read_text","write_text","append_text","exists","remove","mkdir_all","list_dir","read_bytes","write_bytes","append_bytes"],func) }
+    if module=="gc" { return alg.contains(["collect","live","allocated","collected"],func) }
+    if module=="io" { return alg.contains(["write_err","read_line","read_all","write"],func) }
+    if module=="json" { return alg.contains(["decode","encode","kind","get","at","len","keys","as_string","as_int","as_float","as_bool","is_null","null","from","array","object","set","remove","append","set_at","encode_pretty","decode_lines","encode_lines"],func) }
+    if module=="list" { return alg.contains(["reserve"],func) }
+    if module=="log" { return alg.contains(["debug","info","warn","error","with_fields","set_level"],func) }
+    if module=="math" { return alg.contains(["floor","ceil","trunc","round","sin","cos","tan","exp","log","log2","log10","hypot","gcd","lcm","isqrt","asin","acos","atan","atan2","cbrt","fmod","pi","e","tau","popcount","leading_zeros","trailing_zeros","rotate_left","rotate_right","checked_add","checked_sub","checked_mul","checked_neg","checked_abs","checked_pow","wrapping_add","wrapping_sub","wrapping_mul","wrapping_neg","wrapping_abs","wrapping_pow","saturating_add","saturating_sub","saturating_mul","saturating_neg","saturating_abs","saturating_pow","sinh","cosh","tanh","asinh","acosh","atanh"],func) }
+    if module=="os" { return alg.contains(["exit","platform","arch","pid","cpu_count","getenv","args","cwd","environ","parse_args"],func) }
+    if module=="path" { return alg.contains(["join","normalize","basename","dirname","ext","relative"],func) }
+    if module=="process" { return alg.contains(["run","run_with"],func) }
+    if module=="strings" { return alg.contains(["contains","index","len_bytes","rune_count","trim","lower_ascii","upper_ascii","join","replace","last_index","count","repeat","split_n","fields","lines","trim_start","trim_end","trim_prefix","trim_suffix","pad_left","pad_right","replace_n","is_empty","parse_int","parse_float","format_int","format_float","format","center","codepoints","chars","from_codepoints","slice_runes","template","format_int_grouped","format_float_grouped","upper","lower","casefold","equal_fold"],func) }
+    if module=="test" { return alg.contains(["assert","equal","not_equal","fail"],func) }
+    if module=="time" { return alg.contains(["since_ns","format_duration","parse_duration","utc_parts","utc_from_parts","weekday","day_of_year","is_leap_year","days_in_month","format_rfc3339","format_rfc3339_offset","parse_rfc3339","monotonic_ns","unix_ms"],func) }
+    return false
 }
+# END GENERATED: stdlib_bridged
 fn typed_builtin(e Emitter, n lower.Node, name string, args []string) string {
     let site=location(e,n)
     let joined=strings.join(args,",")
@@ -426,7 +409,8 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
     else if strings.starts_with(callee.text,"$core$") { builtin=rules.cut(callee.text,6,len(callee.text)) }
     else { return err(fail(callee,"unsupported native callee "+callee.text)) }
     let bridge=bridged(builtin)
-    if deferred && !direct { return err(fail(n,"unsupported native deferred intrinsic")) }
+    let ext_call=direct && function.role=="external"
+    if deferred && (!direct || ext_call) { return err(fail(n,"unsupported native deferred intrinsic")) }
     if deferred {
         code="auto deferred"+cpp_id(e,n.id)+"=({\n"
     }
@@ -439,7 +423,7 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
         if !direct && (builtin=="is_some" || builtin=="is_none" || builtin=="unwrap" || builtin=="unwrap_or") && i==1 {
             value=optional_operand(e,arg)?
         }
-        if direct {
+        if direct && !ext_call {
             let param=node(e.core,function.children[i-1])
             if !strings.ends_with(param.text," mut") {
                 value="capture_value("+value+")"
@@ -453,13 +437,20 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
             if arg.type_name=="void" { return err(fail(arg,"unsupported native argument void")) }
             code+="auto "+name+"="+value+";\n"
         }
-        if builtin=="print" || bridge {
+        if builtin=="print" || bridge || ext_call {
             list.append(args,"to_value("+name+")")?
             list.append(flags,str(arg.kind=="Array"))?
         } else if direct && !deferred { list.append(args,"std::move("+name+")")? }
         else { list.append(args,name)? }
     }
     let arguments=list.snapshot(args)
+    if ext_call {
+        let linked=strings.split(function.text," ")[0]
+        let invoke=("hn::call_external("+quote(linked)+","+location(e,n)+",{"+strings.join(arguments,",")
+            +"},{"+strings.join(list.snapshot(flags),",")+"})")
+        if n.type_name=="void" { return ok(code+invoke+";})") }
+        return ok(code+"hn::from_value<"+cpp_type(e,n,n.type_name)?+">("+invoke+");})")
+    }
     if deferred {
         return ok(code+"["+strings.join(arguments,",")+"]() mutable {auto depth=hn::enter<false,false>("
             +location(e,n)+");"+function_name(e,function.id)+"("+strings.join(arguments,",")+");"
@@ -879,6 +870,9 @@ fn statement(e Emitter, n lower.Node) Result<string> {
         if len(n.children)>1 { return ok("return "+pack(e,n.children)?+";\n") }
         return ok("return "+expression(e,node(e.core,n.children[0]))?+";\n")
     }
+    if k=="ExternalInit" {
+        return ok("hn::init_external_module("+quote(n.text)+","+location(e,n)+");\n")
+    }
     return err(fail(n,"unsupported native statement "+k))
 }
 fn block_contents(e Emitter, n lower.Node) Result<string> {
@@ -925,7 +919,7 @@ fn prepare(core lower.Core) Result<Program> {
     for unit in list.snapshot(units) {
         for id in unit.roots {
             let n=node(core,id)
-            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" { return err(fail(n,"unsupported native declaration "+n.role)) }
+            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" && n.role!="external" { return err(fail(n,"unsupported native declaration "+n.role)) }
             if n.kind=="Function" {
                 e.ids[id]=mangle(n.text)
                 e.functions[n.text]=id
@@ -1079,7 +1073,10 @@ fn header(p Program, iface Interface, scalar bool) Result<string> {
     }
     list.append(output,"template<class T> T& global_slot(std::optional<T>& value,const hn::SourceSpan& site){"
         +"if(!value)hn::fail(site,\"global binding is not initialized\",\"E4001\");return *value;}\n")?
-    for id in sorted_ids(iface.functions) { list.append(output,signature(e,node(e.core,id),false)?+";\n")? }
+    for id in sorted_ids(iface.functions) {
+        let fn_node=node(e.core,id)
+        if fn_node.role!="external" { list.append(output,signature(e,fn_node,false)?+";\n")? }
+    }
     for id in sorted_ids(iface.globals) {
         let n=node(e.core,id)
         list.append(output,"extern std::optional<"+cpp_type(e,n,n.type_name)?+"> "+variable(e,n)?+";\n")?
@@ -1111,6 +1108,7 @@ fn implementation(p Program, unit Unit, scalar bool) Result<string> {
     for id in unit.roots {
         let n=node(e.core,id)
         if n.kind=="Function" {
+            if n.role=="external" { continue }
             let body=node(e.core,n.children[len(n.children)-1])
             let lines=block_contents(e,body)
             if is_err(lines) {
@@ -1139,6 +1137,22 @@ fn startup(p Program) Result<string> {
     let e=p.e
     var declarations=""
     var initialize=""
+    for em in e.core.external_modules {
+        var ex_list=""
+        for i in 0..len(em.exports) {
+            let ex=em.exports[i]
+            if i>0 { ex_list+="," }
+            var ps=""
+            for j in 0..len(ex.parameters) {
+                if j>0 { ps+="," }
+                ps+=quote(ex.parameters[j])
+            }
+            ex_list+="hn::ExternalExportSpec{"+quote(ex.name)+","+quote(ex.linked_name)+","+quote(ex.result)+",{"+ps+"}}"
+        }
+        let sn=node(e.core,em.site_node)
+        let sp="hn::SourceSpan{"+quote(sn.module)+","+str(sn.start)+","+str(sn.end)+","+str(sn.line)+","+str(sn.column)+"}"
+        initialize+="hn::register_external_module("+quote(em.id)+","+quote(em.artifact)+","+str(em.abi_version)+",{"+ex_list+"},"+sp+");\n"
+    }
     for unit in p.units {
         declarations+="void init_"+unit.id+"();\n"
         initialize+="init_"+unit.id+"();\n"
@@ -1172,6 +1186,7 @@ pub fn emit(core lower.Core) Result<string> { return emit_combined(prepare(core)
 # Scalar programs reuse the same verified Core, C++ expressions and initialization order.
 # Any node outside the compact runtime's coverage uses the full runtime.
 fn supports_scalar(core lower.Core) bool {
+    if len(core.external_modules)>0 { return false }
     for n in list.snapshot(core.nodes) {
         let t=n.type_name
         let k=n.kind

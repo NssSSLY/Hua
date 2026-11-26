@@ -332,8 +332,18 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
             if !rules.compatible(element,arguments[index].type_name) { return err(fail(e,get(e,n.children[index+1]),"E3004","list element type mismatch")) }
         }
     }
+    if module == "builtin:std.test" && (method == "equal" || method == "not_equal") {
+        if arguments[0].type_name == "void" || arguments[1].type_name == "void" { return err(fail(e,n,"E3004","test.equal/not_equal cannot compare void")) }
+        if !rules.compatible(arguments[0].type_name,arguments[1].type_name) && !rules.compatible(arguments[1].type_name,arguments[0].type_name) {
+            return err(fail(e,get(e,n.children[2]),"E3004","test.equal/not_equal require values of the same type"))
+        }
+        var ps = clone(s.parameters)
+        ps[0] = arguments[0].type_name
+        ps[1] = arguments[1].type_name
+        s.parameters = ps
+    }
     for i in 0..len(arguments) {
-        if module == "builtin:std.math" && arguments[i].type_name != "float" { return err(fail(e,get(e,n.children[i+1]),"E3004","math requires explicit float arguments")) }
+        if module == "builtin:std.math" && s.parameters[i] != "" && arguments[i].type_name != s.parameters[i] { return err(fail(e,get(e,n.children[i+1]),"E3004","math requires explicit default "+s.parameters[i]+" arguments")) }
         require(m,e,s.parameters[i],arguments[i],get(e,n.children[i+1]))?
     }
     if s.mutates && !arguments[0].writable { return err(fail(e,n,"E3003","standard mutation requires writable argument")) }
@@ -359,7 +369,7 @@ fn core(m mut Model, e Environment, n ast.Node, name string, args []Info) Result
         return ok(info(method,false))
     }
     if method == "clone" {
-        if strings.contains(t,"std.file.File") { return err(fail(e,n,"E3008","File cannot be cloned")) }
+        if strings.contains(t,"std.file.File") || strings.contains(t,"NativeHandle") { return err(fail(e,n,"E3008","File or NativeHandle cannot be cloned")) }
         return ok(info(t,true))
     }
     if method == "ok" || method == "err" {
@@ -1170,6 +1180,18 @@ pub fn analyze(entry string) Result<Model> {
     }
     for name in list.snapshot(graph.order) {
         let u = unwrap(units[name])
+        if u.external {
+            let root = unwrap(ast.get(u.tree.pool,u.tree.root))
+            let e = environment(u,clone(globals))
+            for child in root.children {
+                let n = unwrap(ast.get(u.tree.pool,child))
+                if ast.kind(n.payload) != "Function" || !strings.ends_with(ast.payload_text(n.payload)," pub") ||
+                        len(get(e,n.children[1]).children) != 0 {
+                    return err(fail(e,n,"E7003","native interfaces require public bodyless functions"))
+                }
+            }
+            continue
+        }
         let root = unwrap(ast.get(u.tree.pool,u.tree.root))
         for child in root.children {
             let n = unwrap(ast.get(u.tree.pool,child))

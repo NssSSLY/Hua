@@ -525,6 +525,7 @@ struct JsonTag{static constexpr const char* name="Json";};
 struct FileTag{static constexpr const char* name="std.file.File";};
 struct IOFailureTag{static constexpr const char* name="std.file.IOFailure";};
 struct ErrorTag{static constexpr const char* name="std.error.Value";};
+struct NativeHandleTag{static constexpr const char* name="NativeHandle";};
 
 template<class T> T capture_value(T value){return value;}
 template<class T> Slice<T> capture_value(Slice<T> value){value.writable=false;return value;}
@@ -1481,6 +1482,17 @@ TaskHandle start_task(TaskBody body, const char* type, const SourceSpan& span);
 Value await_task(const TaskHandle&, const SourceSpan&);
 Value task_wait(const char* name, std::vector<Value> args, const SourceSpan&);
 I task_group_begin();
+struct ExternalExportSpec {
+    const char* name;
+    const char* linked_name;
+    const char* result;
+    std::vector<std::string> parameters;
+};
+void register_external_module(const char* id, const char* artifact, std::uint32_t abi_version,
+                              std::vector<ExternalExportSpec> exports, const SourceSpan& site);
+void init_external_module(const char* id, const SourceSpan& site);
+Value call_external(const char* linked_name, const SourceSpan& site,
+                    std::vector<Value> args, const std::vector<bool>& contextual);
 int run_main(int argc,char** argv,const SourceSpan& main_site,Value (*body)(),bool tasks=false);
 }
 

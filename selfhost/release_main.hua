@@ -58,6 +58,23 @@ struct BuildReceipt {
     compile_calls int
     link_calls int
     units []UnitReceipt
+    native_artifacts []string
+}
+
+fn publish_native_artifacts(parent string, items []cache.NativeArtifact) Result<[]string> {
+    let empty []string = []
+    var copied = list.from_slice(empty)
+    var seen = map[string]bool{}
+    for item in items {
+        if has(seen,item.artifact) { continue }
+        seen[item.artifact] = true
+        let dst = path.join([parent,item.artifact])?
+        let dst_dir = path.dirname(dst)?
+        if dst_dir != "" { fs.mkdir_all(dst_dir)? }
+        fs.copy_file(item.source,dst)?
+        list.append(copied,item.artifact)?
+    }
+    return ok(list.snapshot(copied))
 }
 
 fn json_string(value Json, key string) string {
@@ -288,17 +305,18 @@ fn build(args []string) Result<BuildReceipt> {
     var receipt = BuildReceipt{schema:"hua.build.release.v1",status:"ok",output:output,generator:generator,clang:clang,
         clang_version:json_string(release,"clang_version"),linker:linker,runtime:semantics,runtime_profile:"",layout:"",pch:false,generate_ms:0,
         compile_ms:0,link_ms:0,total_ms:0,cache_status:outcome,cache_detail:detail,validate_ms:0,
-        restore_ms:0,generate_calls:0,compile_calls:0,link_calls:0,units:[]}
+        restore_ms:0,generate_calls:0,compile_calls:0,link_calls:0,units:[],native_artifacts:[]}
     if cache_dir != "" {
         let prior = cache.load_build(cache_dir,keys.build,started)
         receipt.validate_ms = elapsed_ms(check_start)
         let start = time.monotonic_ns()
-        if is_ok(prior) && unwrap_or(cache.restore(cache_dir,unwrap(prior),".exe",program),false) {
+        if is_ok(prior) && unwrap_or(cache.restore(cache_dir,unwrap(prior).product,".exe",program),false) {
             receipt.cache_status = "hit"
             receipt.cache_detail = ""
             receipt.restore_ms = elapsed_ms(start)
             if elapsed_ms(started) >= 600000 { return err("E8204 publish: 600 second build budget exhausted") }
             fs.replace(program,output)?
+            receipt.native_artifacts = publish_native_artifacts(parent,unwrap(prior).native_artifacts)?
             receipt.total_ms = elapsed_ms(started)
             return ok(receipt)
         }
@@ -324,6 +342,7 @@ fn build(args []string) Result<BuildReceipt> {
         }
     }
     let units = generated_units(generated,split)?
+    let nat_arts = cache.parse_native_artifacts(generated)?
     receipt.generate_ms = elapsed_ms(gen_start)
     let profile = cache.field(generated,"runtime")
     receipt.runtime_profile = "full"
@@ -410,7 +429,7 @@ fn build(args []string) Result<BuildReceipt> {
                 }
             }
             if is_ok(inputs) && executable_digest != "" {
-                let stored = cache.store_build(cache_dir,keys.build,unwrap(inputs),executable_digest)
+                let stored = cache.store_build(cache_dir,keys.build,unwrap(inputs),executable_digest,nat_arts)
                 if is_err(stored) { receipt.cache_detail = "cache publication failed" }
             } else if is_err(inputs) { receipt.cache_detail = unwrap_err(inputs) }
         } else { return err("E8204 tool inputs changed during build") }
@@ -418,6 +437,7 @@ fn build(args []string) Result<BuildReceipt> {
     }
     if elapsed_ms(started) >= 600000 { return err("E8204 publish: 600 second build budget exhausted") }
     fs.replace(program,output)?
+    receipt.native_artifacts = publish_native_artifacts(parent,nat_arts)?
     receipt.total_ms = elapsed_ms(started)
     return ok(receipt)
 }

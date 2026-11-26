@@ -45,7 +45,7 @@ fn valid_type(c Catalog, t string, depth int) bool {
     if depth>64 || !small(t,true) { return false }
     # 空类型是多数指令的合法默认字段，避免逐条分配原始类型名单。
     if t=="" { return true }
-    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json","std.file.File","std.file.IOFailure","std.error.Value"],t) || has(c.structures,t) { return true }
+    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json","NativeHandle","std.file.File","std.file.IOFailure","std.error.Value"],t) || has(c.structures,t) { return true }
     if strings.starts_with(t,"fn:") { return has(c.functions,rules.cut(t,3,len(t))) }
     if strings.starts_with(t,"builtin:") { return intrinsic(rules.cut(t,8,len(t))) }
     if strings.starts_with(t,"struct:") { return has(c.structures,rules.cut(t,7,len(t))) }
@@ -93,7 +93,7 @@ fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, 
     }
     for op in list.snapshot(code.instructions) {
         let e = error(image,op,"invalid metadata")
-        if op.op<0 || op.op>40 || op.op==31 { return err(error(image,op,"unsupported/unknown opcode")) }
+        if op.op<0 || op.op>40 { return err(error(image,op,"unsupported/unknown opcode")) }
         if op.site<0 || op.site>=list.len(image.sites) || op.argument<0 || op.argument>4096 || op.target<0 || !small(op.text,true) || !(op.op==27 && op.type_name=="E4002") && !valid_type(c,op.type_name,0) || !scalar(op.constant) || len(op.names)>4096 || len(op.contextual)>4096 { return err(e) }
         if !rules.value_type_allowed(op.type_name,op.op != 2 && op.op != 35) { return err(e) }
         if op.op!=0 && (op.constant.kind!=0 || op.constant.text!="") { return err(error(image,op,"constant on non-constant instruction")) }
@@ -211,6 +211,7 @@ fn transition(s mut State, code bc.Code, op bc.Instruction) Result<bool> {
     else if k==26 { if s.flow.iterators==0 { return err("iterator end underflow") }
         s.flow.iterators -= 1 }
     else if k==27 { return ok(false) }
+    else if k==31 { }
     else { return err("unhandled opcode") }
     return ok(true)
 }
@@ -246,7 +247,7 @@ pub fn verify(image bc.Image) Result<Verification> {
         nodes[site.node] = true
         if site.node==-1 {
             if site.origin!=-1 || site.role!="initializer" || site.start!=0 || site.end!=0 || site.line!=1 || site.column!=1 || site.module!=image.entry { return err("E6002@1:1 C06 invalid initializer site") }
-        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor"],site.role) && site.role!="async-body" && site.role!="local-function" { return err("E6002@1:1 C06 invalid source origin") }
+        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor","external"],site.role) && site.role!="async-body" && site.role!="local-function" { return err("E6002@1:1 C06 invalid source origin") }
     }
     var c = Catalog{globals:map[string]bool{},structures:map[string]bool{},functions:map[string]bool{},local_functions:map[string]bool{},lexical_names:map[string]bool{}}
     for st in list.snapshot(image.structures) {
@@ -298,7 +299,9 @@ pub fn verify(image bc.Image) Result<Verification> {
     }
     let zero = Verification{instructions:0,reachable:0,slots:0,work:0,max_stack:0,max_scopes:0,max_iterators:0}
     var result = verify_code(image,c,image.initializer,initializer_parameters,[],false,zero)?
-    for f in list.snapshot(image.functions) { result = verify_code(image,c,f.code,f.parameters,f.returns,f.nested,result)? }
+    for f in list.snapshot(image.functions) {
+        if !f.external { result = verify_code(image,c,f.code,f.parameters,f.returns,f.nested,result)? }
+    }
     if result.instructions!=image.instructions { return err("E6002@1:1 C06 instruction count mismatch") }
     return ok(result)
 }

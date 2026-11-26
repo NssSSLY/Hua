@@ -83,7 +83,13 @@ def sync_directory(src: Path, dst: Path) -> None:
 
 def main() -> None:
     finalize_only = "--finalize-only" in sys.argv[1:]
-    work = ROOT / "tests/artifacts/step1-huabin-20261125"
+    work_rel = "tests/artifacts/step1-huabin-20261125"
+    for idx, arg in enumerate(sys.argv[1:]):
+        if arg == "--work-dir" and idx + 2 < len(sys.argv):
+            work_rel = sys.argv[idx + 2]
+    work = Path(work_rel)
+    if not work.is_absolute():
+        work = ROOT / work
     build_dir = ROOT / "tests/build"
     current_sdk = ROOT / "huaBin"
     kit_input = work / "kit-input"

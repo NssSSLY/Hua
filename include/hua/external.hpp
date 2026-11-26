@@ -1,6 +1,7 @@
 #pragma once
 #include "hua/value.hpp"
 #include <filesystem>
+#include <mutex>
 #include <unordered_map>
 namespace hua {
 enum class ExternalKind : std::uint8_t { Native, Wasm };
@@ -11,16 +12,20 @@ struct ExternalExport {
 struct ExternalModule {
     std::string id, artifact;
     ExternalKind kind;
+    std::uint32_t abi_version{1};
     SourceSpan span;
     std::vector<ExternalExport> exports;
     std::string wasm; // Embedded validated WASM bytes; native binaries are external.
+    std::filesystem::path source_artifact; // Source-mode physical path (not serialized in HUAB).
 };
 class ExternalRegistry {
 public:
+    struct HandleTable;
     explicit ExternalRegistry(std::filesystem::path root);
     ~ExternalRegistry();
     ExternalRegistry(const ExternalRegistry&) = delete;
     ExternalRegistry& operator=(const ExternalRegistry&) = delete;
+    void set_root(std::filesystem::path root) { root_ = std::move(root); }
     void add(ExternalModule module);
     void reset();
     void initialize(const std::string& id, const SourceSpan& site);
@@ -36,5 +41,7 @@ private:
     std::filesystem::path root_;
     std::vector<ExternalModule> modules_;
     std::unordered_map<std::string, std::unique_ptr<Instance>> instances_;
+    std::unique_ptr<HandleTable> handles_;
+    std::uint32_t next_module_token_{1};
 };
 }

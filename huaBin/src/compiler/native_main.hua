@@ -14,11 +14,13 @@ struct Receipt { schema string
 struct ReleaseReceipt { schema string
     status string
     detail string
-    inputs []modules.BuildInput }
+    inputs []modules.BuildInput
+    native_artifacts []modules.NativeArtifact }
 struct ModulesReceipt { schema string
     status string
     detail string
     inputs []modules.BuildInput
+    native_artifacts []modules.NativeArtifact
     units []native.BuildUnit
     runtime string
     layout string }
@@ -87,7 +89,7 @@ fn main() {
         if is_err(generated) { reply("error",unwrap_err(generated))
             return }
         print(unwrap(json.encode(ModulesReceipt{schema:"hua.native.modules.v1",status:"ok",detail:"",
-            inputs:list.snapshot(unwrap(model).graph.build_inputs),units:unwrap(generated).units,runtime:unwrap(generated).runtime,layout:unwrap(generated).layout})))
+            inputs:list.snapshot(unwrap(model).graph.build_inputs),native_artifacts:list.snapshot(unwrap(model).graph.native_artifacts),units:unwrap(generated).units,runtime:unwrap(generated).runtime,layout:unwrap(generated).layout})))
         return
     }
     let generated=native.emit(unwrap(core))
@@ -99,6 +101,6 @@ fn main() {
     if is_err(output) { reply("error",unwrap_err(output)) }
     else if unwrap_or(os.getenv("HUA_RELEASE_INPUTS"),nil) == "1" {
         print(unwrap(json.encode(ReleaseReceipt{schema:"hua.native.cpp.v1",status:"ok",detail:"",
-            inputs:list.snapshot(unwrap(model).graph.build_inputs)})))
+            inputs:list.snapshot(unwrap(model).graph.build_inputs),native_artifacts:list.snapshot(unwrap(model).graph.native_artifacts)})))
     } else { reply("ok","") }
 }

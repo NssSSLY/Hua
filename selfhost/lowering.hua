@@ -22,8 +22,19 @@ pub struct Node { id int
     children []int }
 pub struct Initializer { module string
     roots []int }
+pub struct ExternalExport { name string
+    linked_name string
+    parameters []string
+    result string }
+pub struct ExternalModule { id string
+    unit_id string
+    artifact string
+    abi_version int
+    site_node int
+    exports []ExternalExport }
 pub struct Core { nodes List<Node>
     initialization List<Initializer>
+    external_modules []ExternalModule
     entry string
     work int }
 struct State { model types.Model
@@ -266,7 +277,7 @@ fn enumeration(s mut State, u modules.Unit, n ast.Node) Result<[]int> {
     return ok(list.snapshot(roots))
 }
 pub fn shape(k string, count int) bool {
-    if alg.contains(["Integer","Float","String","Boolean","Nil","Name","TypeName","Break","Continue","Omitted"],k) { return count == 0 }
+    if alg.contains(["Integer","Float","String","Boolean","Nil","Name","TypeName","Break","Continue","Omitted","ExternalInit"],k) { return count == 0 }
     if alg.contains(["Unary","Update","Member","FieldInit","ExpressionStatement","Propagate","Defer","SliceType","ArrayType","OptionalType","MutableType"],k) { return count == 1 }
     if alg.contains(["Binary","Assignment","Index","MapEntry","While","MultiBinding","MultiAssignment"],k) { return count == 2 }
     if k == "If" || k == "Range" { return count == 2 || count == 3 }
@@ -284,7 +295,7 @@ pub fn verify(c Core) Result<void> {
     var depths = map[int]int{}
     for i in 0..list.len(c.nodes) {
         let n = unwrap(list.get(c.nodes,i))
-        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || (n.role!="local-function" || n.kind!="Function") && !alg.contains(["source","enum-layout","enum-constructor","async-body"],n.role) { return err("E8203@1:1 invalid C05 node") }
+        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || (n.role!="local-function" || n.kind!="Function") && !alg.contains(["source","enum-layout","enum-constructor","async-body","external"],n.role) { return err("E8203@1:1 invalid C05 node") }
         var depth = 1
         for child in n.children {
             if child<0 || child>=i { return err("E8203@1:1 invalid C05 child/order") }
@@ -356,7 +367,8 @@ pub fn lower(model types.Model) Result<Core> {
     var empty []Node = []
     var inits []Initializer = []
     let entry = unwrap(list.get(model.graph.units,0)).id
-    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[],recursive_async:map[string]bool{}}
+    let empty_ext []ExternalModule = []
+    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),external_modules:empty_ext,entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[],recursive_async:map[string]bool{}}
     var names []string = []
     var ids = list.from_slice(names)
     for u in list.snapshot(model.graph.units) {
@@ -377,12 +389,44 @@ pub fn lower(model types.Model) Result<Core> {
         }
     }
     s.module_ids = list.snapshot(ids)
+    var ext_list = list.from_slice(empty_ext)
     for name in list.snapshot(model.graph.order) {
         for u in list.snapshot(model.graph.units) {
             if u.id != name { continue }
             var ids []int = []
             var roots = list.from_slice(ids)
             let root = get(u,u.tree.root)
+            if u.external {
+                var ext_id = unwrap(s.prefixes[u.id])+"module"
+                var ext_artifact = ""
+                var ext_abi = u.abi_version
+                for em in list.snapshot(model.graph.external_modules) {
+                    if em.unit_id == u.id {
+                        ext_artifact = em.artifact
+                        ext_abi = em.abi_version
+                    }
+                }
+                let init_node = add(s,u,root,"ExternalInit",ext_id,"",false,[],"source")?
+                list.append(roots,init_node)?
+                let empty_ex []ExternalExport = []
+                var exports = list.from_slice(empty_ex)
+                for id in root.children {
+                    let n = get(u,id)
+                    if ast.kind(n.payload) != "Function" { continue }
+                    let fn_id = lowered(s,u,id,1,"external")?
+                    list.append(roots,fn_id)?
+                    let fn_decl = unwrap(model.functions[declaration(s,u,n)])
+                    let empty_ps []string = []
+                    var ps = list.from_slice(empty_ps)
+                    for p in fn_decl.parameters { list.append(ps,runtime_type(s,p.type_name))? }
+                    let raw_name = strings.split(ast.payload_text(n.payload)," ")[0]
+                    let linked = runtime_name(s,declaration(s,u,n))
+                    list.append(exports,ExternalExport{name:raw_name,linked_name:linked,parameters:list.snapshot(ps),result:runtime_type(s,fn_decl.result)})?
+                }
+                list.append(ext_list,ExternalModule{id:ext_id,unit_id:u.id,artifact:ext_artifact,abi_version:ext_abi,site_node:init_node,exports:list.snapshot(exports)})?
+                list.append(s.core.initialization,Initializer{module:u.id,roots:list.snapshot(roots)})?
+                continue
+            }
             for id in root.children {
                 let n = get(u,id)
                 let k = ast.kind(n.payload)
@@ -398,6 +442,7 @@ pub fn lower(model types.Model) Result<Core> {
             list.append(s.core.initialization,Initializer{module:u.id,roots:list.snapshot(roots)})?
         }
     }
+    s.core.external_modules = list.snapshot(ext_list)
     verify(s.core)?
     return ok(s.core)
 }

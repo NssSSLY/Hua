@@ -15,11 +15,21 @@ pub struct Unit { id string
     path string
     key string
     package string
+    external bool
+    abi_version int
     tree parser.Tree }
+pub struct NativeArtifact { source string
+    artifact string }
+pub struct ExternalModule { id string
+    unit_id string
+    artifact string
+    source_path string
+    abi_version int }
 pub struct PackageInfo { name string
     version string
     root string
-    deps map[string]string }
+    deps map[string]string
+    native_libs []string }
 pub struct BuildInput { path string
     kind string
     content string }
@@ -63,7 +73,9 @@ pub struct Graph { globals map[string]int
     active List<string>
     total_bytes int
     work int
-    build_inputs List<BuildInput> }
+    build_inputs List<BuildInput>
+    external_modules List<ExternalModule>
+    native_artifacts List<NativeArtifact> }
 struct Environment { unit string
     pool ast.Pool
     imports []Edge
@@ -112,7 +124,7 @@ fn collect(g mut Graph, u Unit) Result<void> {
         let name = declared(ast.payload_text(n.payload))
         if alg.contains(["Function","Struct","Enum","Let","Var","Const"],k) {
             if strings.starts_with(name,"__") { return err(error(u.id,n,"E8201","internal declaration name")) }
-            if k == "Struct" && alg.contains(["Json","Bytes","Buffer","List","Task"],name) { return err(error(u.id,n,"E3002","reserved standard type")) }
+            if k == "Struct" && alg.contains(["Json","Bytes","Buffer","List","Task","NativeHandle"],name) { return err(error(u.id,n,"E3002","reserved standard type")) }
             let published = strings.ends_with(ast.payload_text(n.payload)," pub")
             add_global(g,u,n,name,k,published)?
             if k == "Enum" { for variant in n.children {
@@ -150,12 +162,12 @@ fn inspect(g mut Graph, base string, relative string, site ast.Node, source stri
 }
 fn resolve(g mut Graph, name string, site ast.Node, source string) Result<string> {
     let relative = strings.replace(name,".","/")
-    for candidate in [relative+".hua",relative+"/package.hua"] {
+    for candidate in [relative+".hua",relative+"/package.hua",relative+".huam",relative+"/package.huam"] {
         let p = inspect(g,g.root,candidate,site,source)?
         if p != "" { return ok(p) }
     }
-    for candidate in [relative+".huam",relative+"/package.huam",relative+".wasm",relative+"/package.wasm"] {
-        if inspect(g,g.root,candidate,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
+    for candidate in [relative+".wasm",relative+"/package.wasm"] {
+        if inspect(g,g.root,candidate,site,source)? != "" { return err(error(source,site,"E8201","WASM module is outside SB1")) }
     }
     return err(error(source,site,"E5001","cannot resolve module "+name))
 }
@@ -173,7 +185,7 @@ fn valid_package_name(name string) bool {
     return !alg.contains([
         "std","int","float","bool","string","byte","i8","i16","i32","i64",
         "u8","u16","u32","u64","f32","f64","usize","isize","void",
-        "Json","Bytes","Buffer","List","Deque","Result","Task","map",
+        "Json","Bytes","Buffer","List","Deque","Result","Task","NativeHandle","map",
         "fn","struct","enum","interface","import","as","let","var","const",
         "pub","mut","async","await","spawn","taskgroup","parallel","simd",
         "match","if","else","while","for","in","by","break","continue",
@@ -435,7 +447,7 @@ fn load_package_manifest(g mut Graph, expected_name string, dir string, site ast
     let shape = unwrap(shape_res)
     let root_json = unwrap(parsed)
     for k in shape.top_keys {
-        if !alg.contains(["schema","name","version","deps"],k) {
+        if !alg.contains(["schema","name","version","deps","native_libs"],k) {
             return err(error(source,site,"E5004","unknown field "+k+" in hua.package.json"))
         }
     }
@@ -500,6 +512,58 @@ fn load_package_manifest(g mut Graph, expected_name string, dir string, site ast
         }
     }
 
+    let empty_libs []string = []
+    var pkg_native_libs = list.from_slice(empty_libs)
+    let libs_res = json.get(root_json,"native_libs")
+    if is_ok(libs_res) {
+        let libs_json = unwrap(libs_res)
+        if json.kind(libs_json) != "object" {
+            return err(error(source,site,"E5004","native_libs in hua.package.json must be a JSON object"))
+        }
+        let plat_keys = unwrap(json.keys(libs_json))
+        for plat in plat_keys {
+            if !alg.contains(["windows-x86_64","linux-x86_64","macos-arm64","macos-x86_64"],plat) {
+                return err(error(source,site,"E5004","unsupported platform key "+plat+" in native_libs"))
+            }
+            let arr = unwrap(json.get(libs_json,plat))
+            if json.kind(arr) != "array" {
+                return err(error(source,site,"E5004","native_libs."+plat+" must be a JSON array"))
+            }
+            let nlibs = unwrap(json.len(arr))
+            var seen_libs = map[string]bool{}
+            for li in 0..nlibs {
+                let item_str = json.as_string(unwrap(json.at(arr,li)))
+                if is_err(item_str) {
+                    return err(error(source,site,"E5004","invalid filename in native_libs."+plat))
+                }
+                let fname = unwrap(item_str)
+                if fname == "" || strings.len_bytes(fname) > 256 || strings.contains(fname,"/") ||
+                        strings.contains(fname,"\\") || strings.contains(fname,":") ||
+                        fname == "." || fname == ".." || has(seen_libs,fname) {
+                    return err(error(source,site,"E5004","invalid or duplicate filename in native_libs."+plat))
+                }
+                seen_libs[fname] = true
+                if plat == "windows-x86_64" {
+                    let lib_path = path.join([dir,fname])?
+                    let lib_info = fs.stat(lib_path)
+                    if is_err(lib_info) {
+                        list.append(g.build_inputs,BuildInput{path:lib_path,kind:"unavailable",content:unwrap_err(lib_info)})?
+                        return err(error(source,site,"E7001","missing native library "+fname+" declared in hua.package.json"))
+                    }
+                    let lib_kind = json.as_string(json.get(unwrap(lib_info),"kind")?)?
+                    if lib_kind == "symlink" || lib_kind != "file" {
+                        return err(error(source,site,"E5001","native library "+fname+" must be a regular non-symlink file"))
+                    }
+                    list.append(g.build_inputs,BuildInput{path:lib_path,kind:"binary",content:""})?
+                    list.append(pkg_native_libs,fname)?
+                    var art_rel = "native/_root/"+fname
+                    if !is_root { art_rel = "native/"+pkg_name+"/"+fname }
+                    list.append(g.native_artifacts,NativeArtifact{source:lib_path,artifact:art_rel})?
+                }
+            }
+        }
+    }
+
     var deps = map[string]string{}
     let deps_res = json.get(root_json,"deps")
     if is_ok(deps_res) {
@@ -521,7 +585,7 @@ fn load_package_manifest(g mut Graph, expected_name string, dir string, site ast
         }
     }
 
-    let pkg = PackageInfo{name:pkg_name,version:pkg_ver,root:dir,deps:deps}
+    let pkg = PackageInfo{name:pkg_name,version:pkg_ver,root:dir,deps:deps,native_libs:list.snapshot(pkg_native_libs)}
     if is_root { g.root_package = pkg }
     else { g.packages[pkg_name] = pkg }
 
@@ -539,7 +603,7 @@ fn resolve_in_package(g mut Graph, base_root string, rel_mod string, pkg_owner s
         candidates = ["package.hua"]
     } else {
         let rel = strings.replace(rel_mod,".","/")
-        candidates = [rel+".hua",rel+"/package.hua"]
+        candidates = [rel+".hua",rel+"/package.hua",rel+".huam",rel+"/package.huam"]
     }
     for cand in candidates {
         let found = inspect(g,base_root,cand,site,source)?
@@ -555,8 +619,8 @@ fn resolve_in_package(g mut Graph, base_root string, rel_mod string, pkg_owner s
     }
     if !package_entry {
         let rel = strings.replace(rel_mod,".","/")
-        for ext in [rel+".huam",rel+"/package.huam",rel+".wasm",rel+"/package.wasm"] {
-            if inspect(g,base_root,ext,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
+        for ext in [rel+".wasm",rel+"/package.wasm"] {
+            if inspect(g,base_root,ext,site,source)? != "" { return err(error(source,site,"E8201","WASM module is outside SB1")) }
         }
     }
     return err(error(source,site,"E5001","cannot resolve module "+name))
@@ -654,11 +718,46 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
         id = path.relative(normalized,g.root)?
         if id == ".." || strings.starts_with(id,"../") { return err(error(parent,site,"E8302","source outside project root")) }
     }
+    let is_native = strings.ends_with(normalized,".huam")
+    var abi_ver = 0
+    var parse_source = unwrap(raw)
+    if is_native {
+        let norm_lines = strings.lines(parse_source)
+        var first_line = ""
+        if len(norm_lines) > 0 { first_line = norm_lines[0] }
+        if first_line == "HUA_NATIVE 1" { abi_ver = 1 }
+        else if first_line == "HUA_NATIVE 2" { abi_ver = 2 }
+        else { return err(error(id,site,"E7002","native manifest requires HUA_NATIVE 1 or HUA_NATIVE 2 header")) }
+        parse_source = "#" + rules_cut_local(parse_source,1,strings.len_bytes(parse_source))
+        let dll_path = rules_cut_local(normalized,0,strings.len_bytes(normalized)-5) + ".dll"
+        let dll_info = fs.stat(dll_path)
+        if is_err(dll_info) {
+            list.append(g.build_inputs,BuildInput{path:dll_path,kind:"unavailable",content:unwrap_err(dll_info)})?
+            return err(error(parent,site,"E7001","native manifest binary is missing"))
+        }
+        let dll_kind = json.as_string(json.get(unwrap(dll_info),"kind")?)?
+        if dll_kind != "file" {
+            return err(error(parent,site,"E7001","native manifest binary is missing"))
+        }
+        list.append(g.build_inputs,BuildInput{path:dll_path,kind:"binary",content:""})?
+        var art_rel = ""
+        if g.has_manifest {
+            if owner_pkg != "" {
+                art_rel = "native/" + owner_pkg + "/" + path.basename(dll_path)?
+            } else {
+                art_rel = "native/_root/" + strings.replace(path.relative(dll_path,g.root)?,"\\","/")
+            }
+        } else {
+            art_rel = strings.replace(path.relative(dll_path,g.root)?,"\\","/")
+        }
+        list.append(g.external_modules,ExternalModule{id:id+"#module",unit_id:id,artifact:art_rel,source_path:dll_path,abi_version:abi_ver})?
+        list.append(g.native_artifacts,NativeArtifact{source:dll_path,artifact:art_rel})?
+    }
     var parsed Result<parser.Tree> = err("uninitialized")
-    if g.limits.compiler { parsed = parser.parse_compiler(unwrap(raw),id) }
-    else { parsed = parser.parse_extended(unwrap(raw),id) }
+    if g.limits.compiler { parsed = parser.parse_compiler(parse_source,id) }
+    else { parsed = parser.parse_extended(parse_source,id) }
     if is_err(parsed) { return err(unwrap_err(parsed)+" ["+id+"]") }
-    let unit = Unit{id:id,path:normalized,key:key,package:owner_pkg,tree:unwrap(parsed)}
+    let unit = Unit{id:id,path:normalized,key:key,package:owner_pkg,external:is_native,abi_version:abi_ver,tree:unwrap(parsed)}
     g.total_bytes += unit.tree.source_bytes
     if g.total_bytes > g.limits.source_bytes_total { return err(error(parent,site,"E5005","module byte budget")) }
     list.append(g.units,unit)?
@@ -768,7 +867,8 @@ fn reference(g mut Graph, e Environment, n ast.Node, name string, type_name bool
         }
     }
     if target == "" {
-        if type_name && catalog.primitive(name) { target = "builtin:type:"+name }
+        if type_name && name == "std.error.Value" { target = "builtin:std.error#Value" }
+        else if type_name && catalog.primitive(name) { target = "builtin:type:"+name }
         else if !type_name && (name=="$task_group_begin" || name=="$task_group_end") {
             target = "builtin:core:"+unwrap(strings.slice(name,1,len(name)))
         }
@@ -899,8 +999,10 @@ fn analyze_impl(entry string, limits Limits) Result<Graph> {
     var references []Reference = []
     var names []string = []
     let inputs []BuildInput = []
-    let empty_pkg = PackageInfo{name:"",version:"",root:root,deps:map[string]string{}}
-    var g = Graph{globals:map[string]int{},limits:limits,root:root,has_manifest:false,root_package:empty_pkg,packages:map[string]PackageInfo{},units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0,build_inputs:list.from_slice(inputs)}
+    let ext_mods []ExternalModule = []
+    let nat_arts []NativeArtifact = []
+    let empty_pkg = PackageInfo{name:"",version:"",root:root,deps:map[string]string{},native_libs:[]}
+    var g = Graph{globals:map[string]int{},limits:limits,root:root,has_manifest:false,root_package:empty_pkg,packages:map[string]PackageInfo{},units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0,build_inputs:list.from_slice(inputs),external_modules:list.from_slice(ext_mods),native_artifacts:list.from_slice(nat_arts)}
     # A validated empty source supplies the entry error location before the actual parse.
     let entry_name = path.basename(normalized)?
     let seed = parser.parse_extended("",entry_name)?

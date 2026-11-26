@@ -1,8 +1,12 @@
 # Hua自举性能项目记忆索引
 
-## 应用路线第 2 步方案：单一权威标准库合同与 103 项双端打通（2026-11-26，待确认实施）
+## 应用路线第 3 步：Native ABI v2、随包 DLL 分发与 SQLite 原生扩展包（2026-11-26）
 
-完成当前进度/能力/待办全景核对与第 2 步详细设计：引入 `selfhost/stdlib_manifest.json` + `tests/tools/sync_stdlib_contract.py`（两级分桶生成与 `stdlib_contract` CTest 防漏门禁），规划首批打通 101 项 B 类纯表项 + `std.test.equal/not_equal`（`SH 206→297/374`、`--release 185→288/374`、`18/27` 内建模块四路径全通）及 7 条硬验收指标。仅文档记录，尚未修改生产源码。[详细方案与验收标准](designs/2026-11-26-step2-stdlib-contract-plan.md)
+完成同步 Native ABI v2（`include/hua/native.h`、`NativeHandle` 宿主代次控制块与 LIFO 清理、`Bytes` 借用/复制、结构化 `Result<T, std.error.Value>`）、零 `wasmtime` `NativeExternalHost`、`hua.package.json` `native_libs`、`HUAB format 30 / native_abi 2`、Windows `--release` 便携目录分发（含 N3 缓存命中恢复伴随 DLL）及首个扩展包 `packages/sqlite/`；同步补齐 `docs/语言百科与设计核对.md` 全部 61 项现有诊断码。重装配 `huaBin/` 达成 `G1 == G2`（`e17f22f9...`）与 `C2(15.80s) == C3(124.83s, 743,192,893 步)` 逐字节不动点（`c23f98c8...`）；SQLite 四路径（含干净目录实跑、含 `\0`/非 UTF-8 `BLOB`、事务回滚、幂等关闭与 `E7001`）与 ABI v2 6 项负向诊断全过。[验收记录](runs/2026-11-26-step3-sqlite-extension.md)
+
+## 应用路线第 2 步：单一权威标准库合同与 103 项纯表项双端打通（2026-11-26）
+
+落地单一权威清单 `selfhost/stdlib_manifest.json` + `tests/tools/sync_stdlib_contract.py`（两级分桶生成与 `stdlib_contract` CTest 防漏门禁），打通 8 模块 103 项纯表项（`SH 206→297/374`、`--release 185→288/374`、`18/27` 内建模块四路径全通，B 类纯表项清零）。[详细方案](designs/2026-11-26-step2-stdlib-contract-plan.md) · [验收记录](runs/2026-11-26-step2-stdlib-contract.md)
 
 ## 应用路线第 1 步：仓库外多包 CLI、本地路径包解析与首批标准库双端打通（2026-11-26）
 

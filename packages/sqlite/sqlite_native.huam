@@ -1,0 +1,21 @@
+HUA_NATIVE 2
+pub fn open(path string) Result<NativeHandle, std.error.Value> {}
+pub fn close(conn NativeHandle) Result<void, std.error.Value> {}
+pub fn exec(conn NativeHandle, sql string) Result<void, std.error.Value> {}
+pub fn changes(conn NativeHandle) Result<int, std.error.Value> {}
+pub fn last_insert_rowid(conn NativeHandle) Result<int, std.error.Value> {}
+pub fn prepare(conn NativeHandle, sql string) Result<NativeHandle, std.error.Value> {}
+pub fn finalize(stmt NativeHandle) Result<void, std.error.Value> {}
+pub fn reset(stmt NativeHandle) Result<void, std.error.Value> {}
+pub fn step(stmt NativeHandle) Result<bool, std.error.Value> {}
+pub fn bind_null(stmt NativeHandle, index int) Result<void, std.error.Value> {}
+pub fn bind_int(stmt NativeHandle, index int, value int) Result<void, std.error.Value> {}
+pub fn bind_float(stmt NativeHandle, index int, value float) Result<void, std.error.Value> {}
+pub fn bind_text(stmt NativeHandle, index int, value string) Result<void, std.error.Value> {}
+pub fn bind_blob(stmt NativeHandle, index int, value Bytes) Result<void, std.error.Value> {}
+pub fn column_count(stmt NativeHandle) Result<int, std.error.Value> {}
+pub fn column_type(stmt NativeHandle, col int) Result<string, std.error.Value> {}
+pub fn column_int(stmt NativeHandle, col int) Result<int, std.error.Value> {}
+pub fn column_float(stmt NativeHandle, col int) Result<float, std.error.Value> {}
+pub fn column_text(stmt NativeHandle, col int) Result<string, std.error.Value> {}
+pub fn column_blob(stmt NativeHandle, col int) Result<Bytes, std.error.Value> {}

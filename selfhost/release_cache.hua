@@ -16,9 +16,18 @@ pub struct Inputs {
     kind string
     digest string
 }
+pub struct NativeArtifact {
+    source string
+    artifact string
+}
 pub struct Receipt {
     inputs []Inputs
     product string
+    native_artifacts []NativeArtifact
+}
+pub struct SavedBuild {
+    product string
+    native_artifacts []NativeArtifact
 }
 pub struct Keys {
     compile string
@@ -149,6 +158,11 @@ fn observations(value Json, generated bool, started int) Result<[]Inputs> {
             if is_err(info) || field(unwrap(info),"kind") != "file" || file_hash(filename)? != digest {
                 return err("source changed")
             }
+        } else if kind == "binary" {
+            if generated { digest = file_hash(filename)? }
+            if is_err(info) || field(unwrap(info),"kind") != "file" || file_hash(filename)? != digest {
+                return err("binary changed")
+            }
         } else {
             if is_err(info) || field(unwrap(info),"kind") != kind { return err("import path changed") }
         }
@@ -163,10 +177,28 @@ pub fn input_list(generated Json, started int) Result<[]Inputs> {
 
 fn json_file(filename string) Result<Json> { return json.decode(fs.read_text(filename)?) }
 
-pub fn load_build(root string, key string, started int) Result<string> {
+pub fn parse_native_artifacts(value Json) Result<[]NativeArtifact> {
+    let empty []NativeArtifact = []
+    let raw = json.get(value,"native_artifacts")
+    if is_err(raw) { return ok(empty) }
+    let arr = unwrap(raw)
+    let count = json.len(arr)?
+    var out = list.from_slice(empty)
+    for i in 0..count {
+        let item = json.at(arr,i)?
+        let src = field(item,"source")
+        let art = field(item,"artifact")
+        if src != "" && art != "" {
+            list.append(out,NativeArtifact{source:src,artifact:art})?
+        }
+    }
+    return ok(list.snapshot(out))
+}
+
+pub fn load_build(root string, key string, started int) Result<SavedBuild> {
     let saved = json_file(path.join([root,key+".build.json"])?)?
     observations(json.get(saved,"inputs")?,false,started)?
-    return ok(field(saved,"product"))
+    return ok(SavedBuild{product:field(saved,"product"),native_artifacts:parse_native_artifacts(saved)?})
 }
 
 pub fn read_index(root string, key string, suffix string) Result<string> {
@@ -210,8 +242,8 @@ pub fn store_index(root string, key string, suffix string, digest string) Result
     return atomic(root,key+suffix+".key",bytes.from_text(digest))
 }
 
-pub fn store_build(root string, key string, inputs []Inputs, product string) Result<void> {
-    return atomic(root,key+".build.json",bytes.from_text(json.encode(Receipt{inputs:inputs,product:product})?))
+pub fn store_build(root string, key string, inputs []Inputs, product string, native_artifacts []NativeArtifact) Result<void> {
+    return atomic(root,key+".build.json",bytes.from_text(json.encode(Receipt{inputs:inputs,product:product,native_artifacts:native_artifacts})?))
 }
 
 # The compiler identity seals the PCH and every header search directory.

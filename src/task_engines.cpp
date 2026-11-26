@@ -8,13 +8,13 @@ namespace hua {namespace {
 using I=std::int64_t;
 Value snapshot(const Value& input,const std::function<Callable(const Callable&,unsigned)>& copy,unsigned depth=0){
     if(depth>64)runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
-    bool file=hua::holds_alternative<FileValue>(input.data);
+    bool file=hua::holds_alternative<FileValue>(input.data)||hua::holds_alternative<NativeHandleValue>(input.data);
     if(holds<Callable>(input.data))try{file=contains_file(input);}
     catch(const Diagnostic& error){
         if(error.code()=="E4099")runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
         throw;
     }
-    if(file)runtime_error({},"task snapshots cannot contain File","E4104");
+    if(file)runtime_error({},"task snapshots cannot contain File or NativeHandle","E4104");
     if(auto f=cget_if<Callable>(&input.data))return Value(copy(*f,depth+1));
     if(auto p=cget_if<PlainRecord>(&input.data)){if(depth+p->layout->depth>64)runtime_error({},"task snapshot contains a cycle or is too deep","E4104");auto out=*p;out.writable=false;return Value(std::move(out));}
     if(auto p=hua::get_if<StructValue>(&input.data)){require_complete_enum(*p->data);auto d=managed<StructData>();d->name=p->data->name;d->enumeration=p->data->enumeration;d->variant=p->data->variant;d->fields=p->data->fields.transform([&](const Value& v){return snapshot(v,copy,depth+1);});return Value(StructValue{d,false});}
@@ -27,7 +27,7 @@ Value snapshot(const Value& input,const std::function<Callable(const Callable&,u
     return read_only(copy_value(input,true));
 }
 void transferable(const Value& v,unsigned depth=0){
-    if(hua::holds_alternative<FileValue>(v.data))runtime_error({},"task results cannot contain File","E4104");
+    if(hua::holds_alternative<FileValue>(v.data)||hua::holds_alternative<NativeHandleValue>(v.data))runtime_error({},"task results cannot contain File or NativeHandle","E4104");
     if(depth>64)runtime_error({},"task result is cyclic or too deep","E4104");
     if(holds<Callable>(v.data))runtime_error({},"task results cannot contain closures","E4104");
     if(auto p=cget_if<PlainRecord>(&v.data);p&&depth+p->layout->depth>64)runtime_error({},"task result is cyclic or too deep","E4104");

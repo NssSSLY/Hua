@@ -196,7 +196,7 @@ print(unwrap(lib.work(false)),unwrap_err(result).code)
     shutil.copy2(root/"examples/extensions/native_math.huam",p/"native_math.huam")
     entry=p/"main.hua";entry.write_text('import native_math as n\nprint(n.greeting("中文"),n.greeting("a\\0b"))\nprint(n.add(9223372036854775807,1))\n',encoding="utf-8")
     run("run",entry,code=1,output="hello 中文 hello a\0b\n",error="native integer overflow")
-    (p/"native_math.huam").write_text("HUA_NATIVE 2\n",encoding="utf-8");run("check",entry,code=1,error="E7002",silent=True)
+    (p/"native_math.huam").write_text("HUA_NATIVE 99\n",encoding="utf-8");run("check",entry,code=1,error="E7002",silent=True)
     (p/"native_math.huam").write_text("HUA_NATIVE 1\npub fn value(x []int) int {}\n",encoding="utf-8");run("check",entry,code=1,error="E7003",silent=True)
     p=case();(p/"mod.wasm").write_bytes(compile_wat(runtime,"""(module
         (global $counter (mut i32) (i32.const 0))

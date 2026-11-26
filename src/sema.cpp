@@ -15,7 +15,7 @@ std::vector<const Node*> parameters(const Node& fn) {
     std::vector<const Node*> out; for(const auto& c:fn.children) if(c->kind==N::Parameter)out.push_back(c.get());return out;
 }
 bool file_type(const std::string& type,const SemanticModel& model,std::set<std::string> seen={}){
-    if(type=="std.file.File")return true;
+    if(type=="std.file.File"||type=="NativeHandle")return true;
     if(!seen.insert(type).second)return false;
     if(type.ends_with('?'))return file_type(type.substr(0,type.size()-1),model,seen);
     if(type.starts_with('['))return file_type(type.substr(type.find(']')+1),model,seen);
@@ -68,7 +68,7 @@ void SemanticAnalyzer::define(const std::string& name,Symbol symbol,const Source
 void SemanticAnalyzer::validate_type(const Node& n,bool allow_void) {
     if(n.kind==N::TypeName&&n.text=="void"&&!allow_void)error(n,"void is only a no-value function/Result/Task success type","E3004");
     if(n.kind==N::ArrayType){auto count=fixed_extent(n.text);if(!count||*count>1000000)error(n,"fixed array size must be an integer literal in 0..1000000","E3004");}
-    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","std.random.Rng","std.file.File","std.file.IOFailure","Json","Bytes","Buffer","Task"};
+    static const std::unordered_set<std::string> types={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","std.error.Value","std.random.Rng","std.file.File","std.file.IOFailure","Json","Bytes","Buffer","Task","NativeHandle"};
     if(n.kind==N::TypeName&&n.text.empty())return;
     if(n.kind==N::TypeName && !types.contains(n.text) && !model_.structures.contains(n.text)) {
         if(n.text.find('.')==std::string::npos)error(n,"unknown type `"+n.text+"`","E3004");

@@ -10,12 +10,11 @@
   1. **【已完成 · 第 1 步】交付第一个仓库外多包 CLI**：
      - 已生成并更新 374 项[标准库逐接口覆盖表](knowledge/bootstrap-performance/designs/2026-11-25-stdlib-coverage-matrix.md)（自举 `206/374`、`--release` `185/374`）。
      - 已实现双端 `hua.package.v1` 本地路径包解析、`@pkg/<name>/...` 统一诊断身份、首批 CLI 标准库与 `huaBin` 重装配，仓库外三包 CLI 五路输出/跨包错误位置/退出码、N3 外部包失效与 36 项负例诊断对照全部通过。[交付记录](knowledge/bootstrap-performance/runs/2026-11-26-step1-multi-package-cli.md)
-  2. **【下一优先 · 第 2 步 · 方案已细化待确认】可重复构建与双端标准库单一权威合同**：
-     - 详细方案与 7 项硬验收标准见 [2026-11-26-step2-stdlib-contract-plan.md](knowledge/bootstrap-performance/designs/2026-11-26-step2-stdlib-contract-plan.md)（纯文档规划，尚未改代码）。
-     - 核心内容：建立 `selfhost/stdlib_manifest.json` + `tests/tools/sync_stdlib_contract.py`（按模块分桶生成 `catalog`/`signatures`/`archive`/`native_cpp` 表区并注册 `stdlib_contract` CTest 防漏门禁）；修复 `types.hua:336` `math` 显式默认 `int/float` 校验与补齐 `test.equal/not_equal` 双向兼容校验；一次性打通 101 项 B 类纯表项 + 2 项 `std.test`（共 103 项，`SH 206→297/374`、`--release 185→288/374`，`18/27` 内建模块全通）。
-     - 后续分批：剩余 `86` 项（`random`/`maps`/`sets`/`list`/`alg`/`deque`/`heap`/`simd`/`task`）按第 2 步后续批次推进。
-  3. **【第 3 步】SQLite 原生扩展包**：冻结同步扩展字节借用/复制、连接与语句句柄代次、重复关闭、错误回传与随包 DLL 分发合同，用 Hua 封装参数绑定与事务并在干净目录验收。
-  4. **【第 4 步】流式 I/O（`Reader/Writer`）与 HTTPS 客户端（含截止时间/取消/SSE）并行推进**。
+  2. **【已完成 · 第 2 步】可重复构建与双端标准库单一权威合同**：
+     - 已落地 `selfhost/stdlib_manifest.json`、`tests/tools/sync_stdlib_contract.py`、`stdlib_contract` CTest（`0.47s` 含 4 项负向防漏自检）及 8 模块 103 项双端打通（`SH 297/374`、`--release 288/374`、`18/27` 内建模块四路径全通，B 类纯表项清零）。[验收记录](knowledge/bootstrap-performance/runs/2026-11-26-step2-stdlib-contract.md)
+     - 后续分批（按需推进）：剩余 `86` 项（`random` 句柄 5、`deque`/`random` 多态+类型 14、多态 39、高阶回调 19、`task` 原生 9）。
+  3. **【已完成 · 第 3 步】SQLite 原生扩展包**：已落地同步 Native ABI v2（`Bytes`、`NativeHandle` 代次控制块与 LIFO 清理、结构化 `Result` 错误、`HUAB 30 / native_abi 2`）、`native_libs` 随包 DLL 分发、零 `wasmtime` `NativeExternalHost` 与 `packages/sqlite/`；仓库外四路径（含干净目录实跑、N3 缓存恢复 DLL、缺 DLL `E7001`）、ABI v2 6 项负向诊断与百科 61 项错误码补全全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-26-step3-sqlite-extension.md)
+  4. **【下一优先 · 第 4 步】流式 I/O（`Reader/Writer`）与 HTTPS 客户端（含截止时间/取消/SSE）并行推进**。
   5. **【第 5 步 & 持续跟踪】由实际应用扩充 CSV/正则/压缩、流式子进程与 Python Bridge 装配**；跟踪 `origin_pool` 超大规模边界；`HUA-D036`/`HUA-D037` 按是否影响新项目构建/错误语义/产物兼容分级处理。
 
 ## 当前待办 · Hua 自身工具链与发行（2026-11-18）
