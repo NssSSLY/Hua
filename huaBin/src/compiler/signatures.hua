@@ -21,6 +21,22 @@ pub fn signature(target string) Signature? {
     if target == "builtin:std.file#read_all" { return Signature{parameters:["std.file.File"],result:"Result<Bytes,std.file.IOFailure>",mutates:false,writable:false} }
     if target == "builtin:std.file#read_exact" { return Signature{parameters:["std.file.File","int"],result:"Result<Bytes?,std.file.IOFailure>",mutates:false,writable:false} }
     if target == "builtin:std.file#write_all" { return Signature{parameters:["std.file.File","Bytes"],result:"Result<void,std.file.IOFailure>",mutates:false,writable:false} }
+    if target == "builtin:std.error#make" { return Signature{parameters:["string","string","string"],result:"Result<std.error.Value,string>",mutates:false,writable:false} }
+    if target == "builtin:std.error#wrap" { return Signature{parameters:["string","string","string","std.error.Value"],result:"Result<std.error.Value,string>",mutates:false,writable:false} }
+    if target == "builtin:std.error#from_string" { return Signature{parameters:["string","string"],result:"std.error.Value",mutates:false,writable:false} }
+    if target == "builtin:std.error#with_context" { return Signature{parameters:["std.error.Value","string"],result:"std.error.Value",mutates:false,writable:false} }
+    if target == "builtin:std.error#with_origin" { return Signature{parameters:["std.error.Value","string"],result:"std.error.Value",mutates:false,writable:false} }
+    if target == "builtin:std.error#with_native" { return Signature{parameters:["std.error.Value","string","int"],result:"std.error.Value",mutates:false,writable:false} }
+    if target == "builtin:std.error#domain" { return Signature{parameters:["std.error.Value"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.error#code" { return Signature{parameters:["std.error.Value"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.error#message" { return Signature{parameters:["std.error.Value"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.error#cause" { return Signature{parameters:["std.error.Value"],result:"std.error.Value?",mutates:false,writable:false} }
+    if target == "builtin:std.error#origin" { return Signature{parameters:["std.error.Value"],result:"string?",mutates:false,writable:false} }
+    if target == "builtin:std.error#native_domain" { return Signature{parameters:["std.error.Value"],result:"string?",mutates:false,writable:false} }
+    if target == "builtin:std.error#native_code" { return Signature{parameters:["std.error.Value"],result:"int?",mutates:false,writable:false} }
+    if target == "builtin:std.error#contexts" { return Signature{parameters:["std.error.Value"],result:"[]string",mutates:false,writable:false} }
+    if target == "builtin:std.error#truncated" { return Signature{parameters:["std.error.Value"],result:"bool",mutates:false,writable:false} }
+    if target == "builtin:std.error#format" { return Signature{parameters:["std.error.Value"],result:"string",mutates:false,writable:false} }
     if target == "builtin:std.task#sleep" { return Signature{parameters:["int"],result:"void",mutates:false,writable:false} }
     if target == "builtin:std.task#yield" { return Signature{parameters:[],result:"void",mutates:false,writable:false} }
     if target == "builtin:std.task#worker_id" { return Signature{parameters:[],result:"string",mutates:false,writable:false} }
@@ -68,12 +84,24 @@ pub fn signature(target string) Signature? {
     if target == "builtin:std.os#getenv" { return Signature{parameters:["string"],result:"Result<string?,string>",mutates:false,writable:false} }
     if target == "builtin:std.os#args" { return Signature{parameters:[],result:"[]string",mutates:false,writable:false} }
     if target == "builtin:std.os#cwd" { return Signature{parameters:[],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.os#exit" { return Signature{parameters:["int"],result:"void",mutates:false,writable:false} }
+    if target == "builtin:std.os#platform" { return Signature{parameters:[],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.os#arch" { return Signature{parameters:[],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.os#pid" { return Signature{parameters:[],result:"int",mutates:false,writable:false} }
+    if target == "builtin:std.os#cpu_count" { return Signature{parameters:[],result:"int",mutates:false,writable:false} }
+    if target == "builtin:std.os#environ" { return Signature{parameters:[],result:"Result<map<string,string>,string>",mutates:false,writable:false} }
+    if target == "builtin:std.os#parse_args" { return Signature{parameters:["[]string","[]string","[]string"],result:"Result<map<string,[]string>,string>",mutates:false,writable:false} }
     if target == "builtin:std.io#read_line" { return Signature{parameters:[],result:"Result<string?,string>",mutates:false,writable:false} }
     if target == "builtin:std.io#read_all" { return Signature{parameters:[],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.io#write" { return Signature{parameters:["string"],result:"Result<int,string>",mutates:false,writable:false} }
+    if target == "builtin:std.io#write_err" { return Signature{parameters:["string"],result:"Result<int,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#read_text" { return Signature{parameters:["string"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#write_text" { return Signature{parameters:["string","string"],result:"Result<bool,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#append_text" { return Signature{parameters:["string","string"],result:"Result<bool,string>",mutates:false,writable:false} }
+    if target == "builtin:std.fs#walk" { return Signature{parameters:["string"],result:"Result<[]string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.fs#copy_file" { return Signature{parameters:["string","string"],result:"Result<bool,string>",mutates:false,writable:false} }
+    if target == "builtin:std.fs#copy_dir" { return Signature{parameters:["string","string"],result:"Result<int,string>",mutates:false,writable:false} }
+    if target == "builtin:std.fs#remove_all" { return Signature{parameters:["string"],result:"Result<int,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#exists" { return Signature{parameters:["string"],result:"Result<bool,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#remove" { return Signature{parameters:["string"],result:"Result<bool,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#mkdir_all" { return Signature{parameters:["string"],result:"Result<bool,string>",mutates:false,writable:false} }
@@ -91,6 +119,37 @@ pub fn signature(target string) Signature? {
     if target == "builtin:std.strings#join" { return Signature{parameters:["[]string","string"],result:"string",mutates:false,writable:false} }
     if target == "builtin:std.strings#replace" { return Signature{parameters:["string","string","string"],result:"string",mutates:false,writable:false} }
     if target == "builtin:std.strings#slice" { return Signature{parameters:["string","int","int"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#last_index" { return Signature{parameters:["string","string"],result:"int",mutates:false,writable:false} }
+    if target == "builtin:std.strings#count" { return Signature{parameters:["string","string"],result:"int",mutates:false,writable:false} }
+    if target == "builtin:std.strings#repeat" { return Signature{parameters:["string","int"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#split_n" { return Signature{parameters:["string","string","int"],result:"[]string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#fields" { return Signature{parameters:["string"],result:"[]string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#lines" { return Signature{parameters:["string"],result:"[]string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#trim_start" { return Signature{parameters:["string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#trim_end" { return Signature{parameters:["string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#trim_prefix" { return Signature{parameters:["string","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#trim_suffix" { return Signature{parameters:["string","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#pad_left" { return Signature{parameters:["string","int","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#pad_right" { return Signature{parameters:["string","int","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#replace_n" { return Signature{parameters:["string","string","string","int"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#is_empty" { return Signature{parameters:["string"],result:"bool",mutates:false,writable:false} }
+    if target == "builtin:std.strings#parse_int" { return Signature{parameters:["string","int"],result:"Result<int,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#parse_float" { return Signature{parameters:["string"],result:"Result<float,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#format_int" { return Signature{parameters:["int","int"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#format_float" { return Signature{parameters:["float","int"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#format" { return Signature{parameters:["string","[]string"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#center" { return Signature{parameters:["string","int","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#codepoints" { return Signature{parameters:["string"],result:"[]int",mutates:false,writable:false} }
+    if target == "builtin:std.strings#chars" { return Signature{parameters:["string"],result:"[]string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#from_codepoints" { return Signature{parameters:["[]int"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#slice_runes" { return Signature{parameters:["string","int","int"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#template" { return Signature{parameters:["string","map<string,string>"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.strings#format_int_grouped" { return Signature{parameters:["int","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#format_float_grouped" { return Signature{parameters:["float","int","string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#upper" { return Signature{parameters:["string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#lower" { return Signature{parameters:["string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#casefold" { return Signature{parameters:["string"],result:"string",mutates:false,writable:false} }
+    if target == "builtin:std.strings#equal_fold" { return Signature{parameters:["string","string"],result:"bool",mutates:false,writable:false} }
     if target == "builtin:std.json#decode" { return Signature{parameters:["string"],result:"Result<Json,string>",mutates:false,writable:false} }
     if target == "builtin:std.json#encode" { return Signature{parameters:[""],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.json#kind" { return Signature{parameters:["Json"],result:"string",mutates:false,writable:false} }
@@ -103,6 +162,17 @@ pub fn signature(target string) Signature? {
     if target == "builtin:std.json#as_float" { return Signature{parameters:["Json"],result:"Result<float,string>",mutates:false,writable:false} }
     if target == "builtin:std.json#as_bool" { return Signature{parameters:["Json"],result:"Result<bool,string>",mutates:false,writable:false} }
     if target == "builtin:std.json#is_null" { return Signature{parameters:["Json"],result:"bool",mutates:false,writable:false} }
+    if target == "builtin:std.json#null" { return Signature{parameters:[],result:"Json",mutates:false,writable:false} }
+    if target == "builtin:std.json#from" { return Signature{parameters:[""],result:"Result<Json,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#array" { return Signature{parameters:["[]Json"],result:"Json",mutates:false,writable:false} }
+    if target == "builtin:std.json#object" { return Signature{parameters:["map<string,Json>"],result:"Json",mutates:false,writable:false} }
+    if target == "builtin:std.json#set" { return Signature{parameters:["Json","string","Json"],result:"Result<Json,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#remove" { return Signature{parameters:["Json","string"],result:"Result<Json,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#append" { return Signature{parameters:["Json","Json"],result:"Result<Json,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#set_at" { return Signature{parameters:["Json","int","Json"],result:"Result<Json,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#encode_pretty" { return Signature{parameters:["","int"],result:"Result<string,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#decode_lines" { return Signature{parameters:["string"],result:"Result<[]Json,string>",mutates:false,writable:false} }
+    if target == "builtin:std.json#encode_lines" { return Signature{parameters:["[]Json"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#read_bytes" { return Signature{parameters:["string"],result:"Result<Bytes,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#write_bytes" { return Signature{parameters:["string","Bytes"],result:"Result<bool,string>",mutates:false,writable:false} }
     if target == "builtin:std.fs#append_bytes" { return Signature{parameters:["string","Bytes"],result:"Result<bool,string>",mutates:false,writable:false} }
@@ -129,6 +199,10 @@ pub fn signature(target string) Signature? {
     if target == "builtin:std.buffer#bytes" { return Signature{parameters:["Buffer"],result:"Bytes",mutates:false,writable:false} }
     if target == "builtin:std.buffer#text" { return Signature{parameters:["Buffer"],result:"Result<string,string>",mutates:false,writable:false} }
     if target == "builtin:std.buffer#clear" { return Signature{parameters:["Buffer"],result:"void",mutates:true,writable:false} }
+    if target == "builtin:std.buffer#write_str" { return Signature{parameters:["Buffer","string"],result:"void",mutates:true,writable:false} }
+    if target == "builtin:std.buffer#write_int" { return Signature{parameters:["Buffer","int"],result:"void",mutates:true,writable:false} }
+    if target == "builtin:std.buffer#take_text" { return Signature{parameters:["Buffer"],result:"Result<string,string>",mutates:true,writable:false} }
+    if target == "builtin:std.buffer#reserve" { return Signature{parameters:["Buffer","int"],result:"void",mutates:true,writable:false} }
     if target == "builtin:std.list#from_slice" { return Signature{parameters:[""],result:"List",mutates:false,writable:true} }
     if target == "builtin:std.list#len" { return Signature{parameters:[""],result:"int",mutates:false,writable:false} }
     if target == "builtin:std.list#get" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }

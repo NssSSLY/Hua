@@ -71,6 +71,9 @@ fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
     if t=="float" { return ok("hn::F") }
     if t=="Json" { return ok("hn::Opaque<hn::JsonTag>") }
     if t=="Buffer" { return ok("hn::Opaque<hn::BufferTag>") }
+    if t=="std.file.File" { return ok("hn::Opaque<hn::FileTag>") }
+    if t=="std.file.IOFailure" { return ok("hn::Opaque<hn::IOFailureTag>") }
+    if t=="std.error.Value" { return ok("hn::Opaque<hn::ErrorTag>") }
     let tuple=rules.arguments(t,"multi")
     if len(tuple)>0 {
         var code="std::tuple<"
@@ -320,7 +323,7 @@ fn signature(e Emitter, n lower.Node, definition bool) Result<string> {
     return ok(result+" "+function_name(e,n.id)+"("+parameters+")")
 }
 fn map_type(t string) bool { return strings.starts_with(t,"map<") }
-fn slice_type(t string) bool { return strings.starts_with(t,"[]") }
+fn slice_type(t string) bool { return len(t)>2 && strings.starts_with(t,"[]") }
 fn shared_type(t string) bool { return t=="Buffer" || map_type(t) || slice_type(t) || strings.starts_with(t,"List<") }
 fn bridge_name(t string) string {
     if map_type(t) {
@@ -331,19 +334,52 @@ fn bridge_name(t string) string {
 }
 fn bridged(name string) bool {
     return alg.contains([
-        "int","str","max","$std$alg$contains",
-        "$std$alg$sorted","$std$alg$upper_bound","$std$strings$replace","$std$strings$contains",
-        "$std$strings$index","$std$strings$join","$std$strings$len_bytes","$std$strings$lower_ascii",
-        "$std$bytes$at","$std$bytes$from_text","$std$bytes$to_ints","$std$bytes$len",
-        "$std$bytes$to_text","$std$bytes$from_ints","$std$bytes$concat","$std$bytes$crc32",
-        "$std$os$args","$std$os$cwd","$std$os$getenv","$std$fs$read_text",
-        "$std$fs$write_text","$std$fs$stat","$std$fs$canonical","$std$fs$remove",
-        "$std$fs$replace","$std$fs$temp_file","$std$fs$write_bytes","$std$path$basename",
-        "$std$path$dirname","$std$path$ext","$std$path$join","$std$path$normalize",
-        "$std$path$relative","$std$json$as_float","$std$json$as_int","$std$json$as_string",
-        "$std$json$encode","$std$json$decode","$std$json$get","$std$buffer$append",
-        "$std$buffer$bytes","$std$buffer$new","$std$buffer$text","$std$buffer$write_i64_le","$std$buffer$write_text",
-        "$std$buffer$write_u32_le","$std$buffer$write_u8"
+        "int","float","str","type","min","max","abs","clamp","sqrt",
+        "$std$alg$sorted","$std$alg$reverse","$std$alg$contains","$std$alg$index",
+        "$std$alg$lower_bound","$std$alg$upper_bound","$std$alg$binary_search",
+        "$std$alg$sum","$std$alg$min","$std$alg$max",
+        "$std$strings$contains","$std$strings$index","$std$strings$len_bytes","$std$strings$rune_count",
+        "$std$strings$trim","$std$strings$lower_ascii","$std$strings$upper_ascii","$std$strings$join",
+        "$std$strings$replace","$std$strings$last_index","$std$strings$count","$std$strings$repeat",
+        "$std$strings$split_n","$std$strings$fields","$std$strings$lines","$std$strings$trim_start",
+        "$std$strings$trim_end","$std$strings$trim_prefix","$std$strings$trim_suffix",
+        "$std$strings$pad_left","$std$strings$pad_right","$std$strings$replace_n","$std$strings$is_empty",
+        "$std$strings$parse_int","$std$strings$parse_float","$std$strings$format_int","$std$strings$format_float",
+        "$std$strings$format","$std$strings$center","$std$strings$codepoints","$std$strings$chars",
+        "$std$strings$from_codepoints","$std$strings$slice_runes","$std$strings$template",
+        "$std$strings$format_int_grouped","$std$strings$format_float_grouped",
+        "$std$strings$upper","$std$strings$lower","$std$strings$casefold","$std$strings$equal_fold",
+        "$std$bytes$from_ints","$std$bytes$from_text","$std$bytes$to_text","$std$bytes$to_ints",
+        "$std$bytes$len","$std$bytes$at","$std$bytes$slice","$std$bytes$concat",
+        "$std$bytes$u32_le","$std$bytes$i64_le","$std$bytes$read_u32_le","$std$bytes$read_i64_le","$std$bytes$crc32",
+        "$std$buffer$new","$std$buffer$len","$std$buffer$append","$std$buffer$write_u8",
+        "$std$buffer$write_u32_le","$std$buffer$write_i64_le","$std$buffer$write_text",
+        "$std$buffer$bytes","$std$buffer$text","$std$buffer$clear",
+        "$std$buffer$write_str","$std$buffer$write_int","$std$buffer$take_text","$std$buffer$reserve",
+        "$std$os$args","$std$os$cwd","$std$os$getenv","$std$os$exit","$std$os$platform",
+        "$std$os$arch","$std$os$pid","$std$os$cpu_count","$std$os$environ","$std$os$parse_args",
+        "$std$io$read_line","$std$io$read_all","$std$io$write","$std$io$write_err",
+        "$std$file$open","$std$file$read","$std$file$write","$std$file$seek","$std$file$tell",
+        "$std$file$flush","$std$file$close","$std$file$state","$std$file$close_error",
+        "$std$file$error","$std$file$transferred","$std$file$partial",
+        "$std$file$read_line","$std$file$read_all","$std$file$read_exact","$std$file$write_all",
+        "$std$fs$stat","$std$fs$rename","$std$fs$replace","$std$fs$temp_file",
+        "$std$fs$read_text","$std$fs$write_text","$std$fs$append_text","$std$fs$exists",
+        "$std$fs$canonical","$std$fs$remove","$std$fs$mkdir_all","$std$fs$list_dir",
+        "$std$fs$read_bytes","$std$fs$write_bytes","$std$fs$append_bytes",
+        "$std$fs$walk","$std$fs$copy_file","$std$fs$copy_dir","$std$fs$remove_all",
+        "$std$path$basename","$std$path$dirname","$std$path$ext","$std$path$join","$std$path$normalize","$std$path$relative",
+        "$std$json$decode","$std$json$encode","$std$json$kind","$std$json$get","$std$json$at",
+        "$std$json$len","$std$json$keys","$std$json$as_string","$std$json$as_int","$std$json$as_float",
+        "$std$json$as_bool","$std$json$is_null","$std$json$null","$std$json$from","$std$json$array",
+        "$std$json$object","$std$json$set","$std$json$remove","$std$json$append","$std$json$set_at",
+        "$std$json$encode_pretty","$std$json$decode_lines","$std$json$encode_lines",
+        "$std$error$make","$std$error$wrap","$std$error$from_string","$std$error$with_context",
+        "$std$error$with_origin","$std$error$with_native","$std$error$domain","$std$error$code",
+        "$std$error$message","$std$error$cause","$std$error$origin","$std$error$native_domain",
+        "$std$error$native_code","$std$error$contexts","$std$error$truncated","$std$error$format",
+        "$std$time$monotonic_ns","$std$time$unix_ms",
+        "$std$list$reserve"
     ],name)
 }
 fn typed_builtin(e Emitter, n lower.Node, name string, args []string) string {
@@ -357,7 +393,7 @@ fn typed_builtin(e Emitter, n lower.Node, name string, args []string) string {
         return "hn::"+name+"("+joined+","+site+")"
     }
     if name=="ok" { return "hn::ok("+joined+")" }
-    if name=="clone" { return "clone("+joined+")" }
+    if name=="clone" { return "hn::clone_checked("+joined+","+site+")" }
     if name=="$std$strings$split" { return "hn::split("+joined+","+site+")" }
     if name=="$std$strings$starts_with" { return "hn::starts_with("+joined+")" }
     if name=="$std$strings$ends_with" { return "hn::ends_with("+joined+")" }
@@ -419,7 +455,7 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
         }
         if builtin=="print" || bridge {
             list.append(args,"to_value("+name+")")?
-            list.append(flags,"false")?
+            list.append(flags,str(arg.kind=="Array"))?
         } else if direct && !deferred { list.append(args,"std::move("+name+")")? }
         else { list.append(args,name)? }
     }

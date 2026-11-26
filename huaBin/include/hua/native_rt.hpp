@@ -792,6 +792,7 @@ inline Value to_value(const Str& v){return Value(v.text());}
 inline Value to_value(Unit){return Value{};}
 inline Value to_value(const TaskHandle& task) { return task.value; }
 inline Value to_value(std::nullopt_t){return Value{};}
+inline Value to_value(EmptySlice){return Value(hua::SliceValue{hua::managed<std::vector<Value>>(),0,0,true,""});}
 inline Value to_value(const Rng& rng){return Value(hua::RngValue{rng.data,rng.writable});}
 template<class Tag> Value to_value(const Opaque<Tag>& v){return v.v;}
 template<ExactName Name,class Rep> Value to_value(const Exact<Name,Rep>& v){

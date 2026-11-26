@@ -7,13 +7,19 @@ import std.fs as fs
 import std.path as path
 import std.os as os
 import std.strings as strings
+import std.bytes as bytes
 import std.json as json
 import std.alg as alg
 
 pub struct Unit { id string
     path string
     key string
+    package string
     tree parser.Tree }
+pub struct PackageInfo { name string
+    version string
+    root string
+    deps map[string]string }
 pub struct BuildInput { path string
     kind string
     content string }
@@ -46,6 +52,9 @@ pub fn compiler_limits() Limits { return Limits{depth:64,modules:32,levels:12,so
 pub struct Graph { globals map[string]int
     limits Limits
  root string
+    has_manifest bool
+    root_package PackageInfo
+    packages map[string]PackageInfo
     units List<Unit>
     edges List<Edge>
     symbols List<Symbol>
@@ -150,6 +159,432 @@ fn resolve(g mut Graph, name string, site ast.Node, source string) Result<string
     }
     return err(error(source,site,"E5001","cannot resolve module "+name))
 }
+fn valid_package_name(name string) bool {
+    let n = strings.len_bytes(name)
+    if n <= 0 || n > 128 || strings.starts_with(name,"__") { return false }
+    let alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    let alnum = alpha + "0123456789"
+    let first = unwrap_or(strings.slice(name,0,1),"")
+    if first == "" || strings.index(alpha,first) < 0 { return false }
+    for i in 0..n {
+        let ch = unwrap_or(strings.slice(name,i,i+1),"")
+        if ch == "" || strings.index(alnum,ch) < 0 { return false }
+    }
+    return !alg.contains([
+        "std","int","float","bool","string","byte","i8","i16","i32","i64",
+        "u8","u16","u32","u64","f32","f64","usize","isize","void",
+        "Json","Bytes","Buffer","List","Deque","Result","Task","map",
+        "fn","struct","enum","interface","import","as","let","var","const",
+        "pub","mut","async","await","spawn","taskgroup","parallel","simd",
+        "match","if","else","while","for","in","by","break","continue",
+        "return","defer","true","false","nil","unsafe"
+    ],name)
+}
+fn skip_ws(raw Bytes, start int) int {
+    var at = start
+    let total = bytes.len(raw)
+    while at < total {
+        let b = unwrap(bytes.at(raw,at))
+        if b != 32 && b != 9 && b != 13 && b != 10 { break }
+        at += 1
+    }
+    return at
+}
+struct ScannedKey { text string
+    next int }
+struct ManifestShape { top_keys []string
+    dep_keys []string }
+struct ResolvedImport { file string
+    logical string
+    package string }
+fn scan_json_str(raw_text string, raw Bytes, start int) Result<ScannedKey> {
+    let total = bytes.len(raw)
+    if start >= total || unwrap(bytes.at(raw,start)) != 34 { return err("bad string") }
+    var at = start + 1
+    while at < total {
+        let b = unwrap(bytes.at(raw,at))
+        at += 1
+        if b == 34 {
+            let token = strings.slice(raw_text,start,at)?
+            let decoded = json.as_string(json.decode(token)?)?
+            return ok(ScannedKey{text:decoded,next:at})
+        }
+        if b == 92 {
+            if at >= total { return err("bad escape") }
+            at += 1
+        }
+    }
+    return err("unterminated")
+}
+fn scan_unique_json(raw_text string, raw Bytes, start int) Result<int> {
+    let total = bytes.len(raw)
+    var at = skip_ws(raw,start)
+    if at >= total { return ok(at) }
+    let b = unwrap(bytes.at(raw,at))
+    if b == 34 {
+        let scanned = scan_json_str(raw_text,raw,at)?
+        return ok(scanned.next)
+    }
+    if b == 91 {
+        at = skip_ws(raw,at+1)
+        if at < total && unwrap(bytes.at(raw,at)) == 93 { return ok(at+1) }
+        while at < total {
+            at = scan_unique_json(raw_text,raw,at)?
+            at = skip_ws(raw,at)
+            if at < total && unwrap(bytes.at(raw,at)) == 93 { return ok(at+1) }
+            if at >= total || unwrap(bytes.at(raw,at)) != 44 { return err("bad array") }
+            at += 1
+        }
+        return err("unclosed array")
+    }
+    if b == 123 {
+        at = skip_ws(raw,at+1)
+        var seen = map[string]bool{}
+        if at < total && unwrap(bytes.at(raw,at)) == 125 { return ok(at+1) }
+        while at < total {
+            at = skip_ws(raw,at)
+            let scanned = scan_json_str(raw_text,raw,at)?
+            if has(seen,scanned.text) { return err("duplicate key") }
+            seen[scanned.text] = true
+            at = skip_ws(raw,scanned.next)
+            if at >= total || unwrap(bytes.at(raw,at)) != 58 { return err("expected colon") }
+            at = scan_unique_json(raw_text,raw,at+1)?
+            at = skip_ws(raw,at)
+            if at < total && unwrap(bytes.at(raw,at)) == 125 { return ok(at+1) }
+            if at >= total || unwrap(bytes.at(raw,at)) != 44 { return err("bad object") }
+            at += 1
+        }
+        return err("unclosed object")
+    }
+    while at < total {
+        let ch = unwrap(bytes.at(raw,at))
+        if ch == 44 || ch == 93 || ch == 125 || ch == 32 || ch == 9 || ch == 13 || ch == 10 { break }
+        at += 1
+    }
+    return ok(at)
+}
+fn scan_object_keys(raw_text string, raw Bytes, start int) Result<ScannedKey> {
+    return scan_json_str(raw_text,raw,start)
+}
+fn parse_manifest_shape(raw_text string) Result<ManifestShape> {
+    let raw = bytes.from_text(raw_text)
+    let total = bytes.len(raw)
+    var at = skip_ws(raw,0)
+    if at >= total || unwrap(bytes.at(raw,at)) != 123 { return err("not object") }
+    at = skip_ws(raw,at+1)
+    let empty []string = []
+    var top_keys = list.from_slice(empty)
+    var dep_keys = list.from_slice(empty)
+    var seen_top = map[string]bool{}
+    if at < total && unwrap(bytes.at(raw,at)) == 125 {
+        return ok(ManifestShape{top_keys:list.snapshot(top_keys),dep_keys:list.snapshot(dep_keys)})
+    }
+    while at < total {
+        at = skip_ws(raw,at)
+        let k = scan_object_keys(raw_text,raw,at)?
+        if has(seen_top,k.text) { return err("duplicate key") }
+        seen_top[k.text] = true
+        list.append(top_keys,k.text)?
+        at = skip_ws(raw,k.next)
+        if at >= total || unwrap(bytes.at(raw,at)) != 58 { return err("expected colon") }
+        at = skip_ws(raw,at+1)
+        if k.text == "deps" {
+            if at >= total || unwrap(bytes.at(raw,at)) != 123 { return err("deps not object") }
+            at = skip_ws(raw,at+1)
+            var seen_deps = map[string]bool{}
+            if at < total && unwrap(bytes.at(raw,at)) == 125 {
+                at += 1
+            } else {
+                while at < total {
+                    at = skip_ws(raw,at)
+                    let dk = scan_object_keys(raw_text,raw,at)?
+                    if has(seen_deps,dk.text) { return err("duplicate dep key") }
+                    seen_deps[dk.text] = true
+                    list.append(dep_keys,dk.text)?
+                    at = skip_ws(raw,dk.next)
+                    if at >= total || unwrap(bytes.at(raw,at)) != 58 { return err("expected colon") }
+                    at = scan_unique_json(raw_text,raw,at+1)?
+                    at = skip_ws(raw,at)
+                    if at < total && unwrap(bytes.at(raw,at)) == 125 {
+                        at += 1
+                        break
+                    }
+                    if at >= total || unwrap(bytes.at(raw,at)) != 44 { return err("bad deps") }
+                    at += 1
+                }
+            }
+        } else {
+            at = scan_unique_json(raw_text,raw,at)?
+        }
+        at = skip_ws(raw,at)
+        if at < total && unwrap(bytes.at(raw,at)) == 125 {
+            return ok(ManifestShape{top_keys:list.snapshot(top_keys),dep_keys:list.snapshot(dep_keys)})
+        }
+        if at >= total || unwrap(bytes.at(raw,at)) != 44 { return err("bad root object") }
+        at += 1
+    }
+    return err("unclosed root object")
+}
+fn resolve_dep_dir(g mut Graph, owner_root string, dep_name string, rel_path string, site ast.Node, source string) Result<string> {
+    if rel_path == "" || strings.len_bytes(rel_path) > 1024 || strings.starts_with(rel_path,"/") ||
+            strings.ends_with(rel_path,"/") || strings.contains(rel_path,"\\") || strings.contains(rel_path,":") {
+        return err(error(source,site,"E5004","package dependency "+dep_name+" requires a normalized relative slash path"))
+    }
+    var current = owner_root
+    for seg in strings.split(rel_path,"/") {
+        if seg == "" || seg == "." {
+            return err(error(source,site,"E5004","invalid path segment in package dependency "+dep_name))
+        }
+        if seg == ".." {
+            let parent = path.normalize(path.dirname(current)?)?
+            if cache_key(parent) == cache_key(current) {
+                return err(error(source,site,"E5001","package dependency "+dep_name+" escapes filesystem root"))
+            }
+            let pinfo = fs.stat(parent)
+            if is_err(pinfo) {
+                list.append(g.build_inputs,BuildInput{path:parent,kind:"unavailable",content:unwrap_err(pinfo)})?
+                return err(error(source,site,"E5001","cannot resolve package dependency "+dep_name))
+            }
+            list.append(g.build_inputs,BuildInput{path:parent,kind:"directory",content:""})?
+            current = parent
+        } else {
+            let next = path.normalize(path.join([current,seg])?)?
+            let info = fs.stat(next)
+            if is_err(info) {
+                list.append(g.build_inputs,BuildInput{path:next,kind:"unavailable",content:unwrap_err(info)})?
+                return err(error(source,site,"E5001","cannot resolve package dependency "+dep_name+" at "+rel_path))
+            }
+            let kind = json.as_string(json.get(unwrap(info),"kind")?)?
+            list.append(g.build_inputs,BuildInput{path:next,kind:kind,content:""})?
+            if kind == "symlink" {
+                return err(error(source,site,"E5001","symlink dependency is outside this resolver contract: "+dep_name))
+            }
+            if kind != "directory" {
+                return err(error(source,site,"E5001","package dependency "+dep_name+" is not a directory"))
+            }
+            current = next
+        }
+    }
+    let resolved = fs.canonical(current)
+    if is_err(resolved) {
+        return err(error(source,site,"E5001","cannot canonicalize package dependency "+dep_name))
+    }
+    let canonical_dir = path.normalize(unwrap(resolved))?
+    if cache_key(canonical_dir) != cache_key(path.normalize(current)?) {
+        return err(error(source,site,"E5001","symlink or junction dependency is outside this resolver contract: "+dep_name))
+    }
+    return ok(canonical_dir)
+}
+fn check_local_dep_conflict(g mut Graph, dir string, dep_name string, site ast.Node, source string) Result<void> {
+    let sub = path.join([dir,dep_name])?
+    let sub_info = fs.stat(sub)
+    if is_ok(sub_info) {
+        let kind = json.as_string(json.get(unwrap(sub_info),"kind")?)?
+        list.append(g.build_inputs,BuildInput{path:sub,kind:kind,content:""})?
+        return err(error(source,site,"E5004","local directory or file conflicts with package dependency "+dep_name))
+    }
+    list.append(g.build_inputs,BuildInput{path:sub,kind:"unavailable",content:unwrap_err(sub_info)})?
+    for ext in [".hua",".huam",".wasm"] {
+        let cand = path.join([dir,dep_name+ext])?
+        let info = fs.stat(cand)
+        if is_ok(info) {
+            let kind = json.as_string(json.get(unwrap(info),"kind")?)?
+            list.append(g.build_inputs,BuildInput{path:cand,kind:kind,content:""})?
+            return err(error(source,site,"E5004","local module conflicts with package dependency "+dep_name))
+        }
+        list.append(g.build_inputs,BuildInput{path:cand,kind:"unavailable",content:unwrap_err(info)})?
+    }
+    return ok()
+}
+fn inspect_manifest(g mut Graph, dir string, site ast.Node, source string) Result<string> {
+    let target = path.join([dir,"hua.package.json"])?
+    let info = fs.stat(target)
+    if is_err(info) {
+        list.append(g.build_inputs,BuildInput{path:target,kind:"unavailable",content:unwrap_err(info)})?
+        return ok("")
+    }
+    let kind = json.as_string(json.get(unwrap(info),"kind")?)?
+    list.append(g.build_inputs,BuildInput{path:target,kind:kind,content:""})?
+    if kind == "symlink" {
+        return err(error(source,site,"E5001","symlink hua.package.json is outside this resolver contract"))
+    }
+    if kind != "file" {
+        return err(error(source,site,"E5004","hua.package.json must be a regular file"))
+    }
+    return ok(target)
+}
+fn load_package_manifest(g mut Graph, expected_name string, dir string, site ast.Node, source string, active mut List<string>) Result<void> {
+    let manifest_file = inspect_manifest(g,dir,site,source)?
+    if manifest_file == "" {
+        return err(error(source,site,"E5001","missing hua.package.json in package directory "+dir))
+    }
+    let info = fs.stat(manifest_file)?
+    if json.as_int(json.get(info,"size_bytes")?)? > 1048576 {
+        return err(error(source,site,"E5005","hua.package.json exceeds 1 MiB limit"))
+    }
+    let raw = fs.read_text(manifest_file)?
+    list.append(g.build_inputs,BuildInput{path:manifest_file,kind:"text",content:raw})?
+    let parsed = json.decode(raw)
+    if is_err(parsed) {
+        return err(error(source,site,"E5004","invalid JSON in hua.package.json"))
+    }
+    let shape_res = parse_manifest_shape(raw)
+    if is_err(shape_res) {
+        return err(error(source,site,"E5004","invalid or duplicate keys in hua.package.json"))
+    }
+    let shape = unwrap(shape_res)
+    let root_json = unwrap(parsed)
+    for k in shape.top_keys {
+        if !alg.contains(["schema","name","version","deps"],k) {
+            return err(error(source,site,"E5004","unknown field "+k+" in hua.package.json"))
+        }
+    }
+    let schema_res = json.get(root_json,"schema")
+    if is_err(schema_res) || unwrap_or(json.as_string(unwrap(schema_res)),"") != "hua.package.v1" {
+        return err(error(source,site,"E5004","unsupported hua.package.json schema (expected hua.package.v1)"))
+    }
+    let name_res = json.get(root_json,"name")
+    if is_err(name_res) {
+        return err(error(source,site,"E5004","invalid or reserved package name in hua.package.json"))
+    }
+    let name_str = json.as_string(unwrap(name_res))
+    if is_err(name_str) || !valid_package_name(unwrap(name_str)) {
+        return err(error(source,site,"E5004","invalid or reserved package name in hua.package.json"))
+    }
+    let pkg_name = unwrap(name_str)
+    let ver_res = json.get(root_json,"version")
+    if is_err(ver_res) {
+        return err(error(source,site,"E5004","missing or invalid package version in hua.package.json"))
+    }
+    let ver_str = json.as_string(unwrap(ver_res))
+    if is_err(ver_str) || unwrap(ver_str) == "" || strings.len_bytes(unwrap(ver_str)) > 128 {
+        return err(error(source,site,"E5004","missing or invalid package version in hua.package.json"))
+    }
+    let pkg_ver = unwrap(ver_str)
+
+    let is_root = expected_name == ""
+    if !is_root {
+        if pkg_name != expected_name {
+            return err(error(source,site,"E5004","package manifest name "+pkg_name+" does not match dependency "+expected_name))
+        }
+        if pkg_name == g.root_package.name || cache_key(dir) == cache_key(g.root) {
+            return err(error(source,site,"E5004","package dependency "+pkg_name+" conflicts with root package"))
+        }
+        let pkg_entry = path.join([dir,"package.hua"])?
+        let entry_info = fs.stat(pkg_entry)
+        if is_err(entry_info) {
+            list.append(g.build_inputs,BuildInput{path:pkg_entry,kind:"unavailable",content:unwrap_err(entry_info)})?
+            return err(error(source,site,"E5001","package "+pkg_name+" is missing package.hua"))
+        }
+        let entry_kind = json.as_string(json.get(unwrap(entry_info),"kind")?)?
+        list.append(g.build_inputs,BuildInput{path:pkg_entry,kind:entry_kind,content:""})?
+        if entry_kind != "file" {
+            return err(error(source,site,"E5001","package "+pkg_name+" requires a regular package.hua file"))
+        }
+        if alg.contains(list.snapshot(active),pkg_name) {
+            return err(error(source,site,"E5002","cyclic package dependency: "+strings.join(list.snapshot(active)," -> ")+" -> "+pkg_name))
+        }
+        if has(g.packages,pkg_name) {
+            if cache_key(unwrap(g.packages[pkg_name]).root) != cache_key(dir) {
+                return err(error(source,site,"E5004","conflicting package dependency "+pkg_name+" points to different directories"))
+            }
+            return ok()
+        }
+        for other_name, other_info in g.packages {
+            if other_name != pkg_name && cache_key(other_info.root) == cache_key(dir) {
+                return err(error(source,site,"E5004","package directory already registered under another name"))
+            }
+        }
+        if len(g.packages) >= 128 {
+            return err(error(source,site,"E5005","package dependency graph exceeds 128 packages"))
+        }
+    }
+
+    var deps = map[string]string{}
+    let deps_res = json.get(root_json,"deps")
+    if is_ok(deps_res) {
+        let deps_json = unwrap(deps_res)
+        for dep_key in shape.dep_keys {
+            if !valid_package_name(dep_key) {
+                return err(error(source,site,"E5004","invalid or reserved dependency name "+dep_key))
+            }
+            if dep_key == pkg_name {
+                return err(error(source,site,"E5004","package "+pkg_name+" cannot depend on itself"))
+            }
+            let val_node = json.get(deps_json,dep_key)?
+            let val_str = json.as_string(val_node)
+            if is_err(val_str) {
+                return err(error(source,site,"E5004","dependency "+dep_key+" path must be a string"))
+            }
+            check_local_dep_conflict(g,dir,dep_key,site,source)?
+            deps[dep_key] = unwrap(val_str)
+        }
+    }
+
+    let pkg = PackageInfo{name:pkg_name,version:pkg_ver,root:dir,deps:deps}
+    if is_root { g.root_package = pkg }
+    else { g.packages[pkg_name] = pkg }
+
+    list.append(active,pkg_name)?
+    for dep_key, rel_path in deps {
+        let dep_dir = resolve_dep_dir(g,dir,dep_key,rel_path,site,source)?
+        load_package_manifest(g,dep_key,dep_dir,site,source,active)?
+    }
+    list.pop(active)?
+    return ok()
+}
+fn resolve_in_package(g mut Graph, base_root string, rel_mod string, pkg_owner string, package_entry bool, name string, site ast.Node, source string) Result<ResolvedImport> {
+    var candidates []string = []
+    if package_entry {
+        candidates = ["package.hua"]
+    } else {
+        let rel = strings.replace(rel_mod,".","/")
+        candidates = [rel+".hua",rel+"/package.hua"]
+    }
+    for cand in candidates {
+        let found = inspect(g,base_root,cand,site,source)?
+        if found != "" {
+            let actual = fs.canonical(found)
+            if is_err(actual) || cache_key(path.normalize(unwrap(actual))?) != cache_key(path.normalize(found)?) {
+                return err(error(source,site,"E5001","symlink dependency is outside this resolver contract"))
+            }
+            var logical = cand
+            if pkg_owner != "" { logical = "@pkg/"+pkg_owner+"/"+cand }
+            return ok(ResolvedImport{file:found,logical:logical,package:pkg_owner})
+        }
+    }
+    if !package_entry {
+        let rel = strings.replace(rel_mod,".","/")
+        for ext in [rel+".huam",rel+"/package.huam",rel+".wasm",rel+"/package.wasm"] {
+            if inspect(g,base_root,ext,site,source)? != "" { return err(error(source,site,"E8201","external module is outside SB1")) }
+        }
+    }
+    return err(error(source,site,"E5001","cannot resolve module "+name))
+}
+fn resolve_in_context(g mut Graph, owner_pkg string, name string, site ast.Node, source string) Result<ResolvedImport> {
+    if !g.has_manifest {
+        let found = resolve(g,name,site,source)?
+        return ok(ResolvedImport{file:found,logical:"",package:""})
+    }
+    var ctx = g.root_package
+    if owner_pkg != "" { ctx = unwrap(g.packages[owner_pkg]) }
+    let dot = strings.index(name,".")
+    var first = name
+    var rest = ""
+    if dot >= 0 {
+        first = rules_cut_local(name,0,dot)
+        rest = rules_cut_local(name,dot+1,len(name))
+    }
+    if has(ctx.deps,first) {
+        check_local_dep_conflict(g,ctx.root,first,site,source)?
+        let target_pkg = unwrap(g.packages[first])
+        return resolve_in_package(g,target_pkg.root,rest,target_pkg.name,rest == "",name,site,source)
+    }
+    return resolve_in_package(g,ctx.root,name,owner_pkg,false,name,site,source)
+}
+fn rules_cut_local(text string, start int, finish int) string {
+    return unwrap(strings.slice(text,start,finish))
+}
 fn std_source(g mut Graph, site ast.Node, source string) Result<string> {
     let configured = os.getenv("HUA_HOME")?
     if is_none(configured) { return err(error(source,site,"E5001","std.alg_integer requires HUA_HOME set to a Hua SDK root")) }
@@ -191,7 +626,7 @@ fn std_source(g mut Graph, site ast.Node, source string) Result<string> {
     }
     return err(error(source,site,"E5001","cannot read registered SDK source: "+relative))
 }
-fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id string) Result<string> {
+fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id string, logical_id string, owner_pkg string) Result<string> {
     let normalized = path.normalize(filename)?
     var key = cache_key(normalized)
     if sdk_id != "" { key = sdk_id }
@@ -214,6 +649,7 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
     if is_err(raw) { return err(error(parent,site,"E8204",unwrap_err(raw))) }
     list.append(g.build_inputs,BuildInput{path:normalized,kind:"text",content:unwrap(raw)})?
     var id = sdk_id
+    if id == "" && logical_id != "" { id = logical_id }
     if id == "" {
         id = path.relative(normalized,g.root)?
         if id == ".." || strings.starts_with(id,"../") { return err(error(parent,site,"E8302","source outside project root")) }
@@ -222,7 +658,7 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
     if g.limits.compiler { parsed = parser.parse_compiler(unwrap(raw),id) }
     else { parsed = parser.parse_extended(unwrap(raw),id) }
     if is_err(parsed) { return err(unwrap_err(parsed)+" ["+id+"]") }
-    let unit = Unit{id:id,path:normalized,key:key,tree:unwrap(parsed)}
+    let unit = Unit{id:id,path:normalized,key:key,package:owner_pkg,tree:unwrap(parsed)}
     g.total_bytes += unit.tree.source_bytes
     if g.total_bytes > g.limits.source_bytes_total { return err(error(parent,site,"E5005","module byte budget")) }
     list.append(g.units,unit)?
@@ -253,11 +689,14 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
             var source = ""
             if loaded >= 0 { source = list.get(g.units,loaded)?.path }
             else { source = std_source(g,n,id)? }
-            target = visit(g,source,n,id,"@sdk/src/std/alg_integer.hua")?
+            target = visit(g,source,n,id,"@sdk/src/std/alg_integer.hua","","")?
         } else if strings.starts_with(name,"std.") || name == "std" {
             if !catalog.module(name) { return err(error(id,n,"E8201","standard module is outside SB1")) }
             target = "builtin:"+name
-        } else { target = visit(g,resolve(g,name,n,id)?,n,id,"")? }
+        } else {
+            let resolved_dep = resolve_in_context(g,owner_pkg,name,n,id)?
+            target = visit(g,resolved_dep.file,n,id,"",resolved_dep.logical,resolved_dep.package)?
+        }
         list.append(g.edges,Edge{source:id,target:target,namespace:ns,node:n.id.index})?
     }
     list.pop(g.active)?
@@ -449,19 +888,32 @@ fn walk(g mut Graph, e mut Environment, id ast.NodeId, top bool) Result<void> {
 pub fn analyze(entry string) Result<Graph> { return analyze_impl(entry,defaults()) }
 pub fn analyze_compiler(entry string) Result<Graph> { return analyze_impl(entry,compiler_limits()) }
 fn analyze_impl(entry string, limits Limits) Result<Graph> {
-    let normalized = path.join([os.cwd()?,entry])?
-    let root = path.dirname(normalized)?
+    let joined_entry = path.join([os.cwd()?,entry])?
+    let canonical_entry = fs.canonical(joined_entry)
+    var normalized = path.normalize(joined_entry)?
+    if is_ok(canonical_entry) { normalized = path.normalize(unwrap(canonical_entry))? }
+    let root = path.normalize(path.dirname(normalized)?)?
     var units []Unit = []
     var edges []Edge = []
     var symbols []Symbol = []
     var references []Reference = []
     var names []string = []
     let inputs []BuildInput = []
-    var g = Graph{globals:map[string]int{},limits:limits,root:root,units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0,build_inputs:list.from_slice(inputs)}
+    let empty_pkg = PackageInfo{name:"",version:"",root:root,deps:map[string]string{}}
+    var g = Graph{globals:map[string]int{},limits:limits,root:root,has_manifest:false,root_package:empty_pkg,packages:map[string]PackageInfo{},units:list.from_slice(units),edges:list.from_slice(edges),symbols:list.from_slice(symbols),references:list.from_slice(references),order:list.from_slice(names),active:list.from_slice(names),total_bytes:0,work:0,build_inputs:list.from_slice(inputs)}
     # A validated empty source supplies the entry error location before the actual parse.
-    let seed = parser.parse_extended("",path.basename(normalized)?)?
+    let entry_name = path.basename(normalized)?
+    let seed = parser.parse_extended("",entry_name)?
     let site = ast.get(seed.pool,seed.root)?
-    visit(g,normalized,site,path.basename(normalized)?,"")?
+    let root_manifest = inspect_manifest(g,root,site,entry_name)?
+    if root_manifest != "" {
+        g.has_manifest = true
+        var active_pkgs = list.from_slice(names)
+        load_package_manifest(g,"",root,site,entry_name,active_pkgs)?
+    }
+    var entry_logical = ""
+    if g.has_manifest { entry_logical = entry_name }
+    visit(g,normalized,site,entry_name,"",entry_logical,"")?
     for u in list.snapshot(g.units) { collect(g,u)? }
     for id in list.snapshot(g.order) {
         let index = unit_index(g,id)

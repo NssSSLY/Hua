@@ -1,5 +1,7 @@
 # 已确定决定与当前方案
 
+2026-11-25 用户确认将主线从自举提速转向实际应用开发，采纳三层划分（语言核心 / `std.*` 通用接口 / 可选外部包），并确定五步实施顺序：1. 交付第一个仓库外多包 CLI（先建逐接口覆盖表，首批只补样例所需参数/文本/文件/JSON/错误处理，冻结本地路径依赖、包身份、同名冲突、`std.*` 保留名与循环导入诊断）→ 2. 建立可重复构建与单一权威标准库双端合同（传递依赖与原生依赖入 N3 缓存，分批补齐标准库）→ 3. 用 SQLite 验收首个同步原生扩展包（明确字节借用/复制、句柄代次、重复关闭、错误传递与随包 DLL 发布）→ 4. 并行推进 `Reader/Writer` 流式 I/O 与 HTTPS 客户端（早于通用 TCP/UDP 与 Server）→ 5. 由真实应用推动 CSV/正则/压缩、流式子进程与 Python Bridge 装配。用户选择立即启动第 1 步；标准库对齐作为持续规则，每个里程碑坚持“用 Hua 自我完善”。[总规划](../docs/设计决策与未决事项.md#hua-owned-toolchain) · [逐接口覆盖表](knowledge/bootstrap-performance/designs/2026-11-25-stdlib-coverage-matrix.md)
+
 2026-11-25 用户确认后续 Git 提交包含 `huaBin/`（`.gitignore` 取消忽略 `/huaBin/` 并放行 `/huaBin/**/*.huab`，防止跨机更新 SDK 时新增模块或 `.huab` 被静默漏提）。C04 白盒单测通过夹具派生层适配 `origin_pool`，保持生产编译器零修改与实验分支 `--source` 兼容。[记录](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)
 
 2026-11-24 Windows 原生直跑使用 hua run --release 复用发布驱动，临时 EXE 使用当前工作目录和终端句柄运行，保留程序参数与退出码。[记录](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)
@@ -148,3 +150,5 @@ Entry尺寸下降未产生整体收益；两个接入候选撤回默认，保留
 - 复用 N3.5 发布驱动、缓存和现有 Windows 参数转义。
 
 - 仅在测试夹具派生层适配 origin_pool 私有存储并保留实验分支 --source 兼容；生产编译器与运行时源码保持零修改。
+
+- 无 hua.package.json 时保持原有单目录解析；存在时统一根包相对路径与外部包 @pkg/<name>/... 逻辑源码身份，std 保留、唯一解码 JSON 键、异目录冲突报 E5004，循环报 E5002。

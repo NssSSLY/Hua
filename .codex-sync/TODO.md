@@ -6,11 +6,17 @@
 - **另一台电脑接手方式**：
   1. `git switch main` 并拉取最新提交后，仓库内的 `huaBin/` 可直接使用（无需先编译 C++ 即可执行 `huaBin/bin/hua.exe run`、`build --release`、`run --release`）。
   2. 如需修改或构建 C++ 宿主/运行测试探针，准备好本机 `.tools/` 后执行：`powershell -ExecutionPolicy Bypass -File .tools\build.ps1 -BuildDirectory tests/build -Parallel 8 -SkipTests`（切勿复用其他电脑的 CMake 缓存）。
-- **下一步可选任务（按优先级排序，由用户选择启动）**：
-  1. **【P1 · 首选性能/编译器】非 C04 编译阶段剖析与提速 + `HUA-D010` 警告清理**：当前 C04 仅占 VM 总步数 `47.9%`（`~299.3M`），非 C04 阶段（`Parse / Modules / Types / Lowering / Bytecode Verify / Archive`）合计占 `52.1%`（`325.4M` 步）。先做 15 模块完整自举的非 C04 逐阶段墙钟与步数拆解（如核查 `selfhost/archive.hua` 双重扫描与逐字段写 `Buffer`、类型/降级热点），双端（原生 + VM）同步受益；顺带为原生后端枚举穷尽分支补齐非法标签终止路径，消除 Clang 返回警告（`HUA-D010`）。
-  2. **【P1 · 测试健康度】处理 `HUA-D036` 与 `HUA-D037`**：定位宿主 C++ 前端 `src/sema.cpp` 检查大型自举模块耗时（`36–80s`）或拆分测试构建与用例计时以解除约 9 项测试超时（`HUA-D036`）；核对并修复 3 项既有断言漂移（`ast_pool` 错误码、`frontend_extended` 拒绝位置、`lowering` pass 上限）及 `archives_extensions` 坏产物变异（`HUA-D037`），使全量 CTest 归零噪音。
-  3. **【P1 · 工具链与标准库扩面】`L0-4` 自举标准库签名同步 + `N3.5` 完整运行时减体积**：将 `since 9–29` 标准库函数签名与版本门禁按需同步进 `selfhost/signatures.hua` 与 `selfhost/archive.hua`（支持用 Hua 自身编译器/原生发布编译调用新标准库的程序），继续推进纯 Hua 标准模块迁移；评估裁剪链接完整运行时的原生 EXE 体积（当前约 `1.84 MiB`）。
-  4. **【P2 · 包生态与阶段总验收】本地包与外部适配 → `C09 / B10 / A12`（`G1–G3`）**：基于 SDK 模块身份与清单交付纯 Hua 本地包、Native ABI 1 包装及可选 Python 包装；补齐 `C09` 发行覆盖/兼容、`B10` 本地数据工具链与 `A12` 汇总验收。VM 底层存储/分配器/GC 策略改动（`HUA-D004 / D035 / D029`）按后续剖析与用户决策独立启动。
+- **当前主线与下一步优先级（2026-11-26 第 1 步已验收）**：
+  1. **【已完成 · 第 1 步】交付第一个仓库外多包 CLI**：
+     - 已生成并更新 374 项[标准库逐接口覆盖表](knowledge/bootstrap-performance/designs/2026-11-25-stdlib-coverage-matrix.md)（自举 `206/374`、`--release` `185/374`）。
+     - 已实现双端 `hua.package.v1` 本地路径包解析、`@pkg/<name>/...` 统一诊断身份、首批 CLI 标准库与 `huaBin` 重装配，仓库外三包 CLI 五路输出/跨包错误位置/退出码、N3 外部包失效与 36 项负例诊断对照全部通过。[交付记录](knowledge/bootstrap-performance/runs/2026-11-26-step1-multi-package-cli.md)
+  2. **【下一优先 · 第 2 步 · 方案已细化待确认】可重复构建与双端标准库单一权威合同**：
+     - 详细方案与 7 项硬验收标准见 [2026-11-26-step2-stdlib-contract-plan.md](knowledge/bootstrap-performance/designs/2026-11-26-step2-stdlib-contract-plan.md)（纯文档规划，尚未改代码）。
+     - 核心内容：建立 `selfhost/stdlib_manifest.json` + `tests/tools/sync_stdlib_contract.py`（按模块分桶生成 `catalog`/`signatures`/`archive`/`native_cpp` 表区并注册 `stdlib_contract` CTest 防漏门禁）；修复 `types.hua:336` `math` 显式默认 `int/float` 校验与补齐 `test.equal/not_equal` 双向兼容校验；一次性打通 101 项 B 类纯表项 + 2 项 `std.test`（共 103 项，`SH 206→297/374`、`--release 185→288/374`，`18/27` 内建模块全通）。
+     - 后续分批：剩余 `86` 项（`random`/`maps`/`sets`/`list`/`alg`/`deque`/`heap`/`simd`/`task`）按第 2 步后续批次推进。
+  3. **【第 3 步】SQLite 原生扩展包**：冻结同步扩展字节借用/复制、连接与语句句柄代次、重复关闭、错误回传与随包 DLL 分发合同，用 Hua 封装参数绑定与事务并在干净目录验收。
+  4. **【第 4 步】流式 I/O（`Reader/Writer`）与 HTTPS 客户端（含截止时间/取消/SSE）并行推进**。
+  5. **【第 5 步 & 持续跟踪】由实际应用扩充 CSV/正则/压缩、流式子进程与 Python Bridge 装配**；跟踪 `origin_pool` 超大规模边界；`HUA-D036`/`HUA-D037` 按是否影响新项目构建/错误语义/产物兼容分级处理。
 
 ## 当前待办 · Hua 自身工具链与发行（2026-11-18）
 
@@ -148,3 +154,7 @@ Windows N2.1–N2.5 已验。当前结果包括普通结构体和枚举快照、
 - 后续可按应用负载继续测量本地 VM 及原生运行时效。
 
 - 下一阶段可选：剖析并提速占 VM 52.1% 步数的非 C04 编译阶段，或清理 HUA-D036/D037 测试问题，或按需提交推送本轮改动。
+
+- 进入第 2 步：建立单一权威公共签名与 since 版本数据，自动校验各端目录并分批补齐剩余标准库双端覆盖。
+
+- 待用户确认第 2 步方案后开始实施，或先提交当前第 1 步及文档成果。

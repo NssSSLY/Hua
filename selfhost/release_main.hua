@@ -422,11 +422,32 @@ fn build(args []string) Result<BuildReceipt> {
     return ok(receipt)
 }
 
+fn render_failure(detail string) string {
+    if strings.len_bytes(detail) >= 9 && strings.starts_with(detail,"E") && unwrap_or(strings.slice(detail,5,6),"") == "@" {
+        let code = unwrap_or(strings.slice(detail,0,5),"")
+        let open = strings.index(detail," [")
+        let close = strings.index(detail,"] ")
+        if open > 6 && close > open {
+            let coords = unwrap_or(strings.slice(detail,6,open),"")
+            let file_id = unwrap_or(strings.slice(detail,open+2,close),"")
+            let message = unwrap_or(strings.slice(detail,close+2,strings.len_bytes(detail)),"")
+            return "error[" + code + "]: " + message + "\n --> " + file_id + ":" + coords + "\n"
+        }
+    }
+    if strings.len_bytes(detail) >= 6 && strings.starts_with(detail,"E") && unwrap_or(strings.slice(detail,5,6),"") == " " {
+        let code = unwrap_or(strings.slice(detail,0,5),"")
+        let message = unwrap_or(strings.slice(detail,6,strings.len_bytes(detail)),"")
+        return "error[" + code + "]: " + message + "\n"
+    }
+    return detail + "\n"
+}
+
 fn main() {
     let result = build(os.args())
     if is_err(result) {
         let detail = unwrap_err(result)
-        io.write_err(detail + "\n")
+        io.write_err(render_failure(detail))
+        if strings.starts_with(detail,"E0004 ") { os.exit(2) }
         os.exit(1)
     }
     print(unwrap(json.encode(unwrap(result))))

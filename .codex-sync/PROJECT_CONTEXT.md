@@ -1,5 +1,7 @@
 # Hua项目背景
 
+2026-11-26 完成应用驱动路线第 1 步：宿主与自举双端落地 `hua.package.json`（`hua.package.v1`）本地路径包解析与 `@pkg/<name>/...` 身份，打通首批 CLI 标准库（自举 `206/374`、原生发布 `185/374`）及二元 `Result<T, E>` 结构化错误；重装配 `huaBin` 通过 `G1 == G2`、`C2 == C3` 及仓库外三包 CLI 全路径验收。[记录](knowledge/bootstrap-performance/runs/2026-11-26-step1-multi-package-cli.md)
+
 2026-11-25 在第二台 Windows x64 实体机完成 C04 改造后的 P0 收尾：恢复 3 项 C04 白盒单测，重装配含 `origin_pool.hua` 的 15 模块官方 `huaBin` 与便携 ZIP，验证跨实体机 `C2 == C3` 逐字节一致（`566b7a69...`）及四套仓库外 SDK 验收通过。[记录](knowledge/bootstrap-performance/runs/2026-11-25-p0-c04-tests-and-huabin.md)
 
 2026-11-24 huaBin 已支持 Windows 一条命令原生构建并运行 Hua 源码。可以直接运行源码 VM，也可发布独立 EXE。[记录](knowledge/bootstrap-performance/runs/2026-11-24-local-run.md)

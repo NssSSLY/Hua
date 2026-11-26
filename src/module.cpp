@@ -10,6 +10,7 @@
 #include <cwctype>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <unordered_set>
 namespace hua {
 namespace {
@@ -41,20 +42,346 @@ std::string dotted(const Node& n) {
     if(n.kind==N::Member){auto path=dotted(*n.children[0]);if(!path.empty())return path+"."+n.text;}
     return "";
 }
+bool valid_package_name(std::string_view name) {
+    if (name.empty() || name.size() > 128 || name.starts_with("__")) return false;
+    auto alpha = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; };
+    auto alnum = [&](char c) { return alpha(c) || (c >= '0' && c <= '9'); };
+    if (!alpha(name[0])) return false;
+    for (char c : name) if (!alnum(c)) return false;
+    static const std::unordered_set<std::string_view> reserved = {
+        "std", "int", "float", "bool", "string", "byte", "i8", "i16", "i32", "i64",
+        "u8", "u16", "u32", "u64", "f32", "f64", "usize", "isize", "void",
+        "Json", "Bytes", "Buffer", "List", "Deque", "Result", "Task", "map",
+        "fn", "struct", "enum", "interface", "import", "as", "let", "var", "const",
+        "pub", "mut", "async", "await", "spawn", "taskgroup", "parallel", "simd",
+        "match", "if", "else", "while", "for", "in", "by", "break", "continue",
+        "return", "defer", "true", "false", "nil", "unsafe"
+    };
+    return !reserved.contains(name);
+}
+// Reject duplicate JSON object keys before json_decode's map overwrites them.
+bool unique_json_keys(std::string_view text) {
+    std::size_t at = 0;
+    auto space = [&]() { while (at < text.size() && (text[at] == ' ' || text[at] == '\t' || text[at] == '\r' || text[at] == '\n')) ++at; };
+    auto read_str = [&]() -> std::optional<std::string> {
+        if (at >= text.size() || text[at] != '"') return std::nullopt;
+        const auto start = at++;
+        while (at < text.size()) {
+            char c = text[at++];
+            if (c == '"') {
+                const auto decoded = json_decode(std::string(text.substr(start, at - start)));
+                const auto& r = hua::cget<ResultValue>(decoded.data);
+                if (!r.ok) return std::nullopt;
+                const auto& j = hua::get<JsonValue>(r.payload->data).data;
+                const auto* s = j ? std::get_if<std::string>(&j->data) : nullptr;
+                return s ? std::optional<std::string>(*s) : std::nullopt;
+            }
+            if (c == '\\') {
+                if (at >= text.size()) return std::nullopt;
+                ++at;
+            }
+        }
+        return std::nullopt;
+    };
+    std::function<bool()> scan = [&]() -> bool {
+        space();
+        if (at >= text.size()) return true;
+        char c = text[at];
+        if (c == '"') return static_cast<bool>(read_str());
+        if (c == '[') {
+            ++at; space();
+            if (at < text.size() && text[at] == ']') { ++at; return true; }
+            while (at < text.size()) {
+                if (!scan()) return false;
+                space();
+                if (at < text.size() && text[at] == ']') { ++at; return true; }
+                if (at >= text.size() || text[at] != ',') return false;
+                ++at;
+            }
+            return false;
+        }
+        if (c == '{') {
+            ++at; space();
+            std::unordered_set<std::string> seen;
+            if (at < text.size() && text[at] == '}') { ++at; return true; }
+            while (at < text.size()) {
+                space();
+                auto k = read_str();
+                if (!k || !seen.insert(*k).second) return false;
+                space();
+                if (at >= text.size() || text[at] != ':') return false;
+                ++at;
+                if (!scan()) return false;
+                space();
+                if (at < text.size() && text[at] == '}') { ++at; return true; }
+                if (at >= text.size() || text[at] != ',') return false;
+                ++at;
+            }
+            return false;
+        }
+        while (at < text.size() && text[at] != ',' && text[at] != ']' && text[at] != '}' &&
+               text[at] != ' ' && text[at] != '\t' && text[at] != '\r' && text[at] != '\n') ++at;
+        return true;
+    };
+    return scan();
+}
+std::filesystem::path resolve_dep_dir(const std::filesystem::path& owner_root, const std::string& dep_name,
+                                      const std::string& rel_path, const SourceSpan& site) {
+    namespace fs = std::filesystem;
+    if (rel_path.empty() || rel_path.size() > 1024 || rel_path.front() == '/' || rel_path.back() == '/' ||
+        rel_path.find('\\') != std::string::npos || rel_path.find(':') != std::string::npos ||
+        rel_path.find('\0') != std::string::npos) {
+        error(site, "package dependency `" + dep_name + "` requires a normalized relative slash path", "E5004");
+    }
+    fs::path current = owner_root;
+    std::error_code ec;
+    std::size_t start = 0;
+    while (start <= rel_path.size()) {
+        auto slash = rel_path.find('/', start);
+        auto seg = rel_path.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+        if (seg.empty() || seg == ".")
+            error(site, "invalid path segment in package dependency `" + dep_name + "`", "E5004");
+        if (seg == "..") {
+            auto parent = current.parent_path();
+            if (key(parent) == key(current))
+                error(site, "package dependency `" + dep_name + "` escapes filesystem root", "E5001");
+            current = parent;
+        } else {
+            auto next = current / fs::path(std::u8string(seg.begin(), seg.end()));
+            auto st = fs::symlink_status(next, ec);
+            if (ec) error(site, "cannot resolve package dependency `" + dep_name + "` at " + rel_path, "E5001");
+            if (fs::is_symlink(st))
+                error(site, "symlink dependency is outside this resolver contract: `" + dep_name + "`", "E5001");
+            if (!fs::is_directory(st))
+                error(site, "package dependency `" + dep_name + "` is not a directory", "E5001");
+            current = next;
+        }
+        if (slash == std::string::npos) break;
+        start = slash + 1;
+    }
+    auto resolved = fs::canonical(current, ec);
+    if (ec || key(resolved) != key(current.lexically_normal()))
+        error(site, "symlink or junction dependency is outside this resolver contract: `" + dep_name + "`", "E5001");
+    return resolved;
+}
+void check_local_dep_conflict(const std::filesystem::path& dir, const std::string& dep_name, const SourceSpan& site) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto base = dir / fs::path(std::u8string(dep_name.begin(), dep_name.end()));
+    auto file = base; file += ".hua";
+    auto native_f = base; native_f += ".huam";
+    auto wasm_f = base; wasm_f += ".wasm";
+    for (const auto& candidate : {file, base / "package.hua", native_f, base / "package.huam", wasm_f, base / "package.wasm"}) {
+        if (fs::exists(candidate, ec) && !ec)
+            error(site, "local module conflicts with package dependency `" + dep_name + "`", "E5004");
+        ec.clear();
+    }
+    if (fs::is_directory(base, ec) && !ec)
+        error(site, "local directory `" + dep_name + "` conflicts with package dependency `" + dep_name + "`", "E5004");
+}
 }
 std::vector<const Source*> ModuleLoader::sources() const {std::vector<const Source*> out;for(const auto& m:modules_)if(m->source)out.push_back(m->source.get());return out;}
 const Source* ModuleLoader::source(const std::string& id) const {
     for(const auto& module:modules_)if(module->source && module->source->filename()==id)return module->source.get();return nullptr;
 }
+void ModuleLoader::load_package_manifest(const std::string& expected_name, const std::filesystem::path& dir,
+                                         const SourceSpan& site, std::vector<std::string>& active) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto manifest_path = dir / "hua.package.json";
+    const auto st = fs::symlink_status(manifest_path, ec);
+    if (ec || fs::is_symlink(st) || !fs::is_regular_file(st))
+        error(site, "missing hua.package.json in package directory: " + utf8(dir), "E5001");
+    const auto fsize = fs::file_size(manifest_path, ec);
+    if (ec || fsize > 1024 * 1024)
+        error(site, "hua.package.json exceeds 1 MiB limit", "E5005");
+    std::ifstream in(manifest_path, std::ios::binary);
+    std::string raw(static_cast<std::size_t>(fsize), '\0');
+    if (!raw.empty() && !in.read(raw.data(), static_cast<std::streamsize>(fsize)))
+        error(site, "cannot read hua.package.json: " + utf8(manifest_path), "E5001");
+
+    const auto decoded = json_decode(raw);
+    const auto& res = hua::cget<ResultValue>(decoded.data);
+    if (!res.ok) error(site, "invalid JSON in hua.package.json: " + utf8(manifest_path), "E5004");
+    if (!unique_json_keys(raw))
+        error(site, "duplicate key in hua.package.json: " + utf8(manifest_path), "E5004");
+    const auto& root_json = hua::get<JsonValue>(res.payload->data).data;
+    const auto* obj = root_json ? std::get_if<JsonData::Object>(&root_json->data) : nullptr;
+    if (!obj) error(site, "hua.package.json must be a JSON object", "E5004");
+    for (const auto& [k, _] : *obj) {
+        if (k != "schema" && k != "name" && k != "version" && k != "deps")
+            error(site, "unknown field `" + k + "` in hua.package.json", "E5004");
+    }
+    if (!json_text_equals(json_member(root_json, "schema"), "hua.package.v1"))
+        error(site, "unsupported hua.package.json schema (expected hua.package.v1)", "E5004");
+    const auto name_node = json_member(root_json, "name");
+    const auto* name_ptr = name_node ? std::get_if<std::string>(&name_node->data) : nullptr;
+    if (!name_ptr || !valid_package_name(*name_ptr))
+        error(site, "invalid or reserved package name in hua.package.json", "E5004");
+    const std::string pkg_name = *name_ptr;
+    const auto ver_node = json_member(root_json, "version");
+    const auto* ver_ptr = ver_node ? std::get_if<std::string>(&ver_node->data) : nullptr;
+    if (!ver_ptr || ver_ptr->empty() || ver_ptr->size() > 128)
+        error(site, "missing or invalid package version in hua.package.json", "E5004");
+
+    const bool is_root = expected_name.empty();
+    if (!is_root) {
+        if (pkg_name != expected_name)
+            error(site, "package manifest name `" + pkg_name + "` does not match dependency `" + expected_name + "`", "E5004");
+        if (pkg_name == root_package_.name || key(dir) == key(root_))
+            error(site, "package dependency `" + pkg_name + "` conflicts with root package", "E5004");
+        const auto pkg_entry = dir / "package.hua";
+        const auto entry_st = fs::symlink_status(pkg_entry, ec);
+        if (ec || fs::is_symlink(entry_st) || !fs::is_regular_file(entry_st))
+            error(site, "package `" + pkg_name + "` is missing package.hua", "E5001");
+        if (std::find(active.begin(), active.end(), pkg_name) != active.end()) {
+            std::string chain;
+            for (const auto& item : active) { if (!chain.empty()) chain += " -> "; chain += item; }
+            error(site, "cyclic package dependency: " + chain + " -> " + pkg_name, "E5002");
+        }
+        if (auto existing = packages_.find(pkg_name); existing != packages_.end()) {
+            if (key(existing->second.root) != key(dir))
+                error(site, "conflicting package dependency `" + pkg_name + "` points to different directories", "E5004");
+            return;
+        }
+        for (const auto& [other_name, other_info] : packages_) {
+            if (other_name != pkg_name && key(other_info.root) == key(dir))
+                error(site, "package directory already registered under another name", "E5004");
+        }
+        if (packages_.size() >= 128)
+            error(site, "package dependency graph exceeds 128 packages", "E5005");
+    }
+
+    PackageInfo info{pkg_name, *ver_ptr, dir, {}};
+    if (const auto deps_node = json_member(root_json, "deps")) {
+        const auto* deps_obj = std::get_if<JsonData::Object>(&deps_node->data);
+        if (!deps_obj) error(site, "`deps` in hua.package.json must be a JSON object", "E5004");
+        for (const auto& [dep_key, dep_val] : *deps_obj) {
+            if (!valid_package_name(dep_key))
+                error(site, "invalid or reserved dependency name `" + dep_key + "`", "E5004");
+            if (dep_key == pkg_name)
+                error(site, "package `" + pkg_name + "` cannot depend on itself", "E5004");
+            const auto* rel_ptr = dep_val ? std::get_if<std::string>(&dep_val->data) : nullptr;
+            if (!rel_ptr) error(site, "dependency `" + dep_key + "` path must be a string", "E5004");
+            check_local_dep_conflict(dir, dep_key, site);
+            info.deps.emplace(dep_key, *rel_ptr);
+        }
+    }
+
+    if (is_root) root_package_ = info;
+    else packages_.emplace(pkg_name, info);
+
+    active.push_back(pkg_name);
+    const auto deps_copy = info.deps;
+    for (const auto& [dep_key, rel_path] : deps_copy) {
+        const auto dep_dir = resolve_dep_dir(dir, dep_key, rel_path, site);
+        load_package_manifest(dep_key, dep_dir, site, active);
+    }
+    active.pop_back();
+}
+void ModuleLoader::load_manifest_graph(const SourceSpan& site) {
+    namespace fs = std::filesystem;
+    has_manifest_ = false;
+    root_package_ = {};
+    packages_.clear();
+    std::error_code ec;
+    const auto manifest_path = root_ / "hua.package.json";
+    const auto st = fs::symlink_status(manifest_path, ec);
+    if (ec || st.type() == fs::file_type::not_found) return;
+    if (fs::is_symlink(st))
+        error(site, "symlink hua.package.json is outside this resolver contract", "E5001");
+    if (!fs::is_regular_file(st))
+        error(site, "hua.package.json must be a regular file", "E5004");
+    has_manifest_ = true;
+    std::vector<std::string> active;
+    load_package_manifest("", root_, site, active);
+}
 const Node& ModuleLoader::load(const std::filesystem::path& entry) {
     linked_.reset();modules_.clear();cache_.clear();ordered_.clear();loading_.clear();bytes_=0;
+    has_manifest_=false;root_package_={};packages_.clear();
     std::error_code ec;auto path=std::filesystem::canonical(entry,ec);
     if(ec)error({utf8(entry),0,0,1,1},"cannot read source file: "+utf8(entry),"E0001");
-    root_=path.parent_path();external_=std::make_shared<ExternalRegistry>(root_);auto& main=visit(path,{utf8(path),0,0,1,1},true);
+    root_=path.parent_path();external_=std::make_shared<ExternalRegistry>(root_);
+    const std::string entry_rel = utf8(path.filename());
+    load_manifest_graph({entry_rel,0,0,1,1});
+    const std::string entry_logical = has_manifest_ ? entry_rel : std::string{};
+    auto& main=visit(path,{has_manifest_ ? entry_rel : utf8(path),0,0,1,1},true,{},entry_logical,{});
     linked_=std::make_unique<Node>(N::Program,main.tree->span);
     for(auto module:ordered_) {auto tree=link(*module);for(auto& n:tree->children)linked_->add(std::move(n));}
     lower_language(*linked_);
     return *linked_;
+}
+std::pair<std::filesystem::path, std::pair<std::string, std::string>>
+ModuleLoader::resolve_in_context(const Module& caller, const std::string& name, const SourceSpan& site) const {
+    if (!has_manifest_) {
+        return {resolve(name, site), {{}, {}}};
+    }
+    const PackageInfo& ctx = caller.package.empty() ? root_package_ : packages_.at(caller.package);
+    const auto dot = name.find('.');
+    const std::string first = dot == std::string::npos ? name : name.substr(0, dot);
+    const std::string rest = dot == std::string::npos ? std::string{} : name.substr(dot + 1);
+
+    auto resolve_under = [&](const std::filesystem::path& base_root, const std::string& rel_mod,
+                             const std::string& pkg_owner, bool package_entry) -> std::pair<std::filesystem::path, std::pair<std::string, std::string>> {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        std::vector<std::pair<fs::path, std::string>> candidates;
+        if (package_entry) {
+            candidates.emplace_back(base_root / "package.hua", "package.hua");
+        } else {
+            std::string rel = rel_mod;
+            std::replace(rel.begin(), rel.end(), '.', '/');
+            auto base = base_root / fs::path(std::u8string(rel.begin(), rel.end()));
+            auto f = base; f += ".hua";
+            candidates.emplace_back(f, rel + ".hua");
+            candidates.emplace_back(base / "package.hua", rel + "/package.hua");
+            if (pkg_owner.empty()) {
+                auto nf = base; nf += ".huam";
+                auto wf = base; wf += ".wasm";
+                candidates.emplace_back(nf, rel + ".huam");
+                candidates.emplace_back(base / "package.huam", rel + "/package.huam");
+                candidates.emplace_back(wf, rel + ".wasm");
+                candidates.emplace_back(base / "package.wasm", rel + "/package.wasm");
+            }
+        }
+        for (const auto& [cand, rel_id] : candidates) {
+            // Walk segments from base_root to reject symlinks consistently with selfhost.
+            fs::path cur = base_root;
+            bool ok_walk = true;
+            std::size_t s = 0;
+            while (s < rel_id.size()) {
+                auto sl = rel_id.find('/', s);
+                auto part = rel_id.substr(s, sl == std::string::npos ? std::string::npos : sl - s);
+                cur /= fs::path(std::u8string(part.begin(), part.end()));
+                auto st = fs::symlink_status(cur, ec);
+                if (ec) { ok_walk = false; break; }
+                if (fs::is_symlink(st))
+                    error(site, "symlink dependency is outside this resolver contract", "E5001");
+                if (sl != std::string::npos && !fs::is_directory(st)) { ok_walk = false; break; }
+                if (sl == std::string::npos && !fs::is_regular_file(st)) { ok_walk = false; break; }
+                if (sl == std::string::npos) break;
+                s = sl + 1;
+            }
+            ec.clear();
+            if (!ok_walk) continue;
+            auto canonical_cand = fs::canonical(cand, ec);
+            if (ec) error(site, "cannot resolve module `" + name + "`", "E5001");
+            auto rel_check = fs::relative(canonical_cand, base_root, ec);
+            if (ec || rel_check.empty() || *rel_check.begin() == ".." ||
+                key(canonical_cand) != key(cand.lexically_normal()))
+                error(site, "module `" + name + "` resolves outside the package directory", "E5001");
+            std::string logical = pkg_owner.empty() ? rel_id : ("@pkg/" + pkg_owner + "/" + rel_id);
+            return {canonical_cand, {logical, pkg_owner}};
+        }
+        error(site, "cannot resolve module `" + name + "`", "E5001");
+    };
+
+    if (ctx.deps.contains(first)) {
+        check_local_dep_conflict(ctx.root, first, site);
+        const auto& target_pkg = packages_.at(first);
+        return resolve_under(target_pkg.root, rest, target_pkg.name, rest.empty());
+    }
+    return resolve_under(ctx.root, name, caller.package, false);
 }
 std::filesystem::path ModuleLoader::resolve(const std::string& name,const SourceSpan& site) const {
     // Import grammar accepts ASCII identifier components only; it cannot express absolute paths or '..'.
@@ -72,12 +399,17 @@ std::filesystem::path ModuleLoader::resolve(const std::string& name,const Source
     }
     error(site,"cannot resolve module `"+name+"`; searched "+utf8(file)+" and "+utf8(base/"package.hua"));
 }
-ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,const SourceSpan& site,bool entry,const std::string& sdk_id) {
+ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,const SourceSpan& site,bool entry,const std::string& sdk_id,const std::string& logical_id,const std::string& owner_package) {
     auto cache_key=sdk_id.empty() ? key(path) : sdk_id;
     if(auto found=cache_.find(cache_key);found!=cache_.end()) {
         if(found->second->state==Module::State::Loading) {
-            std::string chain;for(auto module:loading_){if(!chain.empty())chain+=" -> ";chain+=utf8(module->path.filename());}
-            error(site,"cyclic module import: "+chain+" -> "+utf8(path.filename()),"E5002");
+            std::string chain;
+            for(auto module:loading_){
+                if(!chain.empty())chain+=" -> ";
+                chain += (has_manifest_ && module->source) ? module->source->filename() : utf8(module->path.filename());
+            }
+            const std::string tail = (!logical_id.empty() ? logical_id : utf8(path.filename()));
+            error(site,"cyclic module import: "+chain+" -> "+tail,"E5002");
         }
         return *found->second;
     }
@@ -89,7 +421,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
     if(bytes_+static_cast<std::size_t>(size)>64*1024*1024)error(site,"module source graph exceeds 64 MiB","E5005");
     bytes_+=static_cast<std::size_t>(size);std::string text(static_cast<std::size_t>(size),'\0');input.seekg(0);
     if(!text.empty() && !input.read(text.data(),size))error(site,"failed to read complete source file",entry?"E0001":"E5001");
-    auto owned=std::make_unique<Module>();owned->path=path;owned->prefix=entry?"":"$"+std::to_string(modules_.size())+"$";
+    auto owned=std::make_unique<Module>();owned->path=path;owned->package=owner_package;owned->prefix=entry?"":"$"+std::to_string(modules_.size())+"$";
     if (!sdk_id.empty()) owned->prefix="$sdk$std$alg_integer$";
     bool native=path.extension()==".huam",wasm=path.extension()==".wasm";
     std::string binary;std::vector<ExternalExport> wasm_exports;
@@ -98,7 +430,8 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
         text="# generated WASM interface\n";
         for(const auto& e:wasm_exports){text+="pub fn "+e.name+"(";for(std::size_t i=0;i<e.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i)+" "+e.parameters[i];}text+=") "+e.result+" {}\n";}
     }
-    owned->source=std::make_unique<Source>(sdk_id.empty() ? utf8(path) : sdk_id,std::move(text));auto& module=*owned;
+    const std::string source_name = !sdk_id.empty() ? sdk_id : (!logical_id.empty() ? logical_id : utf8(path));
+    owned->source=std::make_unique<Source>(source_name,std::move(text));auto& module=*owned;
     modules_.push_back(std::move(owned));cache_.emplace(cache_key,&module);loading_.push_back(&module);
     if(native) {
         if(module.source->line_text(1)!="HUA_NATIVE 1")error(module.source->span(0,1),"native manifest requires HUA_NATIVE 1 header","E7002");
@@ -140,7 +473,7 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
             if (!sdk_id.empty() && !(n->text=="std" || n->text.starts_with("std.")))
                 error(n->span,"SDK source modules can only import standard modules");
             if(n->text=="std"||n->text.starts_with("std."))module.imports.emplace(binding,&standard(n->text,n->span));
-            else {try{auto dependency=resolve(n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span));}catch(const Diagnostic& error){auto reported=error;reported.add_context(n->span,"imported from");throw reported;}}
+            else {try{auto [dependency, meta]=resolve_in_context(module,n->text,n->span);module.imports.emplace(binding,&visit(dependency,n->span,false,{},meta.first,meta.second));}catch(const Diagnostic& error){auto reported=error;reported.add_context(n->span,"imported from");throw reported;}}
         }else {
             declarations=true;if(n->kind==N::Struct&&(declared_name(*n)=="Json"||declared_name(*n)=="Bytes"||declared_name(*n)=="Buffer"||declared_name(*n)=="List"||declared_name(*n)=="Deque"||declared_name(*n)=="Task"))error(n->span,"reserved standard value type","E3002");
             if(n->kind==N::MultiBinding){for(const auto& p:n->children[0]->children)if(p->text!="_")module.globals.emplace(p->text,module.prefix+p->text);}

@@ -1,5 +1,16 @@
 # 当前状态
 
+## 2026-11-26 进度全景核对与第 2 步详细方案落盘（纯文档）
+
+已完成当前五步应用路线与四大子系统的已实现程度/待办对比核对，并将第 2 步（单一权威标准库清单 `selfhost/stdlib_manifest.json` + 分桶生成/防漏校验器 + 首批 101 项纯表项与 `std.test.equal/not_equal` 共 103 项双端打通）的详细实现方案与 7 条验收标准记录至[设计文档](knowledge/bootstrap-performance/designs/2026-11-26-step2-stdlib-contract-plan.md)，同步更新 `docs/项目概览与进度.md`、`docs/设计决策与未决事项.md`、`docs/标准库设计与实现路线.md` 与 `.codex-sync/{TODO,INDEX}`。本轮仅文档更新，未修改生产代码，未新增测试运行，未提交/推送 Git。
+
+## 2026-11-26 应用驱动路线第 1 步完成：仓库外本地多包 CLI 与首批标准库双端打通
+
+基于 `main@d5cd1e2` 完成应用驱动五步路线第 1 步（尚未提交/推送 Git）：
+- **双端本地路径包解析与 N3 缓存追踪**：在宿主 `ModuleLoader` 与自举 `selfhost/modules.hua` 同步落地 `hua.package.json`（`hua.package.v1`），支持 `/` 相对路径依赖、`@pkg/<name>/...` 统一逻辑源码标识、`std` 保留名拦截、唯一解码键校验、同名/传递菱形目录冲突拒绝（`E5004`）、包/模块循环拒绝（`E5002`）及 N3 外部包输入失效。
+- **首批标准库扩面与两处自举边界修复**：自举支持升至 `206/374`（`HUAB 6–29`）、`hua build --release` 原生支持升至 `185/374`（`os`/`io`/`fs`/`file`/`buffer`/`strings`/`json`/`error` 等）；放开 `selfhost/parser.hua` 对二元 `Result<T, E>` 非 `string` 错误类型的限制，修复 `selfhost/native_cpp.hua` 空数组字面量 `[]` 切片判定与 `EmptySlice` 装箱边界。
+- **代际不动点、SDK 重装与全路径验收**：更新 `huaBin/`（`5,129` 个清单文件），达成 `G1 == G2` C++ 不动点（`d62e0d32...`）与 `C2(14.756s) == C3(111.641s, 728,213,138 步)` HUAB 逐字节不动点（`bb3250bc...`）；仓库外三包 CLI（`audit_cli` + `logschema` + `reportfmt`）五路输出、跨包错误位置与退出码逐字节一致，36 项负例诊断对照、19 项定向 CTest 与 4 套 SDK 回归全部通过。[完整记录](knowledge/bootstrap-performance/runs/2026-11-26-step1-multi-package-cli.md)
+
 ## 2026-11-25 P0 收尾：C04 白盒单测恢复、第二台实体机复现与 huaBin 更新
 
 在第二台 Windows x64 实体机基于 `main@60dcb67` 完成 C04 改造后的 P0 收尾（生产编译器与 C++ 运行时源码未改，尚未提交 Git）：

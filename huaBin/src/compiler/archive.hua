@@ -96,11 +96,41 @@ fn type_format(t string) int {
     return 6
 }
 fn load_format(text string) int {
-    if text=="$core$$std$fs$canonical" { return 17 }
+    if strings.starts_with(text,"$core$$std$error$") { return 7 }
     if strings.starts_with(text,"$core$$std$file$") {
         let name=rules.cut(text,16,len(text))
         if alg.contains(["read_line","read_all","read_exact","write_all"],name) { return 29 }
         return 8
+    }
+    if strings.starts_with(text,"$core$$std$buffer$") {
+        let name=rules.cut(text,18,len(text))
+        if alg.contains(["write_str","write_int","take_text","reserve"],name) { return 9 }
+        return 6
+    }
+    if strings.starts_with(text,"$core$$std$strings$") {
+        let name=rules.cut(text,19,len(text))
+        if alg.contains(["upper","lower","casefold","equal_fold"],name) { return 26 }
+        if alg.contains(["template","format_int_grouped","format_float_grouped"],name) { return 25 }
+        if alg.contains(["center","codepoints","chars","from_codepoints","slice_runes"],name) { return 23 }
+        if alg.contains(["last_index","count","repeat","split_n","fields","lines","trim_start","trim_end","trim_prefix","trim_suffix","pad_left","pad_right","replace_n","is_empty","parse_int","parse_float","format_int","format_float","format"],name) { return 9 }
+        return 6
+    }
+    if strings.starts_with(text,"$core$$std$os$") {
+        let name=rules.cut(text,14,len(text))
+        if alg.contains(["environ","parse_args"],name) { return 28 }
+        if alg.contains(["exit","platform","arch","pid","cpu_count"],name) { return 16 }
+        return 6
+    }
+    if strings.starts_with(text,"$core$$std$fs$") {
+        let name=rules.cut(text,14,len(text))
+        if alg.contains(["walk","copy_file","copy_dir","remove_all","canonical"],name) { return 17 }
+        return 6
+    }
+    if text=="$core$$std$io$write_err" { return 18 }
+    if strings.starts_with(text,"$core$$std$json$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["null","from","array","object","set","remove","append","set_at","encode_pretty","decode_lines","encode_lines"],name) { return 27 }
+        return 6
     }
     return 6
 }

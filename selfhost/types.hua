@@ -70,6 +70,7 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
         if text == "void" && !allow_void { return err(fail(e,n,"E3004","void is not an ordinary value type")) }
         let resolved = target(m,e,n)
         if resolved == "builtin:std.json#Value" { return ok("Json") }
+        if resolved == "builtin:std.error#Value" { return ok("std.error.Value") }
         if resolved == "builtin:std.file#File" { return ok("std.file.File") }
         if resolved == "builtin:std.file#IOFailure" { return ok("std.file.IOFailure") }
         if strings.starts_with(resolved,"builtin:type:") {
@@ -357,7 +358,10 @@ fn core(m mut Model, e Environment, n ast.Node, name string, args []Info) Result
         if rules.category(t) == "" && t != "string" { return err(fail(e,n,"E3004","conversion requires number or string")) }
         return ok(info(method,false))
     }
-    if method == "clone" { return ok(info(t,true)) }
+    if method == "clone" {
+        if strings.contains(t,"std.file.File") { return err(fail(e,n,"E3008","File cannot be cloned")) }
+        return ok(info(t,true))
+    }
     if method == "ok" || method == "err" {
         if t == "void" { return err(fail(e,n,"E3004","Result payload cannot be void")) }
         var result = "Result<"+t+",>"

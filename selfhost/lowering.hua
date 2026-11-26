@@ -51,6 +51,7 @@ fn runtime_name(s State, target string) string {
     if target == s.core.entry+"#main" { return "main" }
     if strings.starts_with(target,"builtin:core:") { return "$core$"+rules.cut(target,13,len(target)) }
     if target == "builtin:std.json#Value" { return "Json" }
+    if target == "builtin:std.error#Value" { return "std.error.Value" }
     if target == "builtin:std.file#File" { return "std.file.File" }
     if target == "builtin:std.file#IOFailure" { return "std.file.IOFailure" }
     if strings.starts_with(target,"builtin:type:") { return rules.cut(target,13,len(target)) }

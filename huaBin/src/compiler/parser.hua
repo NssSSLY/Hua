@@ -492,10 +492,6 @@ fn compound_type(s mut State) Result<ast.NodeId> {
                     list.append(types,compound_type(s)?)? }
                 expect(s,">")?
                 if (text == "Result" && list.len(types) > 2) || ((text == "List" || text == "Task") && list.len(types) != 1) { return err(failure(name,"E2006","incorrect type argument count")) }
-                if text == "Result" && list.len(types) == 2 {
-                    let e = ast.get(s.pool,list.get(types,1)?)?
-                    if ast.kind(e.payload) != "TypeName" || ast.payload_text(e.payload) != "string" { return err(unsupported(name)) }
-                }
             }
         }
         var payload = ast.Payload.TypeName(text)
