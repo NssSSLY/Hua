@@ -126,6 +126,9 @@ std::string value_type(const Value& v) {
     case 17:return "std.error.Value";
     case 19:return "std.file.File";case 20:return "std.file.IOFailure";
     case 25:return "NativeHandle";
+    case 26:return "std.stream.Reader";case 27:return "std.stream.Writer";
+    case 28:return "std.http.Response";case 29:return "std.http.StreamResponse";
+    case 30:return "std.regex.Pattern";case 31:return "std.process.Child";
     case 16:return "Task<"+hua::get<TaskValue>(v.data).data->result_type+">";
     default: return "";
     }
@@ -142,6 +145,9 @@ bool value_type_is(const Value& v,std::string_view t){
     case 6:return hua::get<StructValue>(v.data).data->name==t;
     case 21:return cget<PlainRecord>(v.data).layout->name==t;
     case 12:return t=="Bytes";case 13:return t=="Buffer";case 25:return t=="NativeHandle";
+    case 26:return t=="std.stream.Reader";case 27:return t=="std.stream.Writer";
+    case 28:return t=="std.http.Response";case 29:return t=="std.http.StreamResponse";
+    case 30:return t=="std.regex.Pattern";case 31:return t=="std.process.Child";
     case 14:return spelled(t,"List<",hua::get<ListValue>(v.data).data->element_type,">");
     case 23:return spelled(t,"Deque<",hua::get<DequeValue>(v.data).data->element_type,">");
     case 8:{const auto& m=*hua::get<MapValue>(v.data).data;return t.size()==m.key_type.size()+m.item_type.size()+6&&t.starts_with("map<")&&t.ends_with('>')&&t.substr(4,m.key_type.size())==m.key_type&&t[4+m.key_type.size()]==','&&t.substr(5+m.key_type.size(),m.item_type.size())==m.item_type;}
@@ -417,7 +423,7 @@ struct FileScan {std::unordered_set<FileVisit,FileVisitHash> visited;};
 thread_local FileScan* active_file_scan=nullptr;
 bool scan_file(const Value& v,unsigned depth,FileScan& scan){
     if(depth>128)runtime_error({},"value nesting limit exceeded","E4099");
-    if(hua::holds_alternative<FileValue>(v.data)||hua::holds_alternative<NativeHandleValue>(v.data))return true;
+    if(hua::holds_alternative<FileValue>(v.data)||hua::holds_alternative<NativeHandleValue>(v.data)||hua::holds_alternative<ReaderValue>(v.data)||hua::holds_alternative<WriterValue>(v.data)||hua::holds_alternative<HttpStreamValue>(v.data)||hua::holds_alternative<ProcessChildValue>(v.data))return true;
     auto first=[&](const void* object,std::size_t start=0,std::size_t length=0){
         return scan.visited.insert({object,value_kind(v),start,length}).second;
     };
@@ -661,6 +667,12 @@ std::string show(const Value& v) {
     if(hua::holds_alternative<VoidValue>(v.data))runtime_error({},"void has no displayable value","E4003");
     if(hua::holds_alternative<FileValue>(v.data))return "<File>";
     if(hua::holds_alternative<NativeHandleValue>(v.data))return "<NativeHandle>";
+    if(hua::holds_alternative<ReaderValue>(v.data))return "<Reader>";
+    if(hua::holds_alternative<WriterValue>(v.data))return "<Writer>";
+    if(hua::holds_alternative<HttpResponseValue>(v.data))return "<HttpResponse>";
+    if(hua::holds_alternative<HttpStreamValue>(v.data))return "<HttpStreamResponse>";
+    if(hua::holds_alternative<RegexValue>(v.data))return "<Regex>";
+    if(hua::holds_alternative<ProcessChildValue>(v.data))return "<ProcessChild>";
     if(hua::holds_alternative<IOFailureValue>(v.data))return "<IOFailure>";
     if(hua::holds_alternative<TaskValue>(v.data))return "<"+value_type(v)+">";
     if(auto p=hua::get_if<NumericValue>(&v.data))return hua::visit([](auto x)->std::string{if constexpr(std::is_same_v<decltype(x),std::uint64_t>)return std::to_string(x);else return show(Value(x));},p->number);

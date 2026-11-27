@@ -73,8 +73,15 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
         if resolved == "builtin:std.error#Value" { return ok("std.error.Value") }
         if resolved == "builtin:std.file#File" { return ok("std.file.File") }
         if resolved == "builtin:std.file#IOFailure" { return ok("std.file.IOFailure") }
+        if resolved == "builtin:std.stream#Reader" { return ok("std.stream.Reader") }
+        if resolved == "builtin:std.stream#Writer" { return ok("std.stream.Writer") }
+        if resolved == "builtin:std.http#Response" { return ok("std.http.Response") }
+        if resolved == "builtin:std.http#StreamResponse" { return ok("std.http.StreamResponse") }
+        if resolved == "builtin:std.regex#Pattern" { return ok("std.regex.Pattern") }
+        if resolved == "builtin:std.process#Child" { return ok("std.process.Child") }
+        if resolved == "builtin:std.random#Rng" { return ok("std.random.Rng") }
         if strings.starts_with(resolved,"builtin:type:") {
-            if text == "List" || text == "map" || text == "Task" { return err(fail(e,n,"E3004","container requires type arguments")) }
+            if text == "List" || text == "Deque" || text == "map" || text == "Task" { return err(fail(e,n,"E3004","container requires type arguments")) }
             return ok(text)
         }
         if resolved == "" { return err(fail(e,n,"E3004","unresolved type")) }
@@ -82,7 +89,7 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
     }
     var empty []string = []
     var args = list.from_slice(empty)
-    if k == "GenericType" && text == "List" && ast.payload_text(get(e,n.children[0]).payload) == "void" { return err(fail(e,n,"E3004","List<void> is invalid")) }
+    if k == "GenericType" && (text == "List" || text == "Deque") && ast.payload_text(get(e,n.children[0]).payload) == "void" { return err(fail(e,n,"E3004",text+"<void> is invalid")) }
     if k == "GenericType" && text == "map" && ast.payload_text(get(e,n.children[1]).payload) == "void" { return err(fail(e,n,"E3004","map values cannot be void")) }
     for i in 0..len(n.children) { list.append(args,typename_context(m,e,n.children[i],k == "GenericType" && (text == "Result" || text == "Task") && i == 0)?)? }
     let ts = list.snapshot(args)
@@ -115,6 +122,10 @@ fn typename_context(m mut Model, e Environment, id ast.NodeId, allow_void bool) 
         if text == "List" {
             if ts[0] == "void" { return err(fail(e,n,"E3004","List<void> is invalid")) }
             return ok("List<"+ts[0]+">")
+        }
+        if text == "Deque" {
+            if ts[0] == "void" { return err(fail(e,n,"E3004","Deque<void> is invalid")) }
+            return ok("Deque<"+ts[0]+">")
         }
         if text == "map" {
             if !alg.contains(["int","bool","string"],ts[0]) || ts[1] == "void" || strings.starts_with(ts[1],"Result<") { return err(fail(e,n,"E3004","invalid map key/value type")) }
@@ -299,17 +310,121 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
     }
     if module == "builtin:std.alg" {
         let element = rules.element(arguments[0].type_name)
-        if !alg.contains(["int","float","string"],element) || (method == "sum" && element == "string") { return err(fail(e,n,"E3004","algorithm requires supported scalar array")) }
+        if element == "" { return err(fail(e,n,"E3004","algorithm requires typed array or slice")) }
+        if !alg.contains(["unique","chunk","windows"],method) {
+            if !alg.contains(["int","float","string"],element) || ((method == "sum" || method == "product") && element == "string") { return err(fail(e,n,"E3004","algorithm requires supported scalar array")) }
+        }
         var ps = clone(s.parameters)
         ps[0] = "[]"+element
-        if len(ps) == 2 { ps[1] = element
+        if len(ps) == 2 && method != "chunk" && method != "windows" { ps[1] = element
             if arguments[1].type_name != element { return err(fail(e,get(e,n.children[2]),"E3004","algorithm target requires identical element type")) } }
         s.parameters = ps
-        if method == "sorted" || method == "reverse" { s.result = "Result<[]"+element+",string>" }
+        if method == "unique" { s.result = "[]"+element }
+        else if method == "chunk" || method == "windows" { s.result = "[][]"+element }
+        else if method == "sorted" || method == "reverse" { s.result = "Result<[]"+element+",string>" }
         else if method == "contains" { s.result = "bool" }
         else if method == "binary_search" { s.result = "int?" }
-        else if method == "sum" || method == "min" || method == "max" { s.result = "Result<"+element+",string>" }
+        else if method == "sum" || method == "product" || method == "min" || method == "max" { s.result = "Result<"+element+",string>" }
         else { s.result = "int" }
+    }
+    if module == "builtin:std.simd" && method != "backend" {
+        let element = rules.element(arguments[0].type_name)
+        if !alg.contains(["float","f32","f64"],element) { return err(fail(e,n,"E3004","simd requires float/f32/f64 array")) }
+        s.parameters = ["[]"+element,"[]"+element]
+        s.result = "Result<[]"+element+",string>"
+    }
+    if module == "builtin:std.maps" {
+        let kv = rules.arguments(arguments[0].type_name,"map")
+        if len(kv) != 2 { return err(fail(e,n,"E3004","maps operation requires map")) }
+        var ps = clone(s.parameters)
+        ps[0] = arguments[0].type_name
+        if method == "keys" { s.result = "[]"+kv[0] }
+        else if method == "values" { s.result = "[]"+kv[1] }
+        else if method == "entries" { s.result = "multi<[]"+kv[0]+",[]"+kv[1]+">" }
+        else if method == "get_or" {
+            ps[1] = kv[0]
+            ps[2] = kv[1]
+            s.result = kv[1]
+        }
+        else if method == "pop" {
+            ps[1] = kv[0]
+            if strings.ends_with(kv[1],"?") { s.result = kv[1] } else { s.result = kv[1]+"?" }
+        }
+        else if method == "merge" { ps[1] = arguments[0].type_name }
+        s.parameters = ps
+    }
+    if module == "builtin:std.sets" {
+        var ps = clone(s.parameters)
+        if method == "from_slice" {
+            let key = rules.element(arguments[0].type_name)
+            if !alg.contains(["int","bool","string"],key) { return err(fail(e,n,"E3004","sets.from_slice requires int/bool/string slice")) }
+            ps[0] = "[]"+key
+            s.result = "map<"+key+",bool>"
+        } else {
+            let kv = rules.arguments(arguments[0].type_name,"map")
+            if len(kv) != 2 || kv[1] != "bool" { return err(fail(e,n,"E3004","sets operation requires map<K,bool>")) }
+            ps[0] = arguments[0].type_name
+            ps[1] = arguments[0].type_name
+            if method == "is_subset" || method == "is_disjoint" { s.result = "bool" }
+            else { s.result = "map<"+kv[0]+",bool>" }
+        }
+        s.parameters = ps
+    }
+    if module == "builtin:std.deque" {
+        var element = ""
+        if method == "from_slice" { element = rules.element(arguments[0].type_name) }
+        else { let ts = rules.arguments(arguments[0].type_name,"Deque")
+            if len(ts) == 1 { element = ts[0] } }
+        if element == "" { return err(fail(e,n,"E3004","deque requires known element type")) }
+        var ps = clone(s.parameters)
+        if method == "from_slice" {
+            ps[0] = "[]"+element
+            s.result = "Deque<"+element+">"
+        }
+        else { ps[0] = "Deque<"+element+">" }
+        if method == "push_back" || method == "push_front" {
+            ps[1] = element
+            if !rules.compatible(element,arguments[1].type_name) { return err(fail(e,get(e,n.children[2]),"E3004","deque element type mismatch")) }
+        }
+        if alg.contains(["pop_back","pop_front","front","back","get"],method) { s.result = "Result<"+element+",string>" }
+        if method == "snapshot" { s.result = "[]"+element }
+        s.parameters = ps
+    }
+    if module == "builtin:std.heap" {
+        var ps = clone(s.parameters)
+        if method == "smallest" || method == "largest" {
+            let element = rules.element(arguments[0].type_name)
+            if !alg.contains(["int","float","string"],element) { return err(fail(e,n,"E3004","heap requires int/float/string slice")) }
+            ps[0] = "[]"+element
+            s.result = "Result<[]"+element+",string>"
+        } else {
+            let ts = rules.arguments(arguments[0].type_name,"List")
+            if len(ts) != 1 { return err(fail(e,n,"E3004","heap operation requires List<T>")) }
+            let element = ts[0]
+            ps[0] = "List<"+element+">"
+            if method == "push" {
+                ps[1] = element
+                if !rules.compatible(element,arguments[1].type_name) { return err(fail(e,get(e,n.children[2]),"E3004","heap element type mismatch")) }
+            }
+            if method == "pop" || method == "peek" { s.result = "Result<"+element+",string>" }
+        }
+        s.parameters = ps
+    }
+    if module == "builtin:std.random" && alg.contains(["shuffle","choice","sample"],method) {
+        var ps = clone(s.parameters)
+        if method == "shuffle" {
+            let ts = rules.arguments(arguments[1].type_name,"List")
+            if len(ts) != 1 { return err(fail(e,get(e,n.children[2]),"E3004","random.shuffle requires List<T>")) }
+            if !arguments[1].writable { return err(fail(e,get(e,n.children[2]),"E3003","random.shuffle requires writable List<T>")) }
+            ps[1] = arguments[1].type_name
+        } else {
+            let element = rules.element(arguments[1].type_name)
+            if element == "" { return err(fail(e,get(e,n.children[2]),"E3004","random."+method+" requires typed slice/array")) }
+            ps[1] = "[]"+element
+            if method == "choice" { s.result = "Result<"+element+",string>" }
+            else { s.result = "Result<[]"+element+",string>" }
+        }
+        s.parameters = ps
     }
     if module == "builtin:std.list" {
         var element = ""
@@ -320,15 +435,16 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
         var ps = clone(s.parameters)
         if method == "from_slice" { s.result = "List<"+element+">" }
         else { ps[0] = "List<"+element+">" }
-        if method == "append" { ps[1] = element }
-        if method == "set" { ps[2] = element }
+        if method == "append" || method == "index_of" || method == "contains" { ps[1] = element }
+        if method == "set" || method == "insert" { ps[2] = element }
         if method == "extend" { ps[1] = "[]"+element }
-        if method == "get" || method == "pop" { s.result = "Result<"+element+",string>" }
+        if method == "get" || method == "pop" || method == "remove_at" { s.result = "Result<"+element+",string>" }
+        if method == "slice" { s.result = "Result<[]"+element+",string>" }
         if method == "snapshot" { s.result = "[]"+element }
         s.parameters = ps
-        if method == "append" || method == "set" {
+        if method == "append" || method == "set" || method == "insert" {
             var index = 1
-            if method == "set" { index = 2 }
+            if method == "set" || method == "insert" { index = 2 }
             if !rules.compatible(element,arguments[index].type_name) { return err(fail(e,get(e,n.children[index+1]),"E3004","list element type mismatch")) }
         }
     }
@@ -369,7 +485,7 @@ fn core(m mut Model, e Environment, n ast.Node, name string, args []Info) Result
         return ok(info(method,false))
     }
     if method == "clone" {
-        if strings.contains(t,"std.file.File") || strings.contains(t,"NativeHandle") { return err(fail(e,n,"E3008","File or NativeHandle cannot be cloned")) }
+        if strings.contains(t,"std.file.File") || strings.contains(t,"NativeHandle") || strings.contains(t,"std.stream.Reader") || strings.contains(t,"std.stream.Writer") || strings.contains(t,"std.http.StreamResponse") || strings.contains(t,"std.process.Child") { return err(fail(e,n,"E3008","File, NativeHandle, Stream, HttpStreamResponse, or ProcessChild cannot be cloned")) }
         return ok(info(t,true))
     }
     if method == "ok" || method == "err" {

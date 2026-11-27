@@ -1,6 +1,10 @@
 #include "hua/stdlib.hpp"
 #include <deque>
 #include "hua/file.hpp"
+#include "hua/stream.hpp"
+#include "hua/http_backend.hpp"
+#include "hua/regex.hpp"
+#include "hua/compress.hpp"
 #include "hua/tasks.hpp"
 #include "hua/simd.hpp"
 #include "hua/json.hpp"
@@ -396,6 +400,54 @@ const std::vector<StandardFunction>& standard_functions() {
         {"file","read_all",{"std.file.File"},"Result<Bytes,std.file.IOFailure>",false,false,29},
         {"file","read_exact",{"std.file.File","int"},"Result<Bytes?,std.file.IOFailure>",false,false,29},
         {"file","write_all",{"std.file.File","Bytes"},"Result<void,std.file.IOFailure>",false,false,29},
+        {"stream","from_bytes",{"Bytes"},"std.stream.Reader",false,false,31},
+        {"stream","from_file",{"std.file.File"},"Result<std.stream.Reader,std.error.Value>",false,false,31},
+        {"stream","to_buffer",{"Buffer"},"std.stream.Writer",true,false,31},
+        {"stream","to_file",{"std.file.File"},"Result<std.stream.Writer,std.error.Value>",false,false,31},
+        {"stream","limit",{"std.stream.Reader","int"},"Result<std.stream.Reader,std.error.Value>",false,false,31},
+        {"stream","read",{"std.stream.Reader","int"},"Result<Bytes?,std.error.Value>",false,false,31},
+        {"stream","read_exact",{"std.stream.Reader","int"},"Result<Bytes,std.error.Value>",false,false,31},
+        {"stream","read_all",{"std.stream.Reader","int"},"Result<Bytes,std.error.Value>",false,false,31},
+        {"stream","write",{"std.stream.Writer","Bytes"},"Result<int,std.error.Value>",false,false,31},
+        {"stream","write_all",{"std.stream.Writer","Bytes"},"Result<void,std.error.Value>",false,false,31},
+        {"stream","flush",{"std.stream.Writer"},"Result<void,std.error.Value>",false,false,31},
+        {"stream","close_reader",{"std.stream.Reader"},"Result<void,std.error.Value>",false,false,31},
+        {"stream","close_writer",{"std.stream.Writer"},"Result<void,std.error.Value>",false,false,31},
+        {"stream","copy",{"std.stream.Writer","std.stream.Reader","int"},"Result<int,std.error.Value>",false,false,31},
+        {"url","parse",{"string"},"Result<map<string,string>,std.error.Value>",false,false,31},
+        {"url","encode",{"string"},"string",false,false,31},
+        {"url","decode",{"string"},"Result<string,std.error.Value>",false,false,31},
+        {"url","build_query",{"map<string,string>"},"string",false,false,31},
+        {"http","get",{"string","map<string,string>","int"},"Result<std.http.Response,std.error.Value>",false,false,31},
+        {"http","post",{"string","map<string,string>","Bytes","int"},"Result<std.http.Response,std.error.Value>",false,false,31},
+        {"http","request",{"string","string","map<string,string>","Bytes","map<string,Json>"},"Result<std.http.Response,std.error.Value>",false,false,31},
+        {"http","status",{"std.http.Response"},"int",false,false,31},
+        {"http","header",{"std.http.Response","string"},"string?",false,false,31},
+        {"http","headers",{"std.http.Response"},"map<string,string>",false,false,31},
+        {"http","body",{"std.http.Response"},"Bytes",false,false,31},
+        {"http","text",{"std.http.Response"},"Result<string,std.error.Value>",false,false,31},
+        {"http","open_stream",{"string","string","map<string,string>","Bytes","map<string,Json>"},"Result<std.http.StreamResponse,std.error.Value>",false,false,31},
+        {"http","stream_status",{"std.http.StreamResponse"},"int",false,false,31},
+        {"http","stream_header",{"std.http.StreamResponse","string"},"string?",false,false,31},
+        {"http","stream_headers",{"std.http.StreamResponse"},"map<string,string>",false,false,31},
+        {"http","stream_body",{"std.http.StreamResponse"},"std.stream.Reader",false,false,31},
+        {"http","stream_close",{"std.http.StreamResponse"},"Result<void,std.error.Value>",false,false,31},
+        {"regex","compile",{"string"},"Result<std.regex.Pattern,std.error.Value>",false,false,32},
+        {"regex","is_match",{"std.regex.Pattern","string"},"bool",false,false,32},
+        {"regex","find",{"std.regex.Pattern","string"},"string?",false,false,32},
+        {"regex","find_all",{"std.regex.Pattern","string","int"},"[]string",false,false,32},
+        {"regex","replace_all",{"std.regex.Pattern","string","string"},"string",false,false,32},
+        {"regex","split",{"std.regex.Pattern","string","int"},"[]string",false,false,32},
+        {"process","start",{"[]string","string","map<string,string>"},"Result<std.process.Child,std.error.Value>",false,false,32},
+        {"process","stdin",{"std.process.Child"},"std.stream.Writer",false,false,32},
+        {"process","stdout",{"std.process.Child"},"std.stream.Reader",false,false,32},
+        {"process","stderr",{"std.process.Child"},"std.stream.Reader",false,false,32},
+        {"process","wait",{"std.process.Child","int"},"Result<int,std.error.Value>",false,false,32},
+        {"process","kill",{"std.process.Child"},"Result<void,std.error.Value>",false,false,32},
+        {"compress","gzip_compress",{"Bytes"},"Result<Bytes,std.error.Value>",false,false,33},
+        {"compress","gzip_decompress",{"Bytes","int"},"Result<Bytes,std.error.Value>",false,false,33},
+        {"compress","gzip_reader",{"std.stream.Reader","int"},"Result<std.stream.Reader,std.error.Value>",false,false,33},
+        {"compress","gzip_writer",{"std.stream.Writer"},"Result<std.stream.Writer,std.error.Value>",false,false,33},
         };
         for(auto& entry:entries)entry.module_id=module_lookup(entry.module);
         return entries;
@@ -485,7 +537,12 @@ Value invoke_standard(const StandardFunction& f,const std::vector<Value>& input,
     if(!identical){auto& normalized=lease.values;normalized.reserve(input.size());for(std::size_t i=0;i<input.size();++i){if(parameters[i]=="Bytes"&&!hua::holds_alternative<BytesValue>(input[i].data))runtime_error(s,"expected Bytes","E4003");if(parameters[i]=="Buffer"&&!hua::holds_alternative<BufferValue>(input[i].data))runtime_error(s,"expected Buffer","E4003");if(f.parameters[i]=="Json"){auto j=hua::get_if<JsonValue>(&input[i].data);if(!j||!j->data)runtime_error(s,"expected a Json value","E4003");}normalized.push_back(enforce_type(input[i],parameters[i],s));}}
     const std::vector<Value>& args=identical?input:lease.values;
     if(f.mutates_first){bool writable=false;if(auto p=hua::get_if<BufferValue>(&args[0].data))writable=p->writable;if(auto p=hua::get_if<RngValue>(&args[0].data))writable=p->writable;if(auto p=hua::get_if<DequeValue>(&args[0].data))writable=p->writable;if(auto p=hua::get_if<ListValue>(&args[0].data)){writable=p->writable;if(writable&&f.name!="reserve")++p->data->revision;}if(!writable)runtime_error(s,"standard mutation requires a writable argument","E4007");}
-    if(f.since==28&&mid==module_code("process"))return invoke_process_standard(f,args,s,context);
+    if(mid==module_code("process"))return invoke_process_standard(f,args,s,context);
+    if(mid==module_code("regex"))return invoke_regex_standard(f,args,s);
+    if(mid==module_code("compress"))return invoke_compress_standard(f,args,s,context);
+    if(mid==module_code("stream"))return invoke_stream_standard(f,args,s,context);
+    if(mid==module_code("url"))return invoke_url_standard(f,args,s);
+    if(mid==module_code("http"))return invoke_http_standard(f,args,s,context);
     if(mid==module_code("file"))return invoke_file_standard(f,args,s,context);
     if(mid==module_code("error"))return invoke_error_standard(f,args,s);
     if(mid==module_code("path")||(mid==module_code("fs")&&(f.since>=17||f.name=="stat"||f.name=="rename"||f.name=="replace"||f.name=="temp_file")))return invoke_filesystem_standard(f,args,s,context);

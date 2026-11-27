@@ -160,6 +160,18 @@
       "repo_path": "std/alg_integer.hua",
       "sdk_path": "src/std/alg_integer.hua",
       "since": 6
+    },
+    {
+      "module": "std.sse",
+      "repo_path": "std/sse.hua",
+      "sdk_path": "src/std/sse.hua",
+      "since": 31
+    },
+    {
+      "module": "std.csv",
+      "repo_path": "std/csv.hua",
+      "sdk_path": "src/std/csv.hua",
+      "since": 32
     }
   ],
   "modules": [
@@ -186,9 +198,9 @@
           "since": 19,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -210,9 +222,9 @@
           "since": 19,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -232,9 +244,9 @@
           "since": 19,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -802,9 +814,9 @@
           "since": 20,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -1444,6 +1456,106 @@
       ]
     },
     {
+      "module": "std.compress",
+      "short_name": "compress",
+      "exported_types": [],
+      "selfhost_exported_types": [],
+      "functions": [
+        {
+          "name": "gzip_compress",
+          "host_parameters": [
+            "Bytes"
+          ],
+          "host_result": "Result<Bytes,std.error.Value>",
+          "selfhost_parameters": [
+            "Bytes"
+          ],
+          "selfhost_result": "Result<Bytes,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 33,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "gzip_decompress",
+          "host_parameters": [
+            "Bytes",
+            "int"
+          ],
+          "host_result": "Result<Bytes,std.error.Value>",
+          "selfhost_parameters": [
+            "Bytes",
+            "int"
+          ],
+          "selfhost_result": "Result<Bytes,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 33,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "gzip_reader",
+          "host_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "host_result": "Result<std.stream.Reader,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "selfhost_result": "Result<std.stream.Reader,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 33,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "gzip_writer",
+          "host_parameters": [
+            "std.stream.Writer"
+          ],
+          "host_result": "Result<std.stream.Writer,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Writer"
+          ],
+          "selfhost_result": "Result<std.stream.Writer,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 33,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        }
+      ]
+    },
+    {
       "module": "std.crypto",
       "short_name": "crypto",
       "exported_types": [],
@@ -1567,7 +1679,9 @@
       "exported_types": [
         "Deque"
       ],
-      "selfhost_exported_types": [],
+      "selfhost_exported_types": [
+        "Deque"
+      ],
       "functions": [
         {
           "name": "from_slice",
@@ -1586,9 +1700,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1608,9 +1722,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1632,9 +1746,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1656,9 +1770,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1678,9 +1792,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1700,9 +1814,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1722,9 +1836,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1744,9 +1858,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1768,9 +1882,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1790,9 +1904,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -1812,9 +1926,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -3546,9 +3660,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -3570,9 +3684,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -3592,9 +3706,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -3614,9 +3728,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -3638,9 +3752,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -3662,9 +3776,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -3715,6 +3829,358 @@
             "selfhost_check": false,
             "selfhost_huab": false,
             "native_release": "none"
+          }
+        }
+      ]
+    },
+    {
+      "module": "std.http",
+      "short_name": "http",
+      "exported_types": [
+        "Response",
+        "StreamResponse"
+      ],
+      "selfhost_exported_types": [
+        "Response",
+        "StreamResponse"
+      ],
+      "functions": [
+        {
+          "name": "get",
+          "host_parameters": [
+            "string",
+            "map<string,string>",
+            "int"
+          ],
+          "host_result": "Result<std.http.Response,std.error.Value>",
+          "selfhost_parameters": [
+            "string",
+            "map<string,string>",
+            "int"
+          ],
+          "selfhost_result": "Result<std.http.Response,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "post",
+          "host_parameters": [
+            "string",
+            "map<string,string>",
+            "Bytes",
+            "int"
+          ],
+          "host_result": "Result<std.http.Response,std.error.Value>",
+          "selfhost_parameters": [
+            "string",
+            "map<string,string>",
+            "Bytes",
+            "int"
+          ],
+          "selfhost_result": "Result<std.http.Response,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "request",
+          "host_parameters": [
+            "string",
+            "string",
+            "map<string,string>",
+            "Bytes",
+            "map<string,Json>"
+          ],
+          "host_result": "Result<std.http.Response,std.error.Value>",
+          "selfhost_parameters": [
+            "string",
+            "string",
+            "map<string,string>",
+            "Bytes",
+            "map<string,Json>"
+          ],
+          "selfhost_result": "Result<std.http.Response,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "status",
+          "host_parameters": [
+            "std.http.Response"
+          ],
+          "host_result": "int",
+          "selfhost_parameters": [
+            "std.http.Response"
+          ],
+          "selfhost_result": "int",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "header",
+          "host_parameters": [
+            "std.http.Response",
+            "string"
+          ],
+          "host_result": "string?",
+          "selfhost_parameters": [
+            "std.http.Response",
+            "string"
+          ],
+          "selfhost_result": "string?",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "headers",
+          "host_parameters": [
+            "std.http.Response"
+          ],
+          "host_result": "map<string,string>",
+          "selfhost_parameters": [
+            "std.http.Response"
+          ],
+          "selfhost_result": "map<string,string>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "body",
+          "host_parameters": [
+            "std.http.Response"
+          ],
+          "host_result": "Bytes",
+          "selfhost_parameters": [
+            "std.http.Response"
+          ],
+          "selfhost_result": "Bytes",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "text",
+          "host_parameters": [
+            "std.http.Response"
+          ],
+          "host_result": "Result<string,std.error.Value>",
+          "selfhost_parameters": [
+            "std.http.Response"
+          ],
+          "selfhost_result": "Result<string,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "open_stream",
+          "host_parameters": [
+            "string",
+            "string",
+            "map<string,string>",
+            "Bytes",
+            "map<string,Json>"
+          ],
+          "host_result": "Result<std.http.StreamResponse,std.error.Value>",
+          "selfhost_parameters": [
+            "string",
+            "string",
+            "map<string,string>",
+            "Bytes",
+            "map<string,Json>"
+          ],
+          "selfhost_result": "Result<std.http.StreamResponse,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stream_status",
+          "host_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "host_result": "int",
+          "selfhost_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "selfhost_result": "int",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stream_header",
+          "host_parameters": [
+            "std.http.StreamResponse",
+            "string"
+          ],
+          "host_result": "string?",
+          "selfhost_parameters": [
+            "std.http.StreamResponse",
+            "string"
+          ],
+          "selfhost_result": "string?",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stream_headers",
+          "host_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "host_result": "map<string,string>",
+          "selfhost_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "selfhost_result": "map<string,string>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stream_body",
+          "host_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "host_result": "std.stream.Reader",
+          "selfhost_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "selfhost_result": "std.stream.Reader",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stream_close",
+          "host_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "host_result": "Result<void,std.error.Value>",
+          "selfhost_parameters": [
+            "std.http.StreamResponse"
+          ],
+          "selfhost_result": "Result<void,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -4598,9 +5064,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4622,9 +5088,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4646,9 +5112,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4670,9 +5136,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4692,9 +5158,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4714,9 +5180,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4740,9 +5206,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4764,9 +5230,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4790,9 +5256,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -4884,9 +5350,9 @@
           "since": 20,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -5058,9 +5524,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -5080,9 +5546,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -5102,9 +5568,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -5128,9 +5594,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -5152,9 +5618,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -5176,9 +5642,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6760,8 +7226,12 @@
     {
       "module": "std.process",
       "short_name": "process",
-      "exported_types": [],
-      "selfhost_exported_types": [],
+      "exported_types": [
+        "Child"
+      ],
+      "selfhost_exported_types": [
+        "Child"
+      ],
       "functions": [
         {
           "name": "run",
@@ -6818,6 +7288,144 @@
             "selfhost_huab": true,
             "native_release": "bridged"
           }
+        },
+        {
+          "name": "start",
+          "host_parameters": [
+            "[]string",
+            "string",
+            "map<string,string>"
+          ],
+          "host_result": "Result<std.process.Child,std.error.Value>",
+          "selfhost_parameters": [
+            "[]string",
+            "string",
+            "map<string,string>"
+          ],
+          "selfhost_result": "Result<std.process.Child,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stdin",
+          "host_parameters": [
+            "std.process.Child"
+          ],
+          "host_result": "std.stream.Writer",
+          "selfhost_parameters": [
+            "std.process.Child"
+          ],
+          "selfhost_result": "std.stream.Writer",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stdout",
+          "host_parameters": [
+            "std.process.Child"
+          ],
+          "host_result": "std.stream.Reader",
+          "selfhost_parameters": [
+            "std.process.Child"
+          ],
+          "selfhost_result": "std.stream.Reader",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "stderr",
+          "host_parameters": [
+            "std.process.Child"
+          ],
+          "host_result": "std.stream.Reader",
+          "selfhost_parameters": [
+            "std.process.Child"
+          ],
+          "selfhost_result": "std.stream.Reader",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "wait",
+          "host_parameters": [
+            "std.process.Child",
+            "int"
+          ],
+          "host_result": "Result<int,std.error.Value>",
+          "selfhost_parameters": [
+            "std.process.Child",
+            "int"
+          ],
+          "selfhost_result": "Result<int,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "kill",
+          "host_parameters": [
+            "std.process.Child"
+          ],
+          "host_result": "Result<void,std.error.Value>",
+          "selfhost_parameters": [
+            "std.process.Child"
+          ],
+          "selfhost_result": "Result<void,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
         }
       ]
     },
@@ -6827,7 +7435,9 @@
       "exported_types": [
         "Rng"
       ],
-      "selfhost_exported_types": [],
+      "selfhost_exported_types": [
+        "Rng"
+      ],
       "functions": [
         {
           "name": "new",
@@ -6846,9 +7456,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6872,9 +7482,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6894,9 +7504,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6916,9 +7526,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6940,9 +7550,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6964,9 +7574,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -6988,9 +7598,9 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7014,9 +7624,169 @@
           "since": 13,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        }
+      ]
+    },
+    {
+      "module": "std.regex",
+      "short_name": "regex",
+      "exported_types": [
+        "Pattern"
+      ],
+      "selfhost_exported_types": [
+        "Pattern"
+      ],
+      "functions": [
+        {
+          "name": "compile",
+          "host_parameters": [
+            "string"
+          ],
+          "host_result": "Result<std.regex.Pattern,std.error.Value>",
+          "selfhost_parameters": [
+            "string"
+          ],
+          "selfhost_result": "Result<std.regex.Pattern,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "is_match",
+          "host_parameters": [
+            "std.regex.Pattern",
+            "string"
+          ],
+          "host_result": "bool",
+          "selfhost_parameters": [
+            "std.regex.Pattern",
+            "string"
+          ],
+          "selfhost_result": "bool",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "find",
+          "host_parameters": [
+            "std.regex.Pattern",
+            "string"
+          ],
+          "host_result": "string?",
+          "selfhost_parameters": [
+            "std.regex.Pattern",
+            "string"
+          ],
+          "selfhost_result": "string?",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "find_all",
+          "host_parameters": [
+            "std.regex.Pattern",
+            "string",
+            "int"
+          ],
+          "host_result": "[]string",
+          "selfhost_parameters": [
+            "std.regex.Pattern",
+            "string",
+            "int"
+          ],
+          "selfhost_result": "[]string",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "replace_all",
+          "host_parameters": [
+            "std.regex.Pattern",
+            "string",
+            "string"
+          ],
+          "host_result": "string",
+          "selfhost_parameters": [
+            "std.regex.Pattern",
+            "string",
+            "string"
+          ],
+          "selfhost_result": "string",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "split",
+          "host_parameters": [
+            "std.regex.Pattern",
+            "string",
+            "int"
+          ],
+          "host_result": "[]string",
+          "selfhost_parameters": [
+            "std.regex.Pattern",
+            "string",
+            "int"
+          ],
+          "selfhost_result": "[]string",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 32,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -7044,9 +7814,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7068,9 +7838,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7092,9 +7862,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7116,9 +7886,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7140,9 +7910,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7164,9 +7934,9 @@
           "since": 10,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7188,9 +7958,9 @@
           "since": 21,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -7214,9 +7984,9 @@
           "since": 6,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7238,9 +8008,9 @@
           "since": 6,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7262,9 +8032,9 @@
           "since": 6,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         },
         {
@@ -7286,9 +8056,347 @@
           "since": 6,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        }
+      ]
+    },
+    {
+      "module": "std.stream",
+      "short_name": "stream",
+      "exported_types": [
+        "Reader",
+        "Writer"
+      ],
+      "selfhost_exported_types": [
+        "Reader",
+        "Writer"
+      ],
+      "functions": [
+        {
+          "name": "from_bytes",
+          "host_parameters": [
+            "Bytes"
+          ],
+          "host_result": "std.stream.Reader",
+          "selfhost_parameters": [
+            "Bytes"
+          ],
+          "selfhost_result": "std.stream.Reader",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "from_file",
+          "host_parameters": [
+            "std.file.File"
+          ],
+          "host_result": "Result<std.stream.Reader,std.error.Value>",
+          "selfhost_parameters": [
+            "std.file.File"
+          ],
+          "selfhost_result": "Result<std.stream.Reader,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "to_buffer",
+          "host_parameters": [
+            "Buffer"
+          ],
+          "host_result": "std.stream.Writer",
+          "selfhost_parameters": [
+            "Buffer"
+          ],
+          "selfhost_result": "std.stream.Writer",
+          "polymorphic_rule": "none",
+          "mutates_first": true,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "to_file",
+          "host_parameters": [
+            "std.file.File"
+          ],
+          "host_result": "Result<std.stream.Writer,std.error.Value>",
+          "selfhost_parameters": [
+            "std.file.File"
+          ],
+          "selfhost_result": "Result<std.stream.Writer,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "limit",
+          "host_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "host_result": "Result<std.stream.Reader,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "selfhost_result": "Result<std.stream.Reader,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "read",
+          "host_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "host_result": "Result<Bytes?,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "selfhost_result": "Result<Bytes?,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "read_exact",
+          "host_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "host_result": "Result<Bytes,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "selfhost_result": "Result<Bytes,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "read_all",
+          "host_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "host_result": "Result<Bytes,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Reader",
+            "int"
+          ],
+          "selfhost_result": "Result<Bytes,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "write",
+          "host_parameters": [
+            "std.stream.Writer",
+            "Bytes"
+          ],
+          "host_result": "Result<int,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Writer",
+            "Bytes"
+          ],
+          "selfhost_result": "Result<int,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "write_all",
+          "host_parameters": [
+            "std.stream.Writer",
+            "Bytes"
+          ],
+          "host_result": "Result<void,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Writer",
+            "Bytes"
+          ],
+          "selfhost_result": "Result<void,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "flush",
+          "host_parameters": [
+            "std.stream.Writer"
+          ],
+          "host_result": "Result<void,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Writer"
+          ],
+          "selfhost_result": "Result<void,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "close_reader",
+          "host_parameters": [
+            "std.stream.Reader"
+          ],
+          "host_result": "Result<void,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Reader"
+          ],
+          "selfhost_result": "Result<void,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "close_writer",
+          "host_parameters": [
+            "std.stream.Writer"
+          ],
+          "host_result": "Result<void,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Writer"
+          ],
+          "selfhost_result": "Result<void,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "copy",
+          "host_parameters": [
+            "std.stream.Writer",
+            "std.stream.Reader",
+            "int"
+          ],
+          "host_result": "Result<int,std.error.Value>",
+          "selfhost_parameters": [
+            "std.stream.Writer",
+            "std.stream.Reader",
+            "int"
+          ],
+          "selfhost_result": "Result<int,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
           }
         }
       ]
@@ -8964,6 +10072,102 @@
           "writable_result": false,
           "callback": false,
           "since": 6,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        }
+      ]
+    },
+    {
+      "module": "std.url",
+      "short_name": "url",
+      "exported_types": [],
+      "selfhost_exported_types": [],
+      "functions": [
+        {
+          "name": "parse",
+          "host_parameters": [
+            "string"
+          ],
+          "host_result": "Result<map<string,string>,std.error.Value>",
+          "selfhost_parameters": [
+            "string"
+          ],
+          "selfhost_result": "Result<map<string,string>,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "encode",
+          "host_parameters": [
+            "string"
+          ],
+          "host_result": "string",
+          "selfhost_parameters": [
+            "string"
+          ],
+          "selfhost_result": "string",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "decode",
+          "host_parameters": [
+            "string"
+          ],
+          "host_result": "Result<string,std.error.Value>",
+          "selfhost_parameters": [
+            "string"
+          ],
+          "selfhost_result": "Result<string,std.error.Value>",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
+          "backends": {
+            "host": true,
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "bridged"
+          }
+        },
+        {
+          "name": "build_query",
+          "host_parameters": [
+            "map<string,string>"
+          ],
+          "host_result": "string",
+          "selfhost_parameters": [
+            "map<string,string>"
+          ],
+          "selfhost_result": "string",
+          "polymorphic_rule": "none",
+          "mutates_first": false,
+          "writable_result": false,
+          "callback": false,
+          "since": 31,
           "backends": {
             "host": true,
             "selfhost_check": true,

@@ -1,0 +1,48 @@
+# Official optional CPython bridge package (4-path compatible: VM, Host/Selfhost HUAB, --release).
+import python_native as native
+import std.json as json
+
+fn response(raw string) Result<Json, string> {
+    let message = json.decode(raw)?
+    let success = json.as_bool(json.get(message, "ok")?)?
+    if !success { return err(json.as_string(json.get(message, "error")?)?) }
+    return json.get(message, "value")
+}
+
+fn exchange(request string) Result<Json, string> { return response(native.request(request)) }
+fn number(request string) Result<int, string> { return json.as_int(exchange(request)?) }
+fn boolean(request string) Result<bool, string> { return json.as_bool(exchange(request)?) }
+fn text(request string) Result<string, string> { return json.as_string(exchange(request)?) }
+
+pub fn init(home string) Result<bool, string> { return json.as_bool(response(native.initialize(home))?) }
+pub fn version() Result<string, string> { return text("{\"op\":\"version\"}") }
+pub fn add_path(path string) Result<bool, string> {
+    return boolean("{\"op\":\"add_path\",\"path\":" + json.encode(path)? + "}")
+}
+pub fn import_module(name string) Result<int, string> {
+    return number("{\"op\":\"import\",\"name\":" + json.encode(name)? + "}")
+}
+pub fn getattr(object int, name string) Result<int, string> {
+    return number("{\"op\":\"getattr\",\"target\":" + str(object) + ",\"name\":" + json.encode(name)? + "}")
+}
+pub fn from_json(value Json) Result<int, string> {
+    return number("{\"op\":\"from_json\",\"value\":" + json.encode(value)? + "}")
+}
+pub fn from_int(value int) Result<int, string> {
+    return number("{\"op\":\"from_json\",\"value\":" + str(value) + "}")
+}
+pub fn from_string(value string) Result<int, string> {
+    return number("{\"op\":\"from_json\",\"value\":" + json.encode(value)? + "}")
+}
+pub fn call_kw(function int, args []int, kwargs map[string]int) Result<int, string> {
+    return number("{\"op\":\"call\",\"target\":" + str(function) + ",\"args\":" + json.encode(args)? + ",\"kwargs\":" + json.encode(kwargs)? + "}")
+}
+pub fn call(function int, args []int) Result<int, string> {
+    var empty = map[string]int{}
+    return call_kw(function, args, empty)
+}
+pub fn to_json(object int) Result<Json, string> { return exchange("{\"op\":\"to_json\",\"target\":" + str(object) + "}") }
+pub fn to_string(object int) Result<string, string> { return text("{\"op\":\"to_string\",\"target\":" + str(object) + "}") }
+pub fn release(object int) Result<bool, string> { return boolean("{\"op\":\"release\",\"target\":" + str(object) + "}") }
+pub fn active_handles() Result<int, string> { return number("{\"op\":\"count\"}") }
+pub fn shutdown() Result<bool, string> { return boolean("{\"op\":\"shutdown\"}") }

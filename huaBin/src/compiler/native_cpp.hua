@@ -75,6 +75,13 @@ fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
     if t=="std.file.IOFailure" { return ok("hn::Opaque<hn::IOFailureTag>") }
     if t=="std.error.Value" { return ok("hn::Opaque<hn::ErrorTag>") }
     if t=="NativeHandle" { return ok("hn::Opaque<hn::NativeHandleTag>") }
+    if t=="std.stream.Reader" { return ok("hn::Opaque<hn::ReaderTag>") }
+    if t=="std.stream.Writer" { return ok("hn::Opaque<hn::WriterTag>") }
+    if t=="std.http.Response" { return ok("hn::Opaque<hn::HttpResponseTag>") }
+    if t=="std.http.StreamResponse" { return ok("hn::Opaque<hn::HttpStreamTag>") }
+    if t=="std.regex.Pattern" { return ok("hn::Opaque<hn::RegexTag>") }
+    if t=="std.process.Child" { return ok("hn::Opaque<hn::ProcessChildTag>") }
+    if t=="std.random.Rng" { return ok("hn::Opaque<hn::RngTag>") }
     let tuple=rules.arguments(t,"multi")
     if len(tuple)>0 {
         var code="std::tuple<"
@@ -91,6 +98,8 @@ fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
     if strings.starts_with(t,"[]") { return ok("hn::Slice<"+cpp_type(e,n,rules.cut(t,2,len(t)))?+">") }
     let list_args=rules.arguments(t,"List")
     if len(list_args)==1 { return ok("hn::List<"+cpp_type(e,n,list_args[0])?+">") }
+    let deque_args=rules.arguments(t,"Deque")
+    if len(deque_args)==1 { return ok("hn::OpaqueDeque<"+cpp_type(e,n,deque_args[0])?+">") }
     let map_args=rules.arguments(t,"map")
     if len(map_args)==2 { return ok("hn::Map<"+cpp_type(e,n,map_args[0])?+","+cpp_type(e,n,map_args[1])?+">") }
     let result_args=rules.arguments(t,"Result")
@@ -342,26 +351,37 @@ fn bridged(name string) bool {
     if len(parts)!=4 { return false }
     let module=parts[2]
     let func=parts[3]
-    if module=="alg" { return alg.contains(["sorted","reverse","contains","index","lower_bound","upper_bound","binary_search","sum","min","max"],func) }
+    if module=="alg" { return alg.contains(["unique","chunk","product","sorted","reverse","contains","index","lower_bound","upper_bound","binary_search","sum","min","max","windows"],func) }
     if module=="buffer" { return alg.contains(["new","len","append","write_u8","write_u32_le","write_i64_le","write_text","bytes","text","clear","write_str","write_int","take_text","reserve"],func) }
     if module=="bytes" { return alg.contains(["from_ints","from_text","to_text","to_ints","len","at","slice","concat","u32_le","i64_le","read_u32_le","read_i64_le","crc32"],func) }
+    if module=="compress" { return alg.contains(["gzip_compress","gzip_decompress","gzip_reader","gzip_writer"],func) }
     if module=="crypto" { return alg.contains(["random_bytes","uuid4","sha256","hmac_sha256","equal"],func) }
+    if module=="deque" { return alg.contains(["from_slice","len","push_back","push_front","pop_back","pop_front","front","back","get","clear","snapshot"],func) }
     if module=="encoding" { return alg.contains(["hex_encode","hex_decode","base64_encode","base64_decode","base64url_encode","base64url_decode","utf8_valid","utf8_encode","utf8_decode","pack_uint","pack_int","unpack_uint","unpack_int","pack_f32","pack_f64","unpack_f32","unpack_f64"],func) }
     if module=="error" { return alg.contains(["make","wrap","from_string","with_context","with_origin","with_native","domain","code","message","cause","origin","native_domain","native_code","contexts","truncated","format"],func) }
     if module=="file" { return alg.contains(["open","read","write","seek","tell","flush","close","state","close_error","error","transferred","partial","read_line","read_all","read_exact","write_all"],func) }
     if module=="fs" { return alg.contains(["stat","rename","replace","temp_file","walk","copy_file","copy_dir","remove_all","canonical","read_text","write_text","append_text","exists","remove","mkdir_all","list_dir","read_bytes","write_bytes","append_bytes"],func) }
     if module=="gc" { return alg.contains(["collect","live","allocated","collected"],func) }
+    if module=="heap" { return alg.contains(["heapify","push","pop","peek","smallest","largest"],func) }
+    if module=="http" { return alg.contains(["get","post","request","status","header","headers","body","text","open_stream","stream_status","stream_header","stream_headers","stream_body","stream_close"],func) }
     if module=="io" { return alg.contains(["write_err","read_line","read_all","write"],func) }
     if module=="json" { return alg.contains(["decode","encode","kind","get","at","len","keys","as_string","as_int","as_float","as_bool","is_null","null","from","array","object","set","remove","append","set_at","encode_pretty","decode_lines","encode_lines"],func) }
-    if module=="list" { return alg.contains(["reserve"],func) }
+    if module=="list" { return alg.contains(["reserve","insert","remove_at","index_of","contains","reverse","sort","swap","truncate","slice","dedup"],func) }
     if module=="log" { return alg.contains(["debug","info","warn","error","with_fields","set_level"],func) }
+    if module=="maps" { return alg.contains(["keys","values","entries","get_or","pop","merge"],func) }
     if module=="math" { return alg.contains(["floor","ceil","trunc","round","sin","cos","tan","exp","log","log2","log10","hypot","gcd","lcm","isqrt","asin","acos","atan","atan2","cbrt","fmod","pi","e","tau","popcount","leading_zeros","trailing_zeros","rotate_left","rotate_right","checked_add","checked_sub","checked_mul","checked_neg","checked_abs","checked_pow","wrapping_add","wrapping_sub","wrapping_mul","wrapping_neg","wrapping_abs","wrapping_pow","saturating_add","saturating_sub","saturating_mul","saturating_neg","saturating_abs","saturating_pow","sinh","cosh","tanh","asinh","acosh","atanh"],func) }
     if module=="os" { return alg.contains(["exit","platform","arch","pid","cpu_count","getenv","args","cwd","environ","parse_args"],func) }
     if module=="path" { return alg.contains(["join","normalize","basename","dirname","ext","relative"],func) }
-    if module=="process" { return alg.contains(["run","run_with"],func) }
+    if module=="process" { return alg.contains(["run","run_with","start","stdin","stdout","stderr","wait","kill"],func) }
+    if module=="random" { return alg.contains(["new","int","float","bool","bytes","shuffle","choice","sample"],func) }
+    if module=="regex" { return alg.contains(["compile","is_match","find","find_all","replace_all","split"],func) }
+    if module=="sets" { return alg.contains(["from_slice","union","intersection","difference","is_subset","is_disjoint","symmetric_difference"],func) }
+    if module=="simd" { return alg.contains(["backend","add","sub","mul"],func) }
+    if module=="stream" { return alg.contains(["from_bytes","from_file","to_buffer","to_file","limit","read","read_exact","read_all","write","write_all","flush","close_reader","close_writer","copy"],func) }
     if module=="strings" { return alg.contains(["contains","index","len_bytes","rune_count","trim","lower_ascii","upper_ascii","join","replace","last_index","count","repeat","split_n","fields","lines","trim_start","trim_end","trim_prefix","trim_suffix","pad_left","pad_right","replace_n","is_empty","parse_int","parse_float","format_int","format_float","format","center","codepoints","chars","from_codepoints","slice_runes","template","format_int_grouped","format_float_grouped","upper","lower","casefold","equal_fold"],func) }
     if module=="test" { return alg.contains(["assert","equal","not_equal","fail"],func) }
     if module=="time" { return alg.contains(["since_ns","format_duration","parse_duration","utc_parts","utc_from_parts","weekday","day_of_year","is_leap_year","days_in_month","format_rfc3339","format_rfc3339_offset","parse_rfc3339","monotonic_ns","unix_ms"],func) }
+    if module=="url" { return alg.contains(["parse","encode","decode","build_query"],func) }
     return false
 }
 # END GENERATED: stdlib_bridged
@@ -391,6 +411,11 @@ fn typed_builtin(e Emitter, n lower.Node, name string, args []string) string {
         return "hn::list_"+rules.cut(name,10,len(name))+"("+joined+","+site+")"
     }
     return ""
+}
+fn bridge_mut_arg(name string) int {
+    if name=="$std$random$shuffle" { return 2 }
+    if alg.contains(["$std$list$insert","$std$list$remove_at","$std$list$reverse","$std$list$sort","$std$list$swap","$std$list$truncate","$std$list$dedup","$std$heap$heapify","$std$heap$push","$std$heap$pop","$std$maps$pop","$std$maps$merge"],name) { return 1 }
+    return 0
 }
 fn call(e Emitter, n lower.Node) Result<string> {
     return emit_call(e,n,false)
@@ -463,6 +488,15 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
         return ok(code+"auto result="+invoke+"hn::leave<false>(depth);\nstd::move(result);})")
     }
     if bridge {
+        let mut_arg=bridge_mut_arg(builtin)
+        if mut_arg>0 {
+            code+="std::vector<hua::Value> bargs={"+strings.join(arguments,",")+"};\n"
+            let invoke=("hn::call_builtin("+quote(builtin)+","+location(e,n)+",bargs,{"+strings.join(list.snapshot(flags),",")+"},"+quote(bridge_name(n.type_name))+")")
+            if n.type_name=="void" {
+                return ok(code+invoke+";\nhn::sync_from_value(arg"+str(mut_arg)+",bargs["+str(mut_arg-1)+"]);})")
+            }
+            return ok(code+"auto bres="+invoke+";\nhn::sync_from_value(arg"+str(mut_arg)+",bargs["+str(mut_arg-1)+"]);\nhn::from_value<"+cpp_type(e,n,n.type_name)?+">(bres);})")
+        }
         let invoke=("hn::call_builtin("+quote(builtin)+","+location(e,n)+",{"+strings.join(arguments,",")
             +"},{"+strings.join(list.snapshot(flags),",")+"},"+quote(bridge_name(n.type_name))+")")
         if n.type_name=="void" { return ok(code+invoke+";})") }

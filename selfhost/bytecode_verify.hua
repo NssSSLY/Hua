@@ -45,7 +45,7 @@ fn valid_type(c Catalog, t string, depth int) bool {
     if depth>64 || !small(t,true) { return false }
     # 空类型是多数指令的合法默认字段，避免逐条分配原始类型名单。
     if t=="" { return true }
-    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json","NativeHandle","std.file.File","std.file.IOFailure","std.error.Value"],t) || has(c.structures,t) { return true }
+    if alg.contains(["","nil","void","bool","string","int","float","byte","i8","i16","i32","i64","u8","u16","u32","u64","isize","usize","f32","f64","Bytes","Buffer","Json","NativeHandle","std.file.File","std.file.IOFailure","std.error.Value","std.stream.Reader","std.stream.Writer","std.http.Response","std.http.StreamResponse","std.regex.Pattern","std.process.Child","std.random.Rng"],t) || has(c.structures,t) { return true }
     if strings.starts_with(t,"fn:") { return has(c.functions,rules.cut(t,3,len(t))) }
     if strings.starts_with(t,"builtin:") { return intrinsic(rules.cut(t,8,len(t))) }
     if strings.starts_with(t,"struct:") { return has(c.structures,rules.cut(t,7,len(t))) }
@@ -57,10 +57,10 @@ fn valid_type(c Catalog, t string, depth int) bool {
         if len(raw)>0 && is_err(rules.extent(raw)) { return false }
         return valid_type(c,rules.cut(t,end+1,len(t)),depth+1)
     }
-    for name in ["Result","List","Task","map","multi"] {
+    for name in ["Result","List","Deque","Task","map","multi"] {
         let parts = rules.arguments(t,name)
         if len(parts)==0 { continue }
-        if ((name=="List" || name=="Task") && len(parts)!=1) || ((name=="Result" || name=="map") && len(parts)!=2) || (name=="multi" && len(parts)<2) { return false }
+        if ((name=="List" || name=="Deque" || name=="Task") && len(parts)!=1) || ((name=="Result" || name=="map") && len(parts)!=2) || (name=="multi" && len(parts)<2) { return false }
         for p in parts { if !valid_type(c,p,depth+1) { return false } }
         return true
     }

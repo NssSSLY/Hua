@@ -1,5 +1,21 @@
 # Hua自举性能项目记忆索引
 
+## 第 5 步第二波：零依赖流式 GZIP（`std.compress`）、5D 非回调标准库清零与 `packages/python/`（2026-11-27）
+
+完成零三方 DLL RFC 1951/1952 `std.compress`（4 函数，`HUAB format 33`）、5D 非回调多态/句柄标准库双端打通（`random`/`deque`/`heap`/`maps`/`sets`/`list`/`alg`，含原生 `List`/`Map` `sync_from_value` 回写，自举 `401/422`）及 `packages/python/` `hua.package.v1` 封装。重装配 `huaBin/` 达成 `G1 == G2`（`f616fe8e...`）与 `C2(19.87s) == C3(175.47s, 784,461,934 步)` 不动点（`36c7d6b3...`）；Wave 2（`15.09s`）、Wave 1（`41.19s`）全 4 路径及 3 项契约 CTest 全过。[验收记录](runs/2026-11-27-step5-wave2-compress-5d-python.md)
+
+## 第 5 步第一波：纯 Hua `std.csv`、线性时间 `std.regex` 与流式子进程 `std.process.start`（2026-11-27）
+
+完成第 5 步第一波三项能力并统一升级 `HUAB format 32`：纯 Hua SDK 模块 `std.csv`（`std/csv.hua`）、线性时间 ReDoS 免疫 Thompson NFA `std.regex`（6 函数）与流式子进程 `std.process.start/stdin/stdout/stderr/wait/kill`（6 函数，Job Object + Handle List 隔离，`clone -> E3008`）。重装配 `huaBin/` 达成 `G1 == G2`（`903837f6...`）与 `C2(19.39s) == C3(160.01s, 756,482,587 步)` 不动点（`c898b9e0...`）；全 4 路径验收（含 CSV+Regex→SQLite 干净目录 EXE）与 `archives_extensions`/`module_contract`/`stdlib_contract` CTest 全过。[验收记录](runs/2026-11-27-step5-wave1-csv-regex-process.md)
+
+## 第 5 步规划、脱钩 C++ 路线、`huaBin` 定位与汇编重写 VM 评估（2026-11-27）
+
+记录第 5 步 5A–5E 详细切片、全仓 C++（25,616 行）vs Hua（11,300 行）组件归属盘点、三阶段脱离 C++ 依赖路线、`huaBin` 活体种子库定位与纯化标尺，以及汇编重写 VM 的收益/难点/跨平台（Linux/iOS）分析与 `[[clang::musttail]]` + `TypeId` 替代方案。[深度分析](designs/2026-11-27-step5-decoupling-and-asm-vm-analysis.md)
+
+## 应用路线第 4 步：`std.stream`、`std.url`/`std.http`（HTTPS/WinHTTP）与纯 Hua `std.sse`（2026-11-27）
+
+完成统一流式 `std.stream`（14 函数，`Reader`/`Writer`）、`std.url`（4 函数）、平台无关 `HttpBackend` + Windows 零三方 DLL `WinHttpBackend`（`std.http` 14 函数，支持严格 TLS/`ca_cert_pem`、跨源重定向剥离凭证头、`body_too_large`、超时与 `WinHttpCloseHandle`/`HANDLE_CLOSING` 真取消）、`HUAB format 31` 及纯 Hua SDK 标准源码模块 `std.sse`（`std/sse.hua`）。重装配 `huaBin/` 达成 `G1 == G2`（`a978266e...`）与 `C2(17.34s) == C3(135.65s, 752,467,173 步)` 逐字节不动点（`74ae55d6...`）；4A+4B+4C（HTTPS/SSE 随机拆包→SQLite Agent 闭环）全 4 路径含干净目录 EXE、三路径异步取消/超时、`E3008` 负例与 `stdlib_contract` CTest 全过。[验收记录](runs/2026-11-27-step4-stream-http-sse.md)
+
 ## 应用路线第 3 步：Native ABI v2、随包 DLL 分发与 SQLite 原生扩展包（2026-11-26）
 
 完成同步 Native ABI v2（`include/hua/native.h`、`NativeHandle` 宿主代次控制块与 LIFO 清理、`Bytes` 借用/复制、结构化 `Result<T, std.error.Value>`）、零 `wasmtime` `NativeExternalHost`、`hua.package.json` `native_libs`、`HUAB format 30 / native_abi 2`、Windows `--release` 便携目录分发（含 N3 缓存命中恢复伴随 DLL）及首个扩展包 `packages/sqlite/`；同步补齐 `docs/语言百科与设计核对.md` 全部 61 项现有诊断码。重装配 `huaBin/` 达成 `G1 == G2`（`e17f22f9...`）与 `C2(15.80s) == C3(124.83s, 743,192,893 步)` 逐字节不动点（`c23f98c8...`）；SQLite 四路径（含干净目录实跑、含 `\0`/非 UTF-8 `BLOB`、事务回滚、幂等关闭与 `E7001`）与 ABI v2 6 项负向诊断全过。[验收记录](runs/2026-11-26-step3-sqlite-extension.md)

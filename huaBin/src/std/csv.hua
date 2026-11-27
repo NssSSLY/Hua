@@ -1,0 +1,231 @@
+# Pure Hua RFC 4180 streaming CSV parser and writer over std.stream.Reader/Writer.
+import std.buffer as buffer
+import std.bytes as bytes
+import std.error as error
+import std.list as list
+import std.stream as stream
+import std.strings as strings
+
+pub struct Reader {
+    src stream.Reader
+    delim int
+    pending Buffer
+    eof bool
+    max_record_bytes int
+}
+
+pub fn new_reader(src stream.Reader, delimiter string) Result<Reader, error.Value> {
+    var d = 44 # ','
+    if delimiter != "" {
+        let bs = bytes.from_text(delimiter)
+        if bytes.len(bs) != 1 {
+            return err(unwrap(error.make("csv", "invalid_argument", "delimiter must be a single ASCII byte")))
+        }
+        let b0 = unwrap(bytes.at(bs, 0))
+        if b0 == 34 || b0 == 10 || b0 == 13 || b0 >= 128 {
+            return err(unwrap(error.make("csv", "invalid_argument", "delimiter cannot be quote, newline, or non-ASCII")))
+        }
+        d = b0
+    }
+    return ok(Reader{
+        src: src,
+        delim: d,
+        pending: buffer.new(),
+        eof: false,
+        max_record_bytes: 4194304
+    })
+}
+
+pub fn close_reader(r Reader) Result<void, error.Value> {
+    return stream.close_reader(r.src)
+}
+
+fn fill_more(r mut Reader) Result<bool, error.Value> {
+    if r.eof {
+        return ok(false)
+    }
+    let chunk = stream.read(r.src, 4096)?
+    if is_none(chunk) {
+        r.eof = true
+        return ok(false)
+    }
+    let _wb = buffer.append(r.pending, unwrap(chunk))
+    if buffer.len(r.pending) > r.max_record_bytes {
+        return err(unwrap(error.make("csv", "limit", "CSV record exceeds max_record_bytes")))
+    }
+    return ok(true)
+}
+
+fn ensure_byte(r mut Reader, pos int) Result<bool, error.Value> {
+    while pos >= buffer.len(r.pending) {
+        let got = fill_more(r)?
+        if !got {
+            return ok(false)
+        }
+    }
+    return ok(true)
+}
+
+fn consume_prefix(r mut Reader, n int) {
+    if n <= 0 { return }
+    let cur = buffer.bytes(r.pending)
+    let total = bytes.len(cur)
+    buffer.clear(r.pending)
+    if n < total {
+        let rest = unwrap(bytes.slice(cur, n, total))
+        let _wb = buffer.append(r.pending, rest)
+    }
+}
+
+pub fn next_row(r mut Reader) Result<[]string?, error.Value> {
+    if !ensure_byte(r, 0)? {
+        return ok(nil)
+    }
+    var empty []string = []
+    var fields = list.from_slice(empty)
+    var pos = 0
+    while true {
+        if !ensure_byte(r, pos)? {
+            list.append(fields, "")
+            consume_prefix(r, pos)
+            return ok(list.snapshot(fields))
+        }
+        let b0 = unwrap(bytes.at(buffer.bytes(r.pending), pos))
+        if b0 == 34 {
+            # Quoted field
+            pos = pos + 1
+            var fbuf = buffer.new()
+            var closed = false
+            while true {
+                if !ensure_byte(r, pos)? {
+                    return err(unwrap(error.make("csv", "syntax", "unterminated quoted CSV field")))
+                }
+                let ch = unwrap(bytes.at(buffer.bytes(r.pending), pos))
+                if ch == 34 {
+                    pos = pos + 1
+                    if ensure_byte(r, pos)? {
+                        let nxt = unwrap(bytes.at(buffer.bytes(r.pending), pos))
+                        if nxt == 34 {
+                            let _u = buffer.write_u8(fbuf, 34)
+                            pos = pos + 1
+                            continue
+                        }
+                    }
+                    closed = true
+                    break
+                }
+                let _u = buffer.write_u8(fbuf, ch)
+                pos = pos + 1
+            }
+            if !closed {
+                return err(unwrap(error.make("csv", "syntax", "unterminated quoted CSV field")))
+            }
+            let ftext = bytes.to_text(buffer.bytes(fbuf))
+            if is_err(ftext) {
+                return err(unwrap(error.make("csv", "invalid_utf8", unwrap_err(ftext))))
+            }
+            list.append(fields, unwrap(ftext))
+            if !ensure_byte(r, pos)? {
+                consume_prefix(r, pos)
+                return ok(list.snapshot(fields))
+            }
+            let after = unwrap(bytes.at(buffer.bytes(r.pending), pos))
+            if after == r.delim {
+                pos = pos + 1
+                continue
+            }
+            if after == 13 {
+                pos = pos + 1
+                if ensure_byte(r, pos)? && unwrap(bytes.at(buffer.bytes(r.pending), pos)) == 10 {
+                    pos = pos + 1
+                }
+                consume_prefix(r, pos)
+                return ok(list.snapshot(fields))
+            }
+            if after == 10 {
+                pos = pos + 1
+                consume_prefix(r, pos)
+                return ok(list.snapshot(fields))
+            }
+            return err(unwrap(error.make("csv", "syntax", "unexpected character after closing quote")))
+        } else {
+            # Unquoted field
+            var fbuf = buffer.new()
+            while true {
+                if !ensure_byte(r, pos)? {
+                    let ftext = bytes.to_text(buffer.bytes(fbuf))
+                    if is_err(ftext) {
+                        return err(unwrap(error.make("csv", "invalid_utf8", unwrap_err(ftext))))
+                    }
+                    list.append(fields, unwrap(ftext))
+                    consume_prefix(r, pos)
+                    return ok(list.snapshot(fields))
+                }
+                let ch = unwrap(bytes.at(buffer.bytes(r.pending), pos))
+                if ch == 34 {
+                    return err(unwrap(error.make("csv", "syntax", "bare quote inside unquoted CSV field")))
+                }
+                if ch == r.delim {
+                    let ftext = bytes.to_text(buffer.bytes(fbuf))
+                    if is_err(ftext) {
+                        return err(unwrap(error.make("csv", "invalid_utf8", unwrap_err(ftext))))
+                    }
+                    list.append(fields, unwrap(ftext))
+                    pos = pos + 1
+                    break
+                }
+                if ch == 13 {
+                    let ftext = bytes.to_text(buffer.bytes(fbuf))
+                    if is_err(ftext) {
+                        return err(unwrap(error.make("csv", "invalid_utf8", unwrap_err(ftext))))
+                    }
+                    list.append(fields, unwrap(ftext))
+                    pos = pos + 1
+                    if ensure_byte(r, pos)? && unwrap(bytes.at(buffer.bytes(r.pending), pos)) == 10 {
+                        pos = pos + 1
+                    }
+                    consume_prefix(r, pos)
+                    return ok(list.snapshot(fields))
+                }
+                if ch == 10 {
+                    let ftext = bytes.to_text(buffer.bytes(fbuf))
+                    if is_err(ftext) {
+                        return err(unwrap(error.make("csv", "invalid_utf8", unwrap_err(ftext))))
+                    }
+                    list.append(fields, unwrap(ftext))
+                    pos = pos + 1
+                    consume_prefix(r, pos)
+                    return ok(list.snapshot(fields))
+                }
+                let _u = buffer.write_u8(fbuf, ch)
+                pos = pos + 1
+            }
+        }
+    }
+    return ok(nil)
+}
+
+pub fn format_row(fields []string, delimiter string) string {
+    var d = ","
+    if delimiter != "" { d = delimiter }
+    var out = buffer.new()
+    for i in 0..len(fields) {
+        if i > 0 { buffer.write_str(out, d) }
+        let f = fields[i]
+        let needs_quote = strings.contains(f, d) || strings.contains(f, "\"") || strings.contains(f, "\n") || strings.contains(f, "\r")
+        if needs_quote {
+            buffer.write_str(out, "\"")
+            buffer.write_str(out, strings.replace(f, "\"", "\"\""))
+            buffer.write_str(out, "\"")
+        } else {
+            buffer.write_str(out, f)
+        }
+    }
+    buffer.write_str(out, "\n")
+    return unwrap(buffer.take_text(out))
+}
+
+pub fn write_row(w stream.Writer, fields []string, delimiter string) Result<void, error.Value> {
+    let line = format_row(fields, delimiter)
+    return stream.write_all(w, bytes.from_text(line))
+}

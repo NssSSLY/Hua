@@ -11,7 +11,7 @@ if(MSVC)
 else()
     target_compile_options(hua_frontend PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-add_library(hua_semantics src/entry.cpp src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/enum_value.cpp src/numeric.cpp src/array.cpp src/record_fields.cpp
+add_library(hua_semantics src/entry.cpp src/resume.cpp src/resources.cpp src/file_stdlib.cpp src/stream_stdlib.cpp src/url_stdlib.cpp src/http_winhttp.cpp src/http_stdlib.cpp src/regex_stdlib.cpp src/compress_stdlib.cpp src/gc.cpp src/simd.cpp src/tasks.cpp src/task_engines.cpp src/concurrency_lowering.cpp src/lowering.cpp src/enum_value.cpp src/numeric.cpp src/array.cpp src/record_fields.cpp
     src/plain_record.cpp src/value.cpp src/sema.cpp src/runtime.cpp src/interpreter.cpp src/bytecode.cpp src/vm.cpp src/register_vm.cpp src/native.cpp src/native_rt.cpp src/native_external.cpp src/module.cpp src/external.cpp src/archive.cpp src/stdlib.cpp src/text_stdlib.cpp src/unicode_case.cpp src/process_stdlib.cpp src/collections_stdlib.cpp src/callback_stdlib.cpp src/encoding_stdlib.cpp src/random_stdlib.cpp src/crypto_stdlib.cpp src/deque_stdlib.cpp src/time_stdlib.cpp src/report_stdlib.cpp src/error_stdlib.cpp src/json.cpp src/binary_stdlib.cpp src/algorithm_stdlib.cpp src/math_arithmetic_stdlib.cpp src/system_stdlib.cpp src/filesystem_stdlib.cpp src/hir.cpp src/mir.cpp src/ir_verify.cpp src/ir_bytecode.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(hua_semantics PUBLIC hua_frontend Threads::Threads)

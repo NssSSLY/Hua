@@ -65,6 +65,14 @@ fn runtime_name(s State, target string) string {
     if target == "builtin:std.error#Value" { return "std.error.Value" }
     if target == "builtin:std.file#File" { return "std.file.File" }
     if target == "builtin:std.file#IOFailure" { return "std.file.IOFailure" }
+    if target == "builtin:std.stream#Reader" { return "std.stream.Reader" }
+    if target == "builtin:std.stream#Writer" { return "std.stream.Writer" }
+    if target == "builtin:std.http#Response" { return "std.http.Response" }
+    if target == "builtin:std.http#StreamResponse" { return "std.http.StreamResponse" }
+    if target == "builtin:std.regex#Pattern" { return "std.regex.Pattern" }
+    if target == "builtin:std.process#Child" { return "std.process.Child" }
+    if target == "builtin:std.random#Rng" { return "std.random.Rng" }
+    if target == "builtin:std.deque#Deque" { return "Deque" }
     if strings.starts_with(target,"builtin:type:") { return rules.cut(target,13,len(target)) }
     if strings.starts_with(target,"builtin:std.") { return "$core$$std$"+strings.replace(rules.cut(target,12,len(target)),"#","$") }
     let parts = strings.split(target,"#")

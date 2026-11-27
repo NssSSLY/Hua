@@ -24,7 +24,7 @@ struct RuntimeContext {
 struct StandardFunction { std::string module, name; std::vector<std::string> parameters; std::string result; bool mutates_first{}; bool writable_result{}; unsigned since{3}; bool callback{};
     std::uint8_t module_id{}; };
 // Small integer per standard module, so call dispatch compares bytes, not strings.
-inline constexpr std::string_view standard_modules[]={"alg","buffer","bytes","crypto","deque","encoding","error","file","fs","gc","heap","io","json","list","log","maps","math","os","path","process","random","sets","simd","strings","task","test","time"};
+inline constexpr std::string_view standard_modules[]={"alg","buffer","bytes","compress","crypto","deque","encoding","error","file","fs","gc","heap","http","io","json","list","log","maps","math","os","path","process","random","regex","sets","simd","stream","strings","task","test","time","url"};
 constexpr std::uint8_t module_lookup(std::string_view name){for(std::size_t i=0;i<std::size(standard_modules);++i)if(standard_modules[i]==name)return static_cast<std::uint8_t>(i+1);return 255;}
 // Literal form: always folded at compile time.
 consteval std::uint8_t module_code(std::string_view name){return module_lookup(name);}

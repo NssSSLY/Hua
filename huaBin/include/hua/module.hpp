@@ -52,7 +52,7 @@ private:
     resolve_in_context(const Module& caller, const std::string& name, const SourceSpan& site) const;
     std::filesystem::path resolve(const std::string& name, const SourceSpan& site) const;
     NodePtr link(Module& module);
-    Module& sdk_standard(const SourceSpan& site);
+    Module& sdk_standard(const std::string& module, const std::string& relative, const SourceSpan& site);
     Module& standard(const std::string& name,const SourceSpan& site);
 };
 }

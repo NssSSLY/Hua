@@ -211,6 +211,13 @@ struct Emitter {
     static const char* opaque_tag(const std::string& t){if(t=="Bytes")return "hn::BytesTag";if(t=="Buffer")return "hn::BufferTag";if(t=="Json")return "hn::JsonTag";
         if(t=="std.file.File")return "hn::FileTag";
         if(t=="std.file.IOFailure")return "hn::IOFailureTag";
+        if(t=="NativeHandle")return "hn::NativeHandleTag";
+        if(t=="std.stream.Reader")return "hn::ReaderTag";
+        if(t=="std.stream.Writer")return "hn::WriterTag";
+        if(t=="std.http.Response")return "hn::HttpResponseTag";
+        if(t=="std.http.StreamResponse")return "hn::HttpStreamTag";
+        if(t=="std.regex.Pattern")return "hn::RegexTag";
+        if(t=="std.process.Child")return "hn::ProcessChildTag";
         if(t=="std.error.Value")return "hn::ErrorTag";
         return nullptr;}
     // map types are spelled `map[K]V` in source and `map<K,V>` by the checker.
@@ -606,7 +613,7 @@ struct Emitter {
     }
     std::set<std::string> resource_functions;
     bool might_hold_file(const std::string& type,std::set<std::string> active={},bool unknown_functions=false){
-        if(type=="std.file.File"||type=="@function"||type=="@dynamic"||type.starts_with("callable:"))return true;
+        if(type=="std.file.File"||type=="NativeHandle"||type=="std.stream.Reader"||type=="std.stream.Writer"||type=="std.http.StreamResponse"||type=="std.process.Child"||type=="@function"||type=="@dynamic"||type.starts_with("callable:"))return true;
         if(type.starts_with("fn:"))return unknown_functions||resource_functions.contains(type.substr(3));
         if(!active.insert(type).second)return false;
         if(type.ends_with('?'))return might_hold_file(type.substr(0,type.size()-1),active,unknown_functions);

@@ -8,7 +8,7 @@ namespace hua {namespace {
 using I=std::int64_t;
 Value snapshot(const Value& input,const std::function<Callable(const Callable&,unsigned)>& copy,unsigned depth=0){
     if(depth>64)runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
-    bool file=hua::holds_alternative<FileValue>(input.data)||hua::holds_alternative<NativeHandleValue>(input.data);
+    bool file=hua::holds_alternative<FileValue>(input.data)||hua::holds_alternative<NativeHandleValue>(input.data)||hua::holds_alternative<ReaderValue>(input.data)||hua::holds_alternative<WriterValue>(input.data)||hua::holds_alternative<HttpStreamValue>(input.data)||hua::holds_alternative<ProcessChildValue>(input.data);
     if(holds<Callable>(input.data))try{file=contains_file(input);}
     catch(const Diagnostic& error){
         if(error.code()=="E4099")runtime_error({},"task snapshot contains a cycle or is too deep","E4104");
@@ -27,7 +27,7 @@ Value snapshot(const Value& input,const std::function<Callable(const Callable&,u
     return read_only(copy_value(input,true));
 }
 void transferable(const Value& v,unsigned depth=0){
-    if(hua::holds_alternative<FileValue>(v.data)||hua::holds_alternative<NativeHandleValue>(v.data))runtime_error({},"task results cannot contain File or NativeHandle","E4104");
+    if(hua::holds_alternative<FileValue>(v.data)||hua::holds_alternative<NativeHandleValue>(v.data)||hua::holds_alternative<ReaderValue>(v.data)||hua::holds_alternative<WriterValue>(v.data)||hua::holds_alternative<HttpStreamValue>(v.data)||hua::holds_alternative<ProcessChildValue>(v.data))runtime_error({},"task results cannot contain File, NativeHandle, Stream, HttpStreamResponse, or ProcessChild","E4104");
     if(depth>64)runtime_error({},"task result is cyclic or too deep","E4104");
     if(holds<Callable>(v.data))runtime_error({},"task results cannot contain closures","E4104");
     if(auto p=cget_if<PlainRecord>(&v.data);p&&depth+p->layout->depth>64)runtime_error({},"task result is cyclic or too deep","E4104");

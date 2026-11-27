@@ -1,5 +1,28 @@
 # 当前状态
 
+## 2026-11-27 第 5 步第二波完成：零依赖流式 GZIP（`std.compress`）、5D 非回调标准库清零与 `packages/python/`（HUAB 33）
+
+基于 `main@c72b40e` 完成第 5 步主体收官（第 4 步、`tests/` 清理与第 5 步第一/二波均在本地工作区，尚未提交/推送 Git）：
+- **5B-gzip (`std.compress`, 4 函数)**：零三方 DLL RFC 1951/1952 实现（`include/hua/compress.hpp`、`src/compress_stdlib.cpp`），支持 `gzip_compress`/`gzip_decompress`/`gzip_reader`/`gzip_writer`、与 Python `gzip` 双向互操作、`max_bytes` 炸弹上限与 CRC32/ISIZE 校验，升级 `HUAB format 33`。
+- **5D 非回调标准库清零**：在 `native_rt.hpp` + `selfhost/` 新增 `RngTag`、`OpaqueDeque<T>`、`sync_from_value` 原生 `List`/`Map` 就地修改回写及 `random`/`deque`/`heap`/`maps`/`sets`/`list`/`alg` 多态规则，标准库达 **32 内建模块 / 422 函数**（自举 `401/422`）+ **3 纯 Hua SDK 模块**。
+- **5E `packages/python/`**：封装为 `hua.package.v1` 类型化包（`packages/python/{hua.package.json,package.hua,python_native.huam}`）。
+- **不动点与验收**：重装配 `huaBin/` 达成 `G1 == G2`（`f616fe8e...`）与 `C2(19.87s) == C3(175.47s, 784,461,934 步)` 不动点（`36c7d6b3...`）；Wave 2（`15.09s`）、Wave 1（`41.19s`）全 4 路径及 `archives_extensions`/`module_contract`/`stdlib_contract` CTest 全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-27-step5-wave2-compress-5d-python.md)
+
+## 2026-11-27 第 5 步第一波完成：纯 Hua `std.csv`、线性时间 `std.regex` 与流式子进程 `std.process.start`（HUAB 32）
+
+基于 `main@c72b40e` 继第 4 步与 `tests/` 清理（释放 80,442 文件 / 11.74 GiB）后完成第 5 步第一波（均尚未提交/推送 Git）：
+- **5A 纯 Hua `std.csv`**：新增第 3 个纯 Hua SDK 标准源码模块 `std/csv.hua`（装配至 `huaBin/src/std/csv.hua`），基于 `std.stream.Reader`/`Writer` 实现 RFC 4180 流式 CSV 读写。
+- **5B 线性时间 `std.regex`（6 函数）**：新增 `include/hua/regex.hpp` + `src/regex_stdlib.cpp`（Thompson NFA，天然免疫指数回溯 ReDoS，导出不可变句柄 `std.regex.Pattern`）。
+- **5C 流式子进程 `std.process.start`（6 函数）**：新增 `start/stdin/stdout/stderr/wait/kill`（避开关键字 `spawn`，导出活资源 `std.process.Child`，Windows `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` + `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 隔离，禁止 `clone`/`spawn` `E3008`/`E4104`）。
+- **HUAB 32、`huaBin/` 不动点与全路径验收**：标准库升至 31 内建模块 / 418 函数（自举 `343/418`、`--release` `334/418`、`22/31` 全通）+ 3 纯 Hua SDK 模块；重装配 `huaBin/` 达成 `G1 == G2`（`903837f6...`）与 `C2(19.39s) == C3(160.01s, 756,482,587 步)` 不动点（`c898b9e0...`）；`tests/step5_csv_regex_process_tests.py --sdk huaBin`（4 路径含 ReDoS/`E3008` 与 CSV+Regex→SQLite 干净目录 EXE，`40.66s`）及 `archives_extensions`/`module_contract`/`stdlib_contract` CTest 全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-27-step5-wave1-csv-regex-process.md)
+
+## 2026-11-27 应用驱动路线第 4 步完成：`std.stream`、`std.url`/`std.http`（HTTPS）与纯 Hua `std.sse`
+
+基于 `main@c72b40e` 完成应用驱动五步路线第 4 步（尚未提交/推送 Git）：
+- **4A 流式 I/O（`std.stream`，14 函数）**：实现 `Reader`/`Writer` 不透明控制块（`Bytes`/`Buffer`/`File`/`HttpStream` 适配、短读/EOF=`nil`/限额/幂等关闭、`E3008`/`E4104` 隔离）。
+- **4B URL 与 HTTPS 客户端（`std.url` 4 函数、`std.http` 14 函数）**：拆分平台无关 `HttpBackend` 与 Windows 零三方 DLL `WinHttpBackend`（`WINHTTP_FLAG_ASYNC` + `WinHttpCloseHandle`/`HANDLE_CLOSING` 退休真取消、`ca_cert_pem` 内存 `HCERTSTORE` 严格校验、跨源重定向剥离凭证头、`body_too_large` 与 4xx/5xx 正常 `Response`）。
+- **4C 纯 Hua `std.sse`、HUAB 31 与全路径验收**：交付第二个纯 Hua SDK 标准源码模块 `std/sse.hua`（装配至 `huaBin/src/std/sse.hua`），修复 `native_rt.hpp` `OkV<std::nullopt_t>`；标准库升至 30 内建模块 / 406 函数（自举 `331/406`、`--release` `322/406`、`21/30` 全通）+ 2 纯 Hua 模块。重装配 `huaBin/` 达成 `G1 == G2`（`a978266e...`）与 `C2(17.34s) == C3(135.65s, 752,467,173 步)` 不动点（`74ae55d6...`）；`tests/step4_stream_http_sse_tests.py`（4A+4B+4C 四路径 + 三路径异步取消 + `E3008`）、`sqlite_package_tests.py` 与 `stdlib_contract` CTest 全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-27-step4-stream-http-sse.md)
+
 ## 2026-11-26 应用驱动路线第 3 步完成：Native ABI v2、随包 DLL 分发与 SQLite 扩展包
 
 基于 `main@94e2442` 连续完成应用驱动五步路线第 2 步与第 3 步（尚未提交/推送 Git）：

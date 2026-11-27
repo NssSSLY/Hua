@@ -436,6 +436,10 @@ template<class T> struct OkV {
     template<class E> operator Result<T,E>()&&{return {true,std::move(value),E{}};}
     template<class E> operator Result<Opt<T>,E>()&&{return {true,Opt<T>{std::move(value)},E{}};}
 };
+template<> struct OkV<std::nullopt_t> {
+    std::nullopt_t value;
+    template<class U,class E> operator Result<Opt<U>,E>()&&{return {true,Opt<U>{std::nullopt},E{}};}
+};
 template<class E> struct ErrV { E error;Trace trace;template<class T> operator Result<T,E>()&&{return Result<T,E>{false,T{},std::move(error),std::move(trace)};} };
 // `[]` before its context gives it an element type.
 struct EmptySlice {};
@@ -526,6 +530,17 @@ struct FileTag{static constexpr const char* name="std.file.File";};
 struct IOFailureTag{static constexpr const char* name="std.file.IOFailure";};
 struct ErrorTag{static constexpr const char* name="std.error.Value";};
 struct NativeHandleTag{static constexpr const char* name="NativeHandle";};
+struct ReaderTag{static constexpr const char* name="std.stream.Reader";};
+struct WriterTag{static constexpr const char* name="std.stream.Writer";};
+struct HttpResponseTag{static constexpr const char* name="std.http.Response";};
+struct HttpStreamTag{static constexpr const char* name="std.http.StreamResponse";};
+struct RegexTag{static constexpr const char* name="std.regex.Pattern";};
+struct ProcessChildTag{static constexpr const char* name="std.process.Child";};
+struct RngTag{static constexpr const char* name="std.random.Rng";};
+template<class T> struct OpaqueDeque { Value v; };
+template<class T> inline constexpr bool tracks_native_edges<OpaqueDeque<T>> = false;
+template<class T> OpaqueDeque<T> capture_value(OpaqueDeque<T> value){value.v=hua::read_only(std::move(value.v));return value;}
+template<class T> OpaqueDeque<T> clone(const OpaqueDeque<T>& value){return {hua::copy_value(value.v,true,0,true)};}
 
 template<class T> T capture_value(T value){return value;}
 template<class T> Slice<T> capture_value(Slice<T> value){value.writable=false;return value;}
@@ -779,6 +794,7 @@ template<class T,std::size_t N> struct TypeName<Fixed<T,N>>{
 };
 template<class T> struct TypeName<Slice<T>>{static std::string get(){return "[]"+TypeName<T>::get();}};
 template<class T> struct TypeName<List<T>>{static std::string get(){return "List<"+TypeName<T>::get()+">";}};
+template<class T> struct TypeName<OpaqueDeque<T>>{static std::string get(){return "Deque<"+TypeName<T>::get()+">";}};
 template<class T> struct TypeName<Opt<T>>{static std::string get(){return TypeName<T>::get()+"?";}};
 template<class Tag> struct TypeName<Opaque<Tag>>{static std::string get(){return Tag::name;}};
 template<class K,class V> struct TypeName<Map<K,V>>{static std::string get(){return "map["+TypeName<K>::get()+"]"+TypeName<V>::get();}};
@@ -796,6 +812,7 @@ inline Value to_value(std::nullopt_t){return Value{};}
 inline Value to_value(EmptySlice){return Value(hua::SliceValue{hua::managed<std::vector<Value>>(),0,0,true,""});}
 inline Value to_value(const Rng& rng){return Value(hua::RngValue{rng.data,rng.writable});}
 template<class Tag> Value to_value(const Opaque<Tag>& v){return v.v;}
+template<class T> Value to_value(const OpaqueDeque<T>& v){return v.v;}
 template<ExactName Name,class Rep> Value to_value(const Exact<Name,Rep>& v){
     using Boxed=std::conditional_t<std::is_floating_point_v<Rep>,F,std::conditional_t<std::is_signed_v<Rep>,I,std::uint64_t>>;
     return Value(hua::NumericValue{exact_name<Name>(),static_cast<Boxed>(v.value)});
@@ -1004,6 +1021,7 @@ template<> struct From<Rng>{
     }
 };
 template<class Tag> struct From<Opaque<Tag>>{static Opaque<Tag> get(const Value& v){return {v};}};
+template<class T> struct From<OpaqueDeque<T>>{static OpaqueDeque<T> get(const Value& v){return {v};}};
 template<class T> struct From<Slice<T>>{static Slice<T> get(const Value& v){
     auto p=hua::cget_if<hua::SliceValue>(&v.data);if(!p)bad_unbox("slice");
     std::vector<T> items;items.reserve(p->length);for(std::size_t i=0;i<p->length;++i)items.push_back(from_value<T>(hua::sequence_read(*p,i)));
@@ -1054,6 +1072,23 @@ template<class K,class V> struct From<Map<K,V>> {
 
 // ---- library calls through the VM's implementation (boxed)
 Value call_builtin(const char* name,const SourceSpan& span,std::vector<Value> args,const std::vector<bool>& contextual,const char* result_type);
+template<class T> inline void sync_from_value(T&,const Value&){}
+template<class T> inline void sync_from_value(List<T>& target,const Value& boxed){
+    auto* p=hua::get_if<hua::ListValue>(&boxed.data);
+    if(!p||!p->data)return;
+    target.data->clear();
+    target.data->reserve(p->data->values.size());
+    for(const auto& x:p->data->values)target.data->push_back(from_value<T>(x));
+}
+template<class K,class V> inline void sync_from_value(Map<K,V>& target,const Value& boxed){
+    auto* p=hua::cget_if<hua::MapValue>(&boxed.data);
+    if(!p||!p->data)return;
+    target.data->items.clear();target.data->hashes.clear();target.data->index.clear();target.data->sorted=true;
+    for(const auto& [k,v]:p->data->entries){
+        auto kv=hua::visit([](const auto& val){return Value(val);},k);
+        target.data->insert_or_assign(from_value<K>(kv),from_value<V>(v));
+    }
+}
 // One bridged call site: the builtin is resolved once and its metadata kept, and the
 // argument vector is reused, so a call costs the boxing of its arguments and nothing else.
 struct BridgeInfo {

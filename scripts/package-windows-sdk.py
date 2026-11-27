@@ -200,6 +200,8 @@ def assemble(build, destination, toolchain=None):
         copy(ROOT / "LICENSE", "licenses/Hua.txt", "license")
         copy(ROOT / "scripts/hua-build.ps1", "bin/hua-build.ps1", "launcher")
         copy(ROOT / "std/alg_integer.hua", "src/std/alg_integer.hua", "stdlib_source")
+        copy(ROOT / "std/sse.hua", "src/std/sse.hua", "stdlib_source")
+        copy(ROOT / "std/csv.hua", "src/std/csv.hua", "stdlib_source")
         entries = (ENTRY, "native_main.hua") if toolchain else (ENTRY,)
         for module in compiler_sources(*entries):
             copy(ROOT / "selfhost" / module, f"src/compiler/{module}", "compiler_source")
@@ -235,7 +237,11 @@ def assemble(build, destination, toolchain=None):
             "host_version": version.splitlines(),
             "host_runtime_dependencies": ["bin/wasmtime.dll", "Windows system DLLs and UCRT"],
             "compiler_entry": compiler_entry,
-            "source_modules": {"std.alg_integer": "src/std/alg_integer.hua"},
+            "source_modules": {
+                "std.alg_integer": "src/std/alg_integer.hua",
+                "std.sse": "src/std/sse.hua",
+                "std.csv": "src/std/csv.hua",
+            },
             "compiler_seed": {
                 "path": seed_name, "producer": "bin/hua.exe build",
                 "producer_sha256": files["bin/hua.exe"]["sha256"], **info,

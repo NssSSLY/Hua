@@ -649,9 +649,9 @@ fn resolve_in_context(g mut Graph, owner_pkg string, name string, site ast.Node,
 fn rules_cut_local(text string, start int, finish int) string {
     return unwrap(strings.slice(text,start,finish))
 }
-fn std_source(g mut Graph, site ast.Node, source string) Result<string> {
+fn std_source(g mut Graph, site ast.Node, source string, mod_name string, relative string) Result<string> {
     let configured = os.getenv("HUA_HOME")?
-    if is_none(configured) { return err(error(source,site,"E5001","std.alg_integer requires HUA_HOME set to a Hua SDK root")) }
+    if is_none(configured) { return err(error(source,site,"E5001",mod_name+" requires HUA_HOME set to a Hua SDK root")) }
     let requested = path.normalize(unwrap(configured))?
     if cache_key(path.join([os.cwd()?,requested])?) != cache_key(requested) {
         return err(error(source,site,"E5001","HUA_HOME must be an absolute SDK root"))
@@ -670,13 +670,12 @@ fn std_source(g mut Graph, site ast.Node, source string) Result<string> {
     let parsed = json.decode(manifest_text)
     if is_err(parsed) { return err(error(source,site,"E5001","invalid JSON in Hua SDK manifest.json")) }
     let value = unwrap(parsed)
-    let relative = "src/std/alg_integer.hua"
     let schema = json.get(value,"schema")
     let modules = json.get(value,"source_modules")
     let files = json.get(value,"files")
-    let invalid = error(source,site,"E5001","Hua SDK manifest does not register std.alg_integer")
+    let invalid = error(source,site,"E5001","Hua SDK manifest does not register "+mod_name)
     if is_err(schema) || is_err(modules) || is_err(files) { return err(invalid) }
-    let registered = json.get(unwrap(modules),"std.alg_integer")
+    let registered = json.get(unwrap(modules),mod_name)
     let file = json.get(unwrap(files),relative)
     if is_err(registered) || is_err(file) { return err(invalid) }
     let role = json.get(unwrap(file),"role")
@@ -783,12 +782,16 @@ fn visit(g mut Graph, filename string, site ast.Node, parent string, sdk_id stri
         if sdk_id != "" && !(strings.starts_with(name,"std.") || name == "std") {
             return err(error(id,n,"E5001","SDK source modules can only import standard modules"))
         }
-        if name == "std.alg_integer" {
-            let loaded = unit_index(g,"@sdk/src/std/alg_integer.hua")
+        if name == "std.alg_integer" || name == "std.sse" || name == "std.csv" {
+            var rel = "src/std/alg_integer.hua"
+            if name == "std.sse" { rel = "src/std/sse.hua" }
+            else if name == "std.csv" { rel = "src/std/csv.hua" }
+            let sdk_key = "@sdk/" + rel
+            let loaded = unit_index(g,sdk_key)
             var source = ""
             if loaded >= 0 { source = list.get(g.units,loaded)?.path }
-            else { source = std_source(g,n,id)? }
-            target = visit(g,source,n,id,"@sdk/src/std/alg_integer.hua","","")?
+            else { source = std_source(g,n,id,name,rel)? }
+            target = visit(g,source,n,id,sdk_key,"","")?
         } else if strings.starts_with(name,"std.") || name == "std" {
             if !catalog.module(name) { return err(error(id,n,"E8201","standard module is outside SB1")) }
             target = "builtin:"+name

@@ -91,6 +91,8 @@ fn code(mut out Buffer, value bc.Code, sites []bc.Site, ids map[string]int) Resu
 }
 fn type_format(t string) int {
     if t=="" { return 6 }
+    if strings.contains(t,"std.regex.") || strings.contains(t,"std.process.Child") { return 32 }
+    if strings.contains(t,"std.stream.") || strings.contains(t,"std.http.") { return 31 }
     if strings.contains(t,"NativeHandle") { return 30 }
     if strings.contains(t,"std.file.") { return 8 }
     if strings.contains(t,"std.error.Value") || strings.contains(t,"Result<void,") { return 7 }
@@ -98,12 +100,20 @@ fn type_format(t string) int {
 }
 # BEGIN GENERATED: stdlib_load_format
 fn load_format(text string) int {
+    if strings.starts_with(text,"$core$$std$alg$") {
+        let name=rules.cut(text,15,len(text))
+        if alg.contains(["windows"],name) { return 20 }
+        if alg.contains(["unique","chunk","product"],name) { return 19 }
+        return 6
+    }
     if strings.starts_with(text,"$core$$std$buffer$") {
         let name=rules.cut(text,18,len(text))
         if alg.contains(["write_str","write_int","take_text","reserve"],name) { return 9 }
         return 6
     }
+    if strings.starts_with(text,"$core$$std$compress$") { return 33 }
     if strings.starts_with(text,"$core$$std$crypto$") { return 13 }
+    if strings.starts_with(text,"$core$$std$deque$") { return 14 }
     if strings.starts_with(text,"$core$$std$encoding$") {
         let name=rules.cut(text,20,len(text))
         if alg.contains(["pack_uint","pack_int","unpack_uint","unpack_int","pack_f32","pack_f64","unpack_f32","unpack_f64"],name) { return 24 }
@@ -121,6 +131,8 @@ fn load_format(text string) int {
         if alg.contains(["walk","copy_file","copy_dir","remove_all","canonical"],name) { return 17 }
         return 6
     }
+    if strings.starts_with(text,"$core$$std$heap$") { return 14 }
+    if strings.starts_with(text,"$core$$std$http$") { return 31 }
     if strings.starts_with(text,"$core$$std$io$") {
         let name=rules.cut(text,14,len(text))
         if alg.contains(["write_err"],name) { return 18 }
@@ -131,7 +143,14 @@ fn load_format(text string) int {
         if alg.contains(["null","from","array","object","set","remove","append","set_at","encode_pretty","decode_lines","encode_lines"],name) { return 27 }
         return 6
     }
+    if strings.starts_with(text,"$core$$std$list$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["dedup"],name) { return 20 }
+        if alg.contains(["insert","remove_at","index_of","contains","reverse","sort","swap","truncate","slice"],name) { return 10 }
+        return 6
+    }
     if strings.starts_with(text,"$core$$std$log$") { return 18 }
+    if strings.starts_with(text,"$core$$std$maps$") { return 10 }
     if strings.starts_with(text,"$core$$std$math$") {
         let name=rules.cut(text,16,len(text))
         if alg.contains(["checked_add","checked_sub","checked_mul","checked_neg","checked_abs","checked_pow","wrapping_add","wrapping_sub","wrapping_mul","wrapping_neg","wrapping_abs","wrapping_pow","saturating_add","saturating_sub","saturating_mul","saturating_neg","saturating_abs","saturating_pow","sinh","cosh","tanh","asinh","acosh","atanh"],name) { return 22 }
@@ -145,7 +164,19 @@ fn load_format(text string) int {
         if alg.contains(["exit","platform","arch","pid","cpu_count"],name) { return 16 }
         return 6
     }
-    if strings.starts_with(text,"$core$$std$process$") { return 28 }
+    if strings.starts_with(text,"$core$$std$process$") {
+        let name=rules.cut(text,19,len(text))
+        if alg.contains(["start","stdin","stdout","stderr","wait","kill"],name) { return 32 }
+        return 28
+    }
+    if strings.starts_with(text,"$core$$std$random$") { return 13 }
+    if strings.starts_with(text,"$core$$std$regex$") { return 32 }
+    if strings.starts_with(text,"$core$$std$sets$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["symmetric_difference"],name) { return 21 }
+        return 10
+    }
+    if strings.starts_with(text,"$core$$std$stream$") { return 31 }
     if strings.starts_with(text,"$core$$std$strings$") {
         let name=rules.cut(text,19,len(text))
         if alg.contains(["upper","lower","casefold","equal_fold"],name) { return 26 }
@@ -160,6 +191,7 @@ fn load_format(text string) int {
         if alg.contains(["since_ns","format_duration","parse_duration","utc_parts","utc_from_parts","weekday","day_of_year","is_leap_year","days_in_month","format_rfc3339","format_rfc3339_offset","parse_rfc3339"],name) { return 15 }
         return 6
     }
+    if strings.starts_with(text,"$core$$std$url$") { return 31 }
     return 6
 }
 # END GENERATED: stdlib_load_format

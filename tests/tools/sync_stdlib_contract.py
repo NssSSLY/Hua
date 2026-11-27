@@ -56,6 +56,10 @@ STD_NATIVE_INLINE = {
 MODULE_TYPE_EXPORTS: dict[str, list[str]] = {
     "std.error": ["Value"],
     "std.file": ["File", "IOFailure"],
+    "std.stream": ["Reader", "Writer"],
+    "std.http": ["Response", "StreamResponse"],
+    "std.regex": ["Pattern"],
+    "std.process": ["Child"],
     "std.json": ["Value"],
     "std.random": ["Rng"],
     "std.deque": ["Deque"],
@@ -64,7 +68,13 @@ MODULE_TYPE_EXPORTS: dict[str, list[str]] = {
 SELFHOST_TYPE_EXPORTS: dict[str, list[str]] = {
     "std.error": ["Value"],
     "std.file": ["File", "IOFailure"],
+    "std.stream": ["Reader", "Writer"],
+    "std.http": ["Response", "StreamResponse"],
+    "std.regex": ["Pattern"],
+    "std.process": ["Child"],
     "std.json": ["Value"],
+    "std.random": ["Rng"],
+    "std.deque": ["Deque"],
 }
 
 STEP2_ENABLE_MODULES = {
@@ -76,6 +86,22 @@ STEP2_ENABLE_MODULES = {
     "test",
     "gc",
     "process",
+    "stream",
+    "url",
+    "http",
+    "regex",
+    "compress",
+}
+
+STEP5D_NONCALLBACK_MODULES = {
+    "random",
+    "deque",
+    "heap",
+    "maps",
+    "sets",
+    "simd",
+    "alg",
+    "list",
 }
 
 ARCHIVE_BEGIN = "# BEGIN GENERATED: stdlib_load_format"
@@ -149,9 +175,9 @@ def build_manifest_from_repo(repo: Path, enable_step2: bool = True) -> dict[str,
             std_id = f"$std${mod}${fn.name}"
             in_existing_sh = (mod_full in cat_modules) and (fn.name in cat_exports.get(mod_full, set())) and (sig_key in existing_sigs)
 
-            if enable_step2 and mod in STEP2_ENABLE_MODULES:
+            if enable_step2 and (mod in STEP2_ENABLE_MODULES or (mod in STEP5D_NONCALLBACK_MODULES and not fn.callback)):
                 sh_enabled = True
-                native_mode = "bridged"
+                native_mode = "inline" if (mod, fn.name) in STD_NATIVE_INLINE else "bridged"
             else:
                 sh_enabled = in_existing_sh
                 if (mod, fn.name) in STD_NATIVE_INLINE:
@@ -207,7 +233,19 @@ def build_manifest_from_repo(repo: Path, enable_step2: bool = True) -> dict[str,
                 "repo_path": "std/alg_integer.hua",
                 "sdk_path": "src/std/alg_integer.hua",
                 "since": 6,
-            }
+            },
+            {
+                "module": "std.sse",
+                "repo_path": "std/sse.hua",
+                "sdk_path": "src/std/sse.hua",
+                "since": 31,
+            },
+            {
+                "module": "std.csv",
+                "repo_path": "std/csv.hua",
+                "sdk_path": "src/std/csv.hua",
+                "since": 32,
+            },
         ],
         "modules": modules_out,
     }
@@ -516,6 +554,8 @@ def run_negative_self_tests(repo: Path) -> None:
         for rel in (
             "src/stdlib.cpp",
             "std/alg_integer.hua",
+            "std/sse.hua",
+            "std/csv.hua",
             "selfhost/stdlib_manifest.json",
             "selfhost/catalog.hua",
             "selfhost/signatures.hua",

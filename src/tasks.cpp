@@ -24,7 +24,7 @@ bool builtin_may_suspend(const std::string& name,const RuntimeContext* c){
     auto f=standard_function(name);if(!f)return false;
     if(f->callback)return true;
     if(f->module=="task"&&(f->name=="timeout"||f->name=="yield"||f->name=="sleep"))return true;
-    if(c&&c->in_task&&((f->module=="gc"&&f->name=="collect")||f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process"))return true;
+    if(c&&c->in_task&&((f->module=="gc"&&f->name=="collect")||f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process"||f->module=="stream"||f->module=="http"))return true;
     return false;
 }
 void task_checkpoint(RuntimeContext* c,const SourceSpan& s){if(!c||!c->resumable||!c->in_task)file_checkpoint(c);if(c&&!c->cleanup&&c->cancellation&&c->cancellation->stopped())runtime_error(s,"task canceled","E4101");}
@@ -207,7 +207,7 @@ Routine<Value> invoke_resumable(std::string name,std::vector<Value> args,SourceS
     }
 #endif
     // Blocking adapters never call Hua/user code. Their heap remains exclusively owned while parked.
-    if(c&&c->in_task&&f&&(f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process")){
+    if(c&&c->in_task&&f&&(f->module=="file"||f->module=="fs"||f->module=="io"||f->module=="process"||f->module=="stream"||f->module=="http")){
         auto heap=c->heap;co_return co_await Blocking([=,&out]{HeapScope scope(*heap);TypeRelations empty;TypeRelationScope relations(c->type_relations?*c->type_relations:empty);task_checkpoint(c,span);file_checkpoint(c);auto result=invoke_builtin(name,args,span,out,contextual,inferred,c);file_checkpoint(c);return result;});
     }
     co_return invoke_builtin(name,args,span,out,contextual,inferred,c);

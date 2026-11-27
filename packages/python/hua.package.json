@@ -1,0 +1,10 @@
+{
+  "schema": "hua.package.v1",
+  "name": "python",
+  "version": "0.1.0",
+  "native_libs": {
+    "windows-x86_64": [
+      "python_native.dll"
+    ]
+  }
+}

@@ -14,8 +14,8 @@
      - 已落地 `selfhost/stdlib_manifest.json`、`tests/tools/sync_stdlib_contract.py`、`stdlib_contract` CTest（`0.47s` 含 4 项负向防漏自检）及 8 模块 103 项双端打通（`SH 297/374`、`--release 288/374`、`18/27` 内建模块四路径全通，B 类纯表项清零）。[验收记录](knowledge/bootstrap-performance/runs/2026-11-26-step2-stdlib-contract.md)
      - 后续分批（按需推进）：剩余 `86` 项（`random` 句柄 5、`deque`/`random` 多态+类型 14、多态 39、高阶回调 19、`task` 原生 9）。
   3. **【已完成 · 第 3 步】SQLite 原生扩展包**：已落地同步 Native ABI v2（`Bytes`、`NativeHandle` 代次控制块与 LIFO 清理、结构化 `Result` 错误、`HUAB 30 / native_abi 2`）、`native_libs` 随包 DLL 分发、零 `wasmtime` `NativeExternalHost` 与 `packages/sqlite/`；仓库外四路径（含干净目录实跑、N3 缓存恢复 DLL、缺 DLL `E7001`）、ABI v2 6 项负向诊断与百科 61 项错误码补全全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-26-step3-sqlite-extension.md)
-  4. **【下一优先 · 第 4 步】流式 I/O（`Reader/Writer`）与 HTTPS 客户端（含截止时间/取消/SSE）并行推进**。
-  5. **【第 5 步 & 持续跟踪】由实际应用扩充 CSV/正则/压缩、流式子进程与 Python Bridge 装配**；跟踪 `origin_pool` 超大规模边界；`HUA-D036`/`HUA-D037` 按是否影响新项目构建/错误语义/产物兼容分级处理。
+  4. **【已完成 · 第 4 步】流式 I/O（`std.stream`）与 HTTPS 客户端（`std.url`/`std.http` + 纯 Hua `std.sse`）**：已落地 `std.stream`（14 函数）、`std.url`（4 函数）、平台无关 `HttpBackend` + Windows 零三方 DLL `WinHttpBackend`（14 函数，严格 TLS/`ca_cert_pem`、重定向剥离凭证头、响应上限、超时与真取消）、`HUAB 31` 与纯 Hua SDK 模块 `std.sse`；4A+4B+4C（HTTPS/SSE→SQLite Agent 闭环）四路径与三路径异步取消全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-27-step4-stream-http-sse.md)
+  5. **【主体完成 · 第 5 步】**第一波（5A `std.csv` + 5B `std.regex` + 5C `std.process.start`，`HUAB 32`）与第二波（5B-gzip `std.compress` + 5D 非回调多态/句柄标准库清零 + 5E `packages/python/` 封装，`HUAB 33`）均已通过 4 路径验收与 `huaBin/` 固定点重装（[第一波](knowledge/bootstrap-performance/runs/2026-11-27-step5-wave1-csv-regex-process.md) · [第二波](knowledge/bootstrap-performance/runs/2026-11-27-step5-wave2-compress-5d-python.md)）。剩余长尾：19 项高阶回调、`--release` 原生 `async/spawn`（9 项 `std.task`）、`selfhost/parser.hua` `simd` 关键字放开、Linux/iOS `HttpBackend`、三阶段 C++ 脱钩与 `HUA-D036`/`HUA-D037`。
 
 ## 当前待办 · Hua 自身工具链与发行（2026-11-18）
 

@@ -44,6 +44,18 @@ struct NativeHandleValue {
     std::uint32_t type_tag{};
     bool operator==(const NativeHandleValue&) const = default;
 };
+struct StreamReaderData;
+struct StreamWriterData;
+struct HttpResponseData;
+struct HttpStreamData;
+struct ReaderValue { std::shared_ptr<StreamReaderData> data; };
+struct WriterValue { std::shared_ptr<StreamWriterData> data; };
+struct HttpResponseValue { std::shared_ptr<const HttpResponseData> data; };
+struct HttpStreamValue { std::shared_ptr<HttpStreamData> data; };
+struct RegexData;
+struct ProcessChildData;
+struct RegexValue { std::shared_ptr<const RegexData> data; };
+struct ProcessChildValue { std::shared_ptr<ProcessChildData> data; };
 struct ListData;
 struct DequeData;
 struct NumericValue { std::string type;std::variant<std::int64_t,std::uint64_t,double> number; };
@@ -166,7 +178,7 @@ public:
     const T& operator*()const{return get();}
 };
 struct Value {
-    using Data = Tagged<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue, NativeHandleValue>;
+    using Data = Tagged<std::monostate, bool, std::int64_t, double, std::string, Cow<SliceValue>, StructValue, Callable, MapValue, MultiValue, Cow<ResultValue>, JsonValue, BytesValue, BufferValue, ListValue, NumericValue, TaskValue, ErrorValue, VoidValue, FileValue, IOFailureValue, PlainRecord, RngValue, DequeValue, StringValue, NativeHandleValue, ReaderValue, WriterValue, HttpResponseValue, HttpStreamValue, RegexValue, ProcessChildValue>;
     Data data;
     Value() = default;
     explicit Value(const char* text):Value(std::string(text)){}

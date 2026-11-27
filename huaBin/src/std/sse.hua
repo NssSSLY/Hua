@@ -1,0 +1,161 @@
+# Pure Hua Server-Sent Events (SSE) incremental parser over std.stream.Reader.
+import std.buffer as buffer
+import std.bytes as bytes
+import std.error as error
+import std.stream as stream
+import std.strings as strings
+
+pub struct Event {
+    event string
+    data string
+    id string
+    retry int
+}
+
+pub struct Parser {
+    reader stream.Reader
+    pending Buffer
+    eof bool
+    last_id string
+    retry_ms int
+}
+
+pub fn new(reader stream.Reader) Parser {
+    return Parser{
+        reader: reader,
+        pending: buffer.new(),
+        eof: false,
+        last_id: "",
+        retry_ms: -1
+    }
+}
+
+pub fn close(p Parser) Result<void, error.Value> {
+    return stream.close_reader(p.reader)
+}
+
+fn find_line_end(raw []int) int {
+    for i in 0..len(raw) {
+        if raw[i] == 10 || raw[i] == 13 {
+            return i
+        }
+    }
+    return -1
+}
+
+fn take_line(p mut Parser) Result<string?, error.Value> {
+    while true {
+        let cur = buffer.bytes(p.pending)
+        let ints = unwrap(bytes.to_ints(cur))
+        let idx = find_line_end(ints)
+        if idx >= 0 {
+            var consume = idx + 1
+            if ints[idx] == 13 {
+                if idx + 1 < len(ints) {
+                    if ints[idx + 1] == 10 {
+                        consume = idx + 2
+                    }
+                } else if !p.eof {
+                    # Wait for next byte to see if \r is followed by \n
+                    let more = stream.read(p.reader, 4096)?
+                    if is_none(more) {
+                        p.eof = true
+                    } else {
+                        let _ = buffer.append(p.pending, unwrap(more))
+                        continue
+                    }
+                }
+            }
+            let line_bytes = unwrap(bytes.slice(cur, 0, idx))
+            let rest_bytes = unwrap(bytes.slice(cur, consume, len(ints)))
+            buffer.clear(p.pending)
+            if bytes.len(rest_bytes) > 0 {
+                let _wb = buffer.append(p.pending, rest_bytes)
+            }
+            let text = bytes.to_text(line_bytes)
+            if is_err(text) {
+                return err(unwrap(error.make("sse", "invalid_utf8", unwrap_err(text))))
+            }
+            return ok(unwrap(text))
+        }
+        if p.eof {
+            if len(ints) == 0 {
+                return ok(nil)
+            }
+            buffer.clear(p.pending)
+            let text = bytes.to_text(cur)
+            if is_err(text) {
+                return err(unwrap(error.make("sse", "invalid_utf8", unwrap_err(text))))
+            }
+            return ok(unwrap(text))
+        }
+        let chunk = stream.read(p.reader, 4096)?
+        if is_none(chunk) {
+            p.eof = true
+        } else {
+            let _ = buffer.append(p.pending, unwrap(chunk))
+        }
+    }
+    return ok(nil)
+}
+
+fn strip_leading_space(s string) string {
+    if strings.starts_with(s, " ") {
+        return unwrap(strings.slice(s, 1, strings.len_bytes(s)))
+    }
+    return s
+}
+
+pub fn next(p mut Parser) Result<Event?, error.Value> {
+    var ev_type = "message"
+    var has_data = false
+    var data_buf = buffer.new()
+    while true {
+        let maybe_line = take_line(p)?
+        if is_none(maybe_line) {
+            if has_data {
+                let text = unwrap(buffer.take_text(data_buf))
+                return ok(Event{event: ev_type, data: text, id: p.last_id, retry: p.retry_ms})
+            }
+            return ok(nil)
+        }
+        let line = unwrap(maybe_line)
+        if line == "" {
+            if has_data {
+                let text = unwrap(buffer.take_text(data_buf))
+                return ok(Event{event: ev_type, data: text, id: p.last_id, retry: p.retry_ms})
+            }
+            ev_type = "message"
+            continue
+        }
+        if strings.starts_with(line, ":") {
+            continue
+        }
+        let colon = strings.index(line, ":")
+        var field = line
+        var val = ""
+        if colon >= 0 {
+            field = unwrap(strings.slice(line, 0, colon))
+            val = strip_leading_space(unwrap(strings.slice(line, colon + 1, strings.len_bytes(line))))
+        }
+        if field == "data" {
+            if has_data {
+                buffer.write_str(data_buf, "\n")
+            }
+            buffer.write_str(data_buf, val)
+            has_data = true
+        } else if field == "event" {
+            ev_type = val
+        } else if field == "id" {
+            if !strings.contains(val, "\0") {
+                p.last_id = val
+            }
+        } else if field == "retry" {
+            let parsed = strings.parse_int(val, 10)
+            if is_ok(parsed) && unwrap(parsed) >= 0 {
+                p.retry_ms = unwrap(parsed)
+            }
+        }
+    }
+    return ok(nil)
+}

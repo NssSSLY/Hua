@@ -3,10 +3,12 @@
 // deadlock. The whole process tree is killed on timeout, output limit and cancellation.
 // Helper threads only touch plain host strings; Values are built after they have joined.
 #include "hua/stdlib.hpp"
+#include "hua/stream.hpp"
 #include "hua/tasks.hpp"
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <mutex>
 #include <thread>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -272,8 +274,299 @@ Outcome run_child(const Request& request) {
 }
 #endif
 Value bytes_value(std::string text) { return Value(BytesValue{managed<const std::string>(std::move(text))}); }
+
+#ifdef _WIN32
+class PipeReaderBackend final : public StreamReaderBackend {
+    std::mutex mutex_;
+    HANDLE pipe_{};
+public:
+    explicit PipeReaderBackend(HANDLE h) : pipe_(h) {}
+    ~PipeReaderBackend() override { (void)close(); }
+    StreamReadResult read(std::size_t max_bytes, RuntimeContext*) override {
+        HANDLE h = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            h = pipe_;
+        }
+        if (!h) return {std::nullopt, StreamError{"io", "closed", "pipe reader is closed", "", {}}};
+        std::size_t want = std::min<std::size_t>(max_bytes, 65536);
+        std::string buf(want, '\0');
+        DWORD got = 0;
+        if (!ReadFile(h, buf.data(), static_cast<DWORD>(want), &got, nullptr)) {
+            DWORD err = GetLastError();
+            if (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) {
+                return {std::nullopt, std::nullopt};
+            }
+            return {std::nullopt, StreamError{"io", "io", "pipe read failed", "win32", static_cast<std::int64_t>(err)}};
+        }
+        if (got == 0) return {std::nullopt, std::nullopt};
+        buf.resize(got);
+        return {std::move(buf), std::nullopt};
+    }
+    std::optional<StreamError> close() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pipe_) {
+            CloseHandle(pipe_);
+            pipe_ = nullptr;
+        }
+        return std::nullopt;
+    }
+};
+
+class PipeWriterBackend final : public StreamWriterBackend {
+    std::mutex mutex_;
+    HANDLE pipe_{};
+public:
+    explicit PipeWriterBackend(HANDLE h) : pipe_(h) {}
+    ~PipeWriterBackend() override { (void)close(); }
+    StreamWriteResult write(std::span<const char> data, RuntimeContext*) override {
+        HANDLE h = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            h = pipe_;
+        }
+        if (!h) return {0, StreamError{"io", "closed", "pipe writer is closed", "", {}}};
+        DWORD wrote = 0;
+        DWORD chunk = static_cast<DWORD>(std::min<std::size_t>(data.size(), 1 << 20));
+        if (!WriteFile(h, data.data(), chunk, &wrote, nullptr)) {
+            DWORD err = GetLastError();
+            return {0, StreamError{"io", "io", "pipe write failed", "win32", static_cast<std::int64_t>(err)}};
+        }
+        return {static_cast<std::size_t>(wrote), std::nullopt};
+    }
+    std::optional<StreamError> flush(RuntimeContext*) override { return std::nullopt; }
+    std::optional<StreamError> close() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pipe_) {
+            CloseHandle(pipe_);
+            pipe_ = nullptr;
+        }
+        return std::nullopt;
+    }
+};
+#endif
 }
+
+struct ProcessChildData {
+    std::mutex mutex;
+#ifdef _WIN32
+    HANDLE process{};
+    HANDLE job{};
+#endif
+    bool exited{};
+    I exit_code{-1};
+    std::shared_ptr<StreamWriterData> stdin_writer;
+    std::shared_ptr<StreamReaderData> stdout_reader;
+    std::shared_ptr<StreamReaderData> stderr_reader;
+
+    void kill_locked() {
+#ifdef _WIN32
+        if (job) {
+            TerminateJobObject(job, 1);
+        } else if (process) {
+            TerminateProcess(process, 1);
+        }
+#endif
+    }
+    void cleanup_handles_locked() {
+#ifdef _WIN32
+        if (process) { CloseHandle(process); process = nullptr; }
+        if (job) { CloseHandle(job); job = nullptr; }
+#endif
+    }
+    ~ProcessChildData() {
+        if (stdin_writer) (void)stdin_writer->close();
+        if (stdout_reader) (void)stdout_reader->close();
+        if (stderr_reader) (void)stderr_reader->close();
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!exited) kill_locked();
+        cleanup_handles_locked();
+    }
+};
+
+namespace {
+Value ok_proc(Value payload, std::string success_type) {
+    return Value(ResultValue{true, result_box(std::move(payload)), std::move(success_type), "std.error.Value", true, false});
+}
+Value ok_proc_void() {
+    return Value(ResultValue{true, {}, "void", "std.error.Value", true, false});
+}
+}
+
 Value invoke_process_standard(const StandardFunction& f, const std::vector<Value>& args, const SourceSpan& s, RuntimeContext* context) {
+    if (f.name == "start") {
+        const auto& argv_slice = cget<SliceValue>(args[0].data);
+        if (argv_slice.length == 0) {
+            return stream_error_result({"process", "invalid_argument", "process argv must not be empty", "", {}}, "std.process.Child", "std.process.start");
+        }
+        std::vector<std::string> argv;
+        for (std::size_t i = 0; i < argv_slice.length; ++i) {
+            argv.push_back(string_value(sequence_read(argv_slice, i).data));
+            if (has_nul(argv.back())) {
+                return stream_error_result({"process", "invalid_argument", "argument contains NUL", "", {}}, "std.process.Child", "std.process.start");
+            }
+        }
+        std::string cwd = string_value(args[1].data);
+        if (has_nul(cwd)) {
+            return stream_error_result({"process", "invalid_argument", "cwd contains NUL", "", {}}, "std.process.Child", "std.process.start");
+        }
+        std::map<std::string, std::string> env;
+        for (const auto& [k, v] : hua::get<MapValue>(args[2].data).data->entries) {
+            const auto& name = hua::get<std::string>(k);
+            const auto& value = string_value(v.data);
+            if (name.empty() || name.find('=') != std::string::npos || has_nul(name) || has_nul(value)) {
+                return stream_error_result({"process", "invalid_argument", "invalid environment entry", "", {}}, "std.process.Child", "std.process.start");
+            }
+            env.emplace(name, value);
+        }
+#ifdef _WIN32
+        SECURITY_ATTRIBUTES inherit{sizeof inherit, nullptr, TRUE};
+        Handle in_read, in_write, out_read, out_write, err_read, err_write;
+        if (!CreatePipe(&in_read.value, &in_write.value, &inherit, 0) ||
+            !CreatePipe(&out_read.value, &out_write.value, &inherit, 0) ||
+            !CreatePipe(&err_read.value, &err_write.value, &inherit, 0)) {
+            return stream_error_result({"process", "start", "CreatePipe failed", "win32", static_cast<I>(GetLastError())}, "std.process.Child", "std.process.start");
+        }
+        SetHandleInformation(in_write.value, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(out_read.value, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(err_read.value, HANDLE_FLAG_INHERIT, 0);
+        Handle job;
+        job.value = CreateJobObjectW(nullptr, nullptr);
+        if (!job.value) {
+            return stream_error_result({"process", "start", "CreateJobObject failed", "win32", static_cast<I>(GetLastError())}, "std.process.Child", "std.process.start");
+        }
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+
+        HANDLE inherited[] = {in_read.value, out_write.value, err_write.value};
+        SIZE_T attr_size = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+        std::string attr_buf(attr_size, '\0');
+        auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
+        if (!InitializeProcThreadAttributeList(attrs, 1, 0, &attr_size)) {
+            return stream_error_result({"process", "start", "InitializeProcThreadAttributeList failed", "win32", static_cast<I>(GetLastError())}, "std.process.Child", "std.process.start");
+        }
+        UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof inherited, nullptr, nullptr);
+        STARTUPINFOEXW startup{};
+        startup.StartupInfo.cb = sizeof startup;
+        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = in_read.value;
+        startup.StartupInfo.hStdOutput = out_write.value;
+        startup.StartupInfo.hStdError = err_write.value;
+        startup.lpAttributeList = attrs;
+        std::wstring line;
+        for (const auto& arg : argv) append_argument(line, wide(arg));
+        const auto block = environment_block(env);
+        const auto directory = wide(cwd);
+        PROCESS_INFORMATION proc{};
+        const BOOL created = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE,
+            CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
+            const_cast<wchar_t*>(block.c_str()), directory.empty() ? nullptr : directory.c_str(), &startup.StartupInfo, &proc);
+        const DWORD err_code = GetLastError();
+        DeleteProcThreadAttributeList(attrs);
+        if (!created) {
+            return stream_error_result({"process", "start", "CreateProcessW failed", "win32", static_cast<I>(err_code)}, "std.process.Child", "std.process.start");
+        }
+        AssignProcessToJobObject(job.value, proc.hProcess);
+        ResumeThread(proc.hThread);
+        CloseHandle(proc.hThread);
+        in_read.reset();
+        out_write.reset();
+        err_write.reset();
+
+        auto child = std::make_shared<ProcessChildData>();
+        child->process = proc.hProcess;
+        child->job = job.value;
+        job.value = nullptr;
+        child->stdin_writer = std::make_shared<StreamWriterData>(std::make_shared<PipeWriterBackend>(in_write.value));
+        in_write.value = nullptr;
+        child->stdout_reader = std::make_shared<StreamReaderData>(std::make_shared<PipeReaderBackend>(out_read.value));
+        out_read.value = nullptr;
+        child->stderr_reader = std::make_shared<StreamReaderData>(std::make_shared<PipeReaderBackend>(err_read.value));
+        err_read.value = nullptr;
+        return ok_proc(Value(ProcessChildValue{std::move(child)}), "std.process.Child");
+#else
+        return stream_error_result({"process", "unsupported", "process.spawn is not yet implemented on this platform", "", {}}, "std.process.Child", "std.process.start");
+#endif
+    }
+    if (f.name == "stdin") {
+        auto* c = get_if<ProcessChildValue>(&args.at(0).data);
+        if (!c || !c->data) runtime_error(s, "std.process.stdin expects std.process.Child", "E4003");
+        return Value(WriterValue{c->data->stdin_writer});
+    }
+    if (f.name == "stdout") {
+        auto* c = get_if<ProcessChildValue>(&args.at(0).data);
+        if (!c || !c->data) runtime_error(s, "std.process.stdout expects std.process.Child", "E4003");
+        return Value(ReaderValue{c->data->stdout_reader});
+    }
+    if (f.name == "stderr") {
+        auto* c = get_if<ProcessChildValue>(&args.at(0).data);
+        if (!c || !c->data) runtime_error(s, "std.process.stderr expects std.process.Child", "E4003");
+        return Value(ReaderValue{c->data->stderr_reader});
+    }
+    if (f.name == "kill") {
+        auto* c = get_if<ProcessChildValue>(&args.at(0).data);
+        if (!c || !c->data) runtime_error(s, "std.process.kill expects std.process.Child", "E4003");
+        std::lock_guard<std::mutex> lock(c->data->mutex);
+        if (!c->data->exited) {
+            c->data->kill_locked();
+            c->data->exited = true;
+            c->data->exit_code = -1;
+        }
+        return ok_proc_void();
+    }
+    if (f.name == "wait") {
+        auto* c = get_if<ProcessChildValue>(&args.at(0).data);
+        auto* timeout_ms = get_if<I>(&args.at(1).data);
+        if (!c || !c->data || !timeout_ms) runtime_error(s, "std.process.wait expects (Child, int)", "E4003");
+        if (*timeout_ms < 0) return stream_error_result({"process", "invalid_argument", "timeout_ms must be >= 0", "", {}}, "int", "std.process.wait");
+#ifdef _WIN32
+        HANDLE proc_h = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(c->data->mutex);
+            if (c->data->exited) return ok_proc(Value(c->data->exit_code), "int");
+            proc_h = c->data->process;
+        }
+        if (!proc_h) return ok_proc(Value(I{-1}), "int");
+        auto deadline = (*timeout_ms > 0) ? (Clock::now() + std::chrono::milliseconds(*timeout_ms)) : Clock::time_point::max();
+        for (;;) {
+            if (context && !context->cleanup && context->cancellation && context->cancellation->stopped()) {
+                std::lock_guard<std::mutex> lock(c->data->mutex);
+                c->data->kill_locked();
+                c->data->exited = true;
+                return stream_error_result({"process", "canceled", "process wait canceled", "", {}}, "int", "std.process.wait");
+            }
+            DWORD wait_slice = 20;
+            if (deadline != Clock::time_point::max()) {
+                auto now = Clock::now();
+                if (now >= deadline) {
+                    std::lock_guard<std::mutex> lock(c->data->mutex);
+                    c->data->kill_locked();
+                    c->data->exited = true;
+                    return stream_error_result({"process", "timeout", "process timed out", "", {}}, "int", "std.process.wait");
+                }
+                auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+                wait_slice = static_cast<DWORD>(std::min<std::int64_t>(20, std::max<std::int64_t>(1, rem)));
+            }
+            DWORD w = WaitForSingleObject(proc_h, wait_slice);
+            if (w == WAIT_OBJECT_0) {
+                DWORD code = 0;
+                GetExitCodeProcess(proc_h, &code);
+                std::lock_guard<std::mutex> lock(c->data->mutex);
+                c->data->exited = true;
+                c->data->exit_code = static_cast<I>(code);
+                return ok_proc(Value(c->data->exit_code), "int");
+            }
+            if (w != WAIT_TIMEOUT) {
+                return stream_error_result({"process", "io", "WaitForSingleObject failed", "win32", static_cast<I>(GetLastError())}, "int", "std.process.wait");
+            }
+        }
+#else
+        return stream_error_result({"process", "unsupported", "process.wait is not yet implemented on this platform", "", {}}, "int", "std.process.wait");
+#endif
+    }
+
     Request request;
     const auto& argv = cget<SliceValue>(args[0].data);
     if (argv.length == 0) runtime_error(s, "process argv must not be empty", "E4003");

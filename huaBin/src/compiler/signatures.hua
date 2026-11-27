@@ -10,6 +10,9 @@ pub fn signature(target string) Signature? {
     let module = parts[0]
     let name = parts[1]
     if module == "builtin:std.alg" {
+        if name == "unique" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "chunk" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
+        if name == "product" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "sorted" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "reverse" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "contains" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
@@ -20,6 +23,7 @@ pub fn signature(target string) Signature? {
         if name == "sum" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "min" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "max" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "windows" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
         return nil
     }
     if module == "builtin:std.buffer" {
@@ -55,12 +59,33 @@ pub fn signature(target string) Signature? {
         if name == "crc32" { return Signature{parameters:["Bytes"],result:"int",mutates:false,writable:false} }
         return nil
     }
+    if module == "builtin:std.compress" {
+        if name == "gzip_compress" { return Signature{parameters:["Bytes"],result:"Result<Bytes,std.error.Value>",mutates:false,writable:false} }
+        if name == "gzip_decompress" { return Signature{parameters:["Bytes","int"],result:"Result<Bytes,std.error.Value>",mutates:false,writable:false} }
+        if name == "gzip_reader" { return Signature{parameters:["std.stream.Reader","int"],result:"Result<std.stream.Reader,std.error.Value>",mutates:false,writable:false} }
+        if name == "gzip_writer" { return Signature{parameters:["std.stream.Writer"],result:"Result<std.stream.Writer,std.error.Value>",mutates:false,writable:false} }
+        return nil
+    }
     if module == "builtin:std.crypto" {
         if name == "random_bytes" { return Signature{parameters:["int"],result:"Result<Bytes,string>",mutates:false,writable:false} }
         if name == "uuid4" { return Signature{parameters:[],result:"Result<string,string>",mutates:false,writable:false} }
         if name == "sha256" { return Signature{parameters:["Bytes"],result:"Bytes",mutates:false,writable:false} }
         if name == "hmac_sha256" { return Signature{parameters:["Bytes","Bytes"],result:"Bytes",mutates:false,writable:false} }
         if name == "equal" { return Signature{parameters:["Bytes","Bytes"],result:"bool",mutates:false,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.deque" {
+        if name == "from_slice" { return Signature{parameters:[""],result:"",mutates:false,writable:true} }
+        if name == "len" { return Signature{parameters:[""],result:"int",mutates:false,writable:false} }
+        if name == "push_back" { return Signature{parameters:["",""],result:"Result<int,string>",mutates:true,writable:false} }
+        if name == "push_front" { return Signature{parameters:["",""],result:"Result<int,string>",mutates:true,writable:false} }
+        if name == "pop_back" { return Signature{parameters:[""],result:"",mutates:true,writable:false} }
+        if name == "pop_front" { return Signature{parameters:[""],result:"",mutates:true,writable:false} }
+        if name == "front" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "back" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "get" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
+        if name == "clear" { return Signature{parameters:[""],result:"void",mutates:true,writable:false} }
+        if name == "snapshot" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         return nil
     }
     if module == "builtin:std.encoding" {
@@ -150,6 +175,32 @@ pub fn signature(target string) Signature? {
         if name == "collected" { return Signature{parameters:[],result:"int",mutates:false,writable:false} }
         return nil
     }
+    if module == "builtin:std.heap" {
+        if name == "heapify" { return Signature{parameters:[""],result:"void",mutates:true,writable:false} }
+        if name == "push" { return Signature{parameters:["",""],result:"Result<int,string>",mutates:true,writable:false} }
+        if name == "pop" { return Signature{parameters:[""],result:"",mutates:true,writable:false} }
+        if name == "peek" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "smallest" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
+        if name == "largest" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.http" {
+        if name == "get" { return Signature{parameters:["string","map<string,string>","int"],result:"Result<std.http.Response,std.error.Value>",mutates:false,writable:false} }
+        if name == "post" { return Signature{parameters:["string","map<string,string>","Bytes","int"],result:"Result<std.http.Response,std.error.Value>",mutates:false,writable:false} }
+        if name == "request" { return Signature{parameters:["string","string","map<string,string>","Bytes","map<string,Json>"],result:"Result<std.http.Response,std.error.Value>",mutates:false,writable:false} }
+        if name == "status" { return Signature{parameters:["std.http.Response"],result:"int",mutates:false,writable:false} }
+        if name == "header" { return Signature{parameters:["std.http.Response","string"],result:"string?",mutates:false,writable:false} }
+        if name == "headers" { return Signature{parameters:["std.http.Response"],result:"map<string,string>",mutates:false,writable:false} }
+        if name == "body" { return Signature{parameters:["std.http.Response"],result:"Bytes",mutates:false,writable:false} }
+        if name == "text" { return Signature{parameters:["std.http.Response"],result:"Result<string,std.error.Value>",mutates:false,writable:false} }
+        if name == "open_stream" { return Signature{parameters:["string","string","map<string,string>","Bytes","map<string,Json>"],result:"Result<std.http.StreamResponse,std.error.Value>",mutates:false,writable:false} }
+        if name == "stream_status" { return Signature{parameters:["std.http.StreamResponse"],result:"int",mutates:false,writable:false} }
+        if name == "stream_header" { return Signature{parameters:["std.http.StreamResponse","string"],result:"string?",mutates:false,writable:false} }
+        if name == "stream_headers" { return Signature{parameters:["std.http.StreamResponse"],result:"map<string,string>",mutates:false,writable:false} }
+        if name == "stream_body" { return Signature{parameters:["std.http.StreamResponse"],result:"std.stream.Reader",mutates:false,writable:false} }
+        if name == "stream_close" { return Signature{parameters:["std.http.StreamResponse"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+        return nil
+    }
     if module == "builtin:std.io" {
         if name == "write_err" { return Signature{parameters:["string"],result:"Result<int,string>",mutates:false,writable:false} }
         if name == "read_line" { return Signature{parameters:[],result:"Result<string?,string>",mutates:false,writable:false} }
@@ -194,6 +245,16 @@ pub fn signature(target string) Signature? {
         if name == "snapshot" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "clear" { return Signature{parameters:[""],result:"void",mutates:true,writable:false} }
         if name == "reserve" { return Signature{parameters:["","int"],result:"Result<bool,string>",mutates:true,writable:false} }
+        if name == "insert" { return Signature{parameters:["","int",""],result:"Result<int,string>",mutates:true,writable:false} }
+        if name == "remove_at" { return Signature{parameters:["","int"],result:"",mutates:true,writable:false} }
+        if name == "index_of" { return Signature{parameters:["",""],result:"int",mutates:false,writable:false} }
+        if name == "contains" { return Signature{parameters:["",""],result:"bool",mutates:false,writable:false} }
+        if name == "reverse" { return Signature{parameters:[""],result:"void",mutates:true,writable:false} }
+        if name == "sort" { return Signature{parameters:[""],result:"void",mutates:true,writable:false} }
+        if name == "swap" { return Signature{parameters:["","int","int"],result:"Result<bool,string>",mutates:true,writable:false} }
+        if name == "truncate" { return Signature{parameters:["","int"],result:"void",mutates:true,writable:false} }
+        if name == "slice" { return Signature{parameters:["","int","int"],result:"",mutates:false,writable:false} }
+        if name == "dedup" { return Signature{parameters:[""],result:"int",mutates:true,writable:false} }
         return nil
     }
     if module == "builtin:std.log" {
@@ -203,6 +264,15 @@ pub fn signature(target string) Signature? {
         if name == "error" { return Signature{parameters:["string"],result:"void",mutates:false,writable:false} }
         if name == "with_fields" { return Signature{parameters:["string","string","map<string,string>"],result:"void",mutates:false,writable:false} }
         if name == "set_level" { return Signature{parameters:["string"],result:"void",mutates:false,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.maps" {
+        if name == "keys" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "values" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "entries" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "get_or" { return Signature{parameters:["","",""],result:"",mutates:false,writable:false} }
+        if name == "pop" { return Signature{parameters:["",""],result:"",mutates:true,writable:false} }
+        if name == "merge" { return Signature{parameters:["",""],result:"int",mutates:true,writable:false} }
         return nil
     }
     if module == "builtin:std.math" {
@@ -286,6 +356,66 @@ pub fn signature(target string) Signature? {
     if module == "builtin:std.process" {
         if name == "run" { return Signature{parameters:["[]string","Bytes","int"],result:"multi<int,Bytes,Bytes,string>",mutates:false,writable:false} }
         if name == "run_with" { return Signature{parameters:["[]string","Bytes","int","string","map<string,string>"],result:"multi<int,Bytes,Bytes,string>",mutates:false,writable:false} }
+        if name == "start" { return Signature{parameters:["[]string","string","map<string,string>"],result:"Result<std.process.Child,std.error.Value>",mutates:false,writable:false} }
+        if name == "stdin" { return Signature{parameters:["std.process.Child"],result:"std.stream.Writer",mutates:false,writable:false} }
+        if name == "stdout" { return Signature{parameters:["std.process.Child"],result:"std.stream.Reader",mutates:false,writable:false} }
+        if name == "stderr" { return Signature{parameters:["std.process.Child"],result:"std.stream.Reader",mutates:false,writable:false} }
+        if name == "wait" { return Signature{parameters:["std.process.Child","int"],result:"Result<int,std.error.Value>",mutates:false,writable:false} }
+        if name == "kill" { return Signature{parameters:["std.process.Child"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.random" {
+        if name == "new" { return Signature{parameters:["int"],result:"std.random.Rng",mutates:false,writable:true} }
+        if name == "int" { return Signature{parameters:["std.random.Rng","int","int"],result:"int",mutates:true,writable:false} }
+        if name == "float" { return Signature{parameters:["std.random.Rng"],result:"float",mutates:true,writable:false} }
+        if name == "bool" { return Signature{parameters:["std.random.Rng"],result:"bool",mutates:true,writable:false} }
+        if name == "bytes" { return Signature{parameters:["std.random.Rng","int"],result:"Bytes",mutates:true,writable:false} }
+        if name == "shuffle" { return Signature{parameters:["std.random.Rng",""],result:"void",mutates:true,writable:false} }
+        if name == "choice" { return Signature{parameters:["std.random.Rng",""],result:"",mutates:true,writable:false} }
+        if name == "sample" { return Signature{parameters:["std.random.Rng","","int"],result:"",mutates:true,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.regex" {
+        if name == "compile" { return Signature{parameters:["string"],result:"Result<std.regex.Pattern,std.error.Value>",mutates:false,writable:false} }
+        if name == "is_match" { return Signature{parameters:["std.regex.Pattern","string"],result:"bool",mutates:false,writable:false} }
+        if name == "find" { return Signature{parameters:["std.regex.Pattern","string"],result:"string?",mutates:false,writable:false} }
+        if name == "find_all" { return Signature{parameters:["std.regex.Pattern","string","int"],result:"[]string",mutates:false,writable:false} }
+        if name == "replace_all" { return Signature{parameters:["std.regex.Pattern","string","string"],result:"string",mutates:false,writable:false} }
+        if name == "split" { return Signature{parameters:["std.regex.Pattern","string","int"],result:"[]string",mutates:false,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.sets" {
+        if name == "from_slice" { return Signature{parameters:[""],result:"",mutates:false,writable:true} }
+        if name == "union" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        if name == "intersection" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        if name == "difference" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        if name == "is_subset" { return Signature{parameters:["",""],result:"bool",mutates:false,writable:false} }
+        if name == "is_disjoint" { return Signature{parameters:["",""],result:"bool",mutates:false,writable:false} }
+        if name == "symmetric_difference" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        return nil
+    }
+    if module == "builtin:std.simd" {
+        if name == "backend" { return Signature{parameters:[],result:"string",mutates:false,writable:false} }
+        if name == "add" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        if name == "sub" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        if name == "mul" { return Signature{parameters:["",""],result:"",mutates:false,writable:true} }
+        return nil
+    }
+    if module == "builtin:std.stream" {
+        if name == "from_bytes" { return Signature{parameters:["Bytes"],result:"std.stream.Reader",mutates:false,writable:false} }
+        if name == "from_file" { return Signature{parameters:["std.file.File"],result:"Result<std.stream.Reader,std.error.Value>",mutates:false,writable:false} }
+        if name == "to_buffer" { return Signature{parameters:["Buffer"],result:"std.stream.Writer",mutates:true,writable:false} }
+        if name == "to_file" { return Signature{parameters:["std.file.File"],result:"Result<std.stream.Writer,std.error.Value>",mutates:false,writable:false} }
+        if name == "limit" { return Signature{parameters:["std.stream.Reader","int"],result:"Result<std.stream.Reader,std.error.Value>",mutates:false,writable:false} }
+        if name == "read" { return Signature{parameters:["std.stream.Reader","int"],result:"Result<Bytes?,std.error.Value>",mutates:false,writable:false} }
+        if name == "read_exact" { return Signature{parameters:["std.stream.Reader","int"],result:"Result<Bytes,std.error.Value>",mutates:false,writable:false} }
+        if name == "read_all" { return Signature{parameters:["std.stream.Reader","int"],result:"Result<Bytes,std.error.Value>",mutates:false,writable:false} }
+        if name == "write" { return Signature{parameters:["std.stream.Writer","Bytes"],result:"Result<int,std.error.Value>",mutates:false,writable:false} }
+        if name == "write_all" { return Signature{parameters:["std.stream.Writer","Bytes"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+        if name == "flush" { return Signature{parameters:["std.stream.Writer"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+        if name == "close_reader" { return Signature{parameters:["std.stream.Reader"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+        if name == "close_writer" { return Signature{parameters:["std.stream.Writer"],result:"Result<void,std.error.Value>",mutates:false,writable:false} }
+        if name == "copy" { return Signature{parameters:["std.stream.Writer","std.stream.Reader","int"],result:"Result<int,std.error.Value>",mutates:false,writable:false} }
         return nil
     }
     if module == "builtin:std.strings" {
@@ -369,6 +499,13 @@ pub fn signature(target string) Signature? {
         if name == "parse_rfc3339" { return Signature{parameters:["string"],result:"Result<int,string>",mutates:false,writable:false} }
         if name == "monotonic_ns" { return Signature{parameters:[],result:"int",mutates:false,writable:false} }
         if name == "unix_ms" { return Signature{parameters:[],result:"int",mutates:false,writable:false} }
+        return nil
+    }
+    if module == "builtin:std.url" {
+        if name == "parse" { return Signature{parameters:["string"],result:"Result<map<string,string>,std.error.Value>",mutates:false,writable:false} }
+        if name == "encode" { return Signature{parameters:["string"],result:"string",mutates:false,writable:false} }
+        if name == "decode" { return Signature{parameters:["string"],result:"Result<string,std.error.Value>",mutates:false,writable:false} }
+        if name == "build_query" { return Signature{parameters:["map<string,string>"],result:"string",mutates:false,writable:false} }
         return nil
     }
     return nil

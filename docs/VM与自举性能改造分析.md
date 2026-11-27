@@ -169,6 +169,16 @@ python perf/ab_bench.py --base tests/build-baseline/hua.exe --new tests/build/hu
 
 ## 3. 历史记录索引
 
+<a id="asm-vm-feasibility-20261127"></a>
+
+### 3.1 汇编重写 VM 底层可行性与替代方案评估（2026-11-27）
+
+基于本仓实测剖析（真实编译中纯字节码分发仅占 `~7.2%`–`12%`，而 `Value` 复制/COW/析构分派、堆分配、`enforce_type` 字符串类型检查与 GC 扫描合计占 `>75%`）及现有 `--release` 原生后端对比（`fib` `12×`、整数容器 `21×`、自举编译 `7.8×`），评估结论如下：
+
+- **预期收益**：手写汇编直接线索化分发仅在纯标量微基准上可提速 **`1.8×–3.0×`**；在真实编译与容器应用负载上端到端仅约 **`1.05×–1.20×`**，且永远无法逼近 `--release` 机器码。
+- **核心技术难度与跨平台影响**：(1) 需先将 `src/vm.cpp` 的 C++20 协程帧改为无栈显式堆帧；(2) Windows SEH（`.seh_*`）、Linux DWARF（`.cfi_*`）与 macOS/iOS ARM64 Compact Unwind 异常展开表极易出错，否则 C++ `Diagnostic` 抛异常直接崩溃；(3) 紧耦合 48 字节 `Tagged` `Value` 布局导致维护脆弱；(4) 跨平台需同步维护 Win64 / SysV x64 / Apple ARM64（注意 iOS 禁用运行时 JIT 但允许静态编入的 AOT 汇编解释器，且严禁触碰 `x18`）至少 3 套汇编。
+- **结论与三级推荐替代路线**：**现阶段不建议直接手写多平台汇编重写 `vm.cpp`**。优先按投入产出比执行：(1) 利用固定工具链 Clang 23 的 **`[[clang::musttail]]` 尾调用线索化分发**改造 `register_vm.cpp`（一份 C++ 代码覆盖 Windows/Linux/macOS/iOS 且自动生成正确展开表，可获汇编分发 85%–90% 收益）；(2) 实施 **`TypeId` 整数驻留**并扩大 `register_vm` 对结构体/闭包/外部调用的覆盖，直击 75% 非分发瓶颈；(3) 若远期布局完全冻结后确需极致解释器速度，采用单源小型汇编生成器（OfflineASM 思路）仅生成 ~30 条纯标量热指令。详见[深度分析原文](../.codex-sync/knowledge/bootstrap-performance/designs/2026-11-27-step5-decoupling-and-asm-vm-analysis.md)。
+
 <a id="execution-storage-priority2"></a>
 <a id="route-reorder-20261108"></a>
 <a id="s2-2a-results-20261107"></a>

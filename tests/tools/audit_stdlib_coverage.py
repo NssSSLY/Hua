@@ -316,6 +316,14 @@ def native_cpp_supports_type(t: str) -> bool:
         "std.file.File",
         "std.file.IOFailure",
         "std.error.Value",
+        "NativeHandle",
+        "std.stream.Reader",
+        "std.stream.Writer",
+        "std.http.Response",
+        "std.http.StreamResponse",
+        "std.regex.Pattern",
+        "std.process.Child",
+        "std.random.Rng",
     }:
         return True
     if t.endswith("?"):
@@ -463,11 +471,11 @@ def audit_function(
     types_text = (Path(__file__).resolve().parents[2] / "selfhost/types.hua").read_text(encoding="utf-8")
     poly_supported_in_types = False
     if (fn.module == "task" and fn.name in {"cancel", "done", "state", "timeout", "all", "race"}) or (
-        fn.module == "alg"
-        and fn.name in {"sorted", "reverse", "contains", "index", "lower_bound", "upper_bound", "binary_search", "sum", "min", "max"}
+        fn.module == "alg" and not fn.callback
     ) or (
-        fn.module == "list"
-        and fn.name in {"from_slice", "len", "get", "set", "append", "extend", "pop", "snapshot", "clear", "reserve"}
+        fn.module == "list" and not fn.callback
+    ) or (
+        fn.module in {"maps", "sets", "deque", "heap", "random", "simd"} and not fn.callback
     ) or (fn.module == "json" and fn.name in {"encode", "from", "encode_pretty"}) or (
         fn.module == "test" and fn.name in {"equal", "not_equal"} and 'module == "builtin:std.test"' in types_text
     ):
@@ -621,7 +629,7 @@ def main() -> None:
     summary = {
         "total_builtin_stdlib_functions": len(rows),
         "total_builtin_modules": len(by_module),
-        "sdk_source_modules": ["std.alg_integer"],
+        "sdk_source_modules": ["std.alg_integer", "std.sse", "std.csv"],
         "core_builtins": len(core_names),
         "host_supported": sum(1 for r in rows if r["host"]),
         "sh_check_supported": sum(1 for r in rows if r["sh_check"]),

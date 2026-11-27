@@ -543,13 +543,15 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
 }
 // Registry types are canonical (map<K,V>); the generated declaration text needs source syntax.
 static std::string source_type(const std::string& type){
+    if(type.size()>1 && type.ends_with('?'))return source_type(type.substr(0,type.size()-1))+"?";
     auto kv=type_arguments(type,"map");
-    return kv.size()==2?"map["+source_type(kv[0])+"]"+source_type(kv[1]):type;
+    if(kv.size()==2)return "map["+source_type(kv[0])+"]"+source_type(kv[1]);
+    auto res=type_arguments(type,"Result");
+    if(res.size()==2)return "Result<"+source_type(res[0])+","+source_type(res[1])+">";
+    return type;
 }
-ModuleLoader::Module& ModuleLoader::sdk_standard(const SourceSpan& site) {
+ModuleLoader::Module& ModuleLoader::sdk_standard(const std::string& module, const std::string& relative, const SourceSpan& site) {
     namespace fs = std::filesystem;
-    const std::string module = "std.alg_integer";
-    const std::string relative = "src/std/alg_integer.hua";
     const std::string id = "@sdk/" + relative;
     if (auto found = cache_.find(id); found != cache_.end()) {
         if (found->second->state == Module::State::Loading)
@@ -562,7 +564,7 @@ ModuleLoader::Module& ModuleLoader::sdk_standard(const SourceSpan& site) {
     const auto* configured = std::getenv("HUA_HOME");
 #endif
     if (!configured || !*configured)
-        error(site, "std.alg_integer requires HUA_HOME set to a Hua SDK root");
+        error(site, module + " requires HUA_HOME set to a Hua SDK root");
 
     const fs::path root(configured);
     if (!root.is_absolute()) error(site, "HUA_HOME must be an absolute SDK root");
@@ -590,7 +592,7 @@ ModuleLoader::Module& ModuleLoader::sdk_standard(const SourceSpan& site) {
         !json_text_equals(json_member(json_member(manifest, "source_modules"), module), relative) ||
         !json_text_equals(json_member(json_member(json_member(manifest, "files"), relative), "role"),
                           "stdlib_source"))
-        error(site, "Hua SDK manifest does not register std.alg_integer");
+        error(site, "Hua SDK manifest does not register " + module);
 
     const auto path = (canonical_root / relative).make_preferred();
     const auto resolved = fs::canonical(path, ec);
@@ -599,14 +601,20 @@ ModuleLoader::Module& ModuleLoader::sdk_standard(const SourceSpan& site) {
     return visit(resolved, site, false, id);
 }
 ModuleLoader::Module& ModuleLoader::standard(const std::string& name,const SourceSpan& site) {
-    if (name == "std.alg_integer") return sdk_standard(site);
+    if (name == "std.alg_integer") return sdk_standard("std.alg_integer", "src/std/alg_integer.hua", site);
+    if (name == "std.sse") return sdk_standard("std.sse", "src/std/sse.hua", site);
+    if (name == "std.csv") return sdk_standard("std.csv", "src/std/csv.hua", site);
     auto id="builtin:"+name;if(auto found=cache_.find(id);found!=cache_.end())return *found->second;
     if(!standard_module(name))error(site,"unknown standard module `"+name+"`");
     if(modules_.size()>=128)error(site,"module graph limit exceeded","E5005");
     auto owned=std::make_unique<Module>();owned->standard=true;owned->state=Module::State::Loaded;
     std::string text="# built-in standard interface; implemented by the shared runtime\n";
-    for(const auto& f:standard_functions())if(name=="std."+f.module){text+="pub fn "+f.name+"(";for(std::size_t i=0;i<f.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i);if(!f.parameters[i].empty())text+=" "+source_type(f.parameters[i]);}text+=") "+f.result+" {}\n";owned->globals.emplace(f.name,"$core$"+standard_name(f));}
+    for(const auto& f:standard_functions())if(name=="std."+f.module){text+="pub fn "+f.name+"(";for(std::size_t i=0;i<f.parameters.size();++i){if(i)text+=",";text+="a"+std::to_string(i);if(!f.parameters[i].empty())text+=" "+source_type(f.parameters[i]);}text+=") "+source_type(f.result)+" {}\n";owned->globals.emplace(f.name,"$core$"+standard_name(f));}
     if(name=="std.file"){text+="pub struct File {}\npub struct IOFailure {}\n";owned->globals.emplace("File","std.file.File");owned->globals.emplace("IOFailure","std.file.IOFailure");}
+    if(name=="std.stream"){text+="pub struct Reader {}\npub struct Writer {}\n";owned->globals.emplace("Reader","std.stream.Reader");owned->globals.emplace("Writer","std.stream.Writer");}
+    if(name=="std.http"){text+="pub struct Response {}\npub struct StreamResponse {}\n";owned->globals.emplace("Response","std.http.Response");owned->globals.emplace("StreamResponse","std.http.StreamResponse");}
+    if(name=="std.regex"){text+="pub struct Pattern {}\n";owned->globals.emplace("Pattern","std.regex.Pattern");}
+    if(name=="std.process"){text+="pub struct Child {}\n";owned->globals.emplace("Child","std.process.Child");}
     if(name=="std.random"){text+="pub struct Rng {}\n";owned->globals.emplace("Rng","std.random.Rng");}
     if(name=="std.error"){text+="pub struct Value {}\n";owned->globals.emplace("Value","std.error.Value");}
     if(name=="std.json"){text+="pub struct Value {}\n";owned->globals.emplace("Value","Json");}
@@ -637,7 +645,7 @@ NodePtr ModuleLoader::link(Module& module) {
         if(name.empty())return std::string{};
         for(auto i=local_types.rbegin();i!=local_types.rend();++i)if(i->contains(name))return name;
         if(auto linked=imported(name,span,true);!linked.empty())return linked;
-        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task","NativeHandle","std.error.Value"};
+        static const std::unordered_set<std::string> primitives={"int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Result","Json","Bytes","Buffer","Task","NativeHandle","std.error.Value","std.stream.Reader","std.stream.Writer","std.http.Response","std.http.StreamResponse","std.regex.Pattern","std.process.Child"};
         if(primitives.contains(name))return name;
         if(auto found=module.globals.find(name);found!=module.globals.end())return found->second;
         return module.prefix+name;
