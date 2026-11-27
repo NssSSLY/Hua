@@ -874,7 +874,13 @@ fn extended_statement(s mut State) Result<ast.NodeId> {
     take(s)?
     var name = expect(s,"identifier")?.text
     while s.data[s.pos].kind == "." { take(s)?
-        name += "."+expect(s,"identifier")?.text }
+        if s.data[s.pos].kind == "simd" {
+            name += ".simd"
+            take(s)?
+        } else {
+            name += "."+expect(s,"identifier")?.text
+        }
+    }
     var empty []ast.NodeId = []
     var children = empty
     if s.data[s.pos].kind == "as" { take(s)?

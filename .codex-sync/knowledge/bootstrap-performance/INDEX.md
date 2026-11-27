@@ -1,5 +1,9 @@
 # Hua自举性能项目记忆索引
 
+## 方向 A 收官：32 内建模块 / 422 内建函数 100% 四路径全通（2026-11-27）
+
+完成 A1（`--release` 原生 `async/spawn/await/taskgroup` + 9 项 `std.task` 纤程挂起）、A2（19 项高阶回调标准库，自举类型检查 + `--release` 零装箱 C++20 模板直连）与 A3（`std.simd` 4 项自举解析放开）。重装配 `huaBin/` 达成 `C2(16.54s) == C3(125.47s, 794,922,023 步)` 不动点（`58cc4035...`）；`step5_direction_a_tests.py --sdk huaBin`（`7.44s` 全 4 路径）及 3 项契约 CTest 全过。[验收记录](runs/2026-11-27-direction-a-422-stdlib-100pct.md)
+
 ## 第 5 步第二波：零依赖流式 GZIP（`std.compress`）、5D 非回调标准库清零与 `packages/python/`（2026-11-27）
 
 完成零三方 DLL RFC 1951/1952 `std.compress`（4 函数，`HUAB format 33`）、5D 非回调多态/句柄标准库双端打通（`random`/`deque`/`heap`/`maps`/`sets`/`list`/`alg`，含原生 `List`/`Map` `sync_from_value` 回写，自举 `401/422`）及 `packages/python/` `hua.package.v1` 封装。重装配 `huaBin/` 达成 `G1 == G2`（`f616fe8e...`）与 `C2(19.87s) == C3(175.47s, 784,461,934 步)` 不动点（`36c7d6b3...`）；Wave 2（`15.09s`）、Wave 1（`41.19s`）全 4 路径及 3 项契约 CTest 全过。[验收记录](runs/2026-11-27-step5-wave2-compress-5d-python.md)

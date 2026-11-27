@@ -23,6 +23,19 @@ pub fn signature(target string) Signature? {
         if name == "sum" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "min" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "max" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
+        if name == "map" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "fold" { return Signature{parameters:["","",""],result:"",mutates:false,writable:false} }
+        if name == "filter" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "any" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "all" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "find" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "find_index" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "sorted_by_key" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "sorted_by" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "min_by_key" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "max_by_key" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "partition" { return Signature{parameters:["",""],result:"",mutates:false,writable:false} }
+        if name == "zip_with" { return Signature{parameters:["","",""],result:"",mutates:false,writable:false} }
         if name == "windows" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
         return nil
     }
@@ -182,6 +195,8 @@ pub fn signature(target string) Signature? {
         if name == "peek" { return Signature{parameters:[""],result:"",mutates:false,writable:false} }
         if name == "smallest" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
         if name == "largest" { return Signature{parameters:["","int"],result:"",mutates:false,writable:false} }
+        if name == "push_by_key" { return Signature{parameters:["","",""],result:"Result<int,string>",mutates:true,writable:false} }
+        if name == "pop_by_key" { return Signature{parameters:["",""],result:"",mutates:true,writable:false} }
         return nil
     }
     if module == "builtin:std.http" {
@@ -254,6 +269,9 @@ pub fn signature(target string) Signature? {
         if name == "swap" { return Signature{parameters:["","int","int"],result:"Result<bool,string>",mutates:true,writable:false} }
         if name == "truncate" { return Signature{parameters:["","int"],result:"void",mutates:true,writable:false} }
         if name == "slice" { return Signature{parameters:["","int","int"],result:"",mutates:false,writable:false} }
+        if name == "sort_by_key" { return Signature{parameters:["",""],result:"void",mutates:true,writable:false} }
+        if name == "sort_by" { return Signature{parameters:["",""],result:"void",mutates:true,writable:false} }
+        if name == "retain" { return Signature{parameters:["",""],result:"int",mutates:true,writable:false} }
         if name == "dedup" { return Signature{parameters:[""],result:"int",mutates:true,writable:false} }
         return nil
     }
@@ -273,6 +291,7 @@ pub fn signature(target string) Signature? {
         if name == "get_or" { return Signature{parameters:["","",""],result:"",mutates:false,writable:false} }
         if name == "pop" { return Signature{parameters:["",""],result:"",mutates:true,writable:false} }
         if name == "merge" { return Signature{parameters:["",""],result:"int",mutates:true,writable:false} }
+        if name == "update" { return Signature{parameters:["","","",""],result:"",mutates:true,writable:false} }
         return nil
     }
     if module == "builtin:std.math" {

@@ -284,6 +284,23 @@ fn infer(m mut Model, units map[string]modules.Unit) Result<void> {
     }
     return ok()
 }
+fn check_callback(m Model, e Environment, n ast.Node, cb Info, arity int, expected_params []string) Result<Function> {
+    if !strings.starts_with(cb.type_name,"fn:") { return err(fail(e,n,"E3004","callback requires a Hua function")) }
+    let target = rules.cut(cb.type_name,3,len(cb.type_name))
+    if !has(m.functions,target) { return err(fail(e,n,"E3004","callback requires a Hua function")) }
+    let f = unwrap(m.functions[target])
+    if len(f.parameters) != arity { return err(fail(e,n,"E3004","callback parameter count mismatch")) }
+    if f.asynchronous || f.result == "" || f.result == "void" || strings.starts_with(f.result,"Task<") {
+        return err(fail(e,n,"E3004","callback requires an annotated non-async result"))
+    }
+    for i in 0..arity {
+        if f.parameters[i].writable { return err(fail(e,n,"E3004","callback parameters require non-mut type annotations")) }
+        if !rules.compatible(f.parameters[i].type_name,expected_params[i]) {
+            return err(fail(e,n,"E3004","callback parameter type mismatch"))
+        }
+    }
+    return ok(f)
+}
 fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Info) Result<Info> {
     var s = unwrap(signatures.signature(name))
     if len(s.parameters) != len(arguments) { return err(fail(e,n,"E3005","standard argument count mismatch")) }
@@ -311,21 +328,61 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
     if module == "builtin:std.alg" {
         let element = rules.element(arguments[0].type_name)
         if element == "" { return err(fail(e,n,"E3004","algorithm requires typed array or slice")) }
-        if !alg.contains(["unique","chunk","windows"],method) {
-            if !alg.contains(["int","float","string"],element) || ((method == "sum" || method == "product") && element == "string") { return err(fail(e,n,"E3004","algorithm requires supported scalar array")) }
-        }
         var ps = clone(s.parameters)
         ps[0] = "[]"+element
-        if len(ps) == 2 && method != "chunk" && method != "windows" { ps[1] = element
-            if arguments[1].type_name != element { return err(fail(e,get(e,n.children[2]),"E3004","algorithm target requires identical element type")) } }
-        s.parameters = ps
-        if method == "unique" { s.result = "[]"+element }
-        else if method == "chunk" || method == "windows" { s.result = "[][]"+element }
-        else if method == "sorted" || method == "reverse" { s.result = "Result<[]"+element+",string>" }
-        else if method == "contains" { s.result = "bool" }
-        else if method == "binary_search" { s.result = "int?" }
-        else if method == "sum" || method == "product" || method == "min" || method == "max" { s.result = "Result<"+element+",string>" }
-        else { s.result = "int" }
+        if alg.contains(["map","fold","filter","any","all","find","find_index","sorted_by_key","sorted_by","min_by_key","max_by_key","partition","zip_with"],method) {
+            if method == "zip_with" {
+                let elem2 = rules.element(arguments[1].type_name)
+                if elem2 == "" { return err(fail(e,get(e,n.children[2]),"E3004","zip_with requires typed second slice")) }
+                ps[1] = "[]"+elem2
+                let cb = check_callback(m,e,get(e,n.children[3]),arguments[2],2,[element,elem2])?
+                ps[2] = arguments[2].type_name
+                s.result = "[]"+cb.result
+            } else if method == "fold" {
+                ps[1] = arguments[1].type_name
+                let cb = check_callback(m,e,get(e,n.children[3]),arguments[2],2,[arguments[1].type_name,element])?
+                if !rules.compatible(arguments[1].type_name,cb.result) { return err(fail(e,get(e,n.children[3]),"E3004","fold callback result must match accumulator type")) }
+                ps[2] = arguments[2].type_name
+                s.result = arguments[1].type_name
+            } else if method == "sorted_by" {
+                let cb = check_callback(m,e,get(e,n.children[2]),arguments[1],2,[element,element])?
+                if cb.result != "bool" { return err(fail(e,get(e,n.children[2]),"E3004","callback must return bool")) }
+                ps[1] = arguments[1].type_name
+                s.result = "[]"+element
+            } else {
+                let cb = check_callback(m,e,get(e,n.children[2]),arguments[1],1,[element])?
+                ps[1] = arguments[1].type_name
+                if method == "map" { s.result = "[]"+cb.result }
+                else if alg.contains(["filter","any","all","find","find_index","partition"],method) {
+                    if cb.result != "bool" { return err(fail(e,get(e,n.children[2]),"E3004","callback must return bool")) }
+                    if method == "filter" { s.result = "[]"+element }
+                    else if method == "any" || method == "all" { s.result = "bool" }
+                    else if method == "find_index" { s.result = "int" }
+                    else if method == "partition" { s.result = "multi<[]"+element+",[]"+element+">" }
+                    else if strings.ends_with(element,"?") { s.result = element }
+                    else { s.result = element+"?" }
+                } else {
+                    if !alg.contains(["int","float","string"],cb.result) { return err(fail(e,get(e,n.children[2]),"E3004","key callback must return int/float/string")) }
+                    if method == "sorted_by_key" { s.result = "[]"+element }
+                    else { s.result = "Result<"+element+",string>" }
+                }
+            }
+            s.parameters = ps
+        } else {
+            if !alg.contains(["unique","chunk","windows"],method) {
+                if !alg.contains(["int","float","string"],element) || ((method == "sum" || method == "product") && element == "string") { return err(fail(e,n,"E3004","algorithm requires supported scalar array")) }
+            }
+            if len(ps) == 2 && method != "chunk" && method != "windows" { ps[1] = element
+                if arguments[1].type_name != element { return err(fail(e,get(e,n.children[2]),"E3004","algorithm target requires identical element type")) } }
+            s.parameters = ps
+            if method == "unique" { s.result = "[]"+element }
+            else if method == "chunk" || method == "windows" { s.result = "[][]"+element }
+            else if method == "sorted" || method == "reverse" { s.result = "Result<[]"+element+",string>" }
+            else if method == "contains" { s.result = "bool" }
+            else if method == "binary_search" { s.result = "int?" }
+            else if method == "sum" || method == "product" || method == "min" || method == "max" { s.result = "Result<"+element+",string>" }
+            else { s.result = "int" }
+        }
     }
     if module == "builtin:std.simd" && method != "backend" {
         let element = rules.element(arguments[0].type_name)
@@ -351,6 +408,14 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
             if strings.ends_with(kv[1],"?") { s.result = kv[1] } else { s.result = kv[1]+"?" }
         }
         else if method == "merge" { ps[1] = arguments[0].type_name }
+        else if method == "update" {
+            ps[1] = kv[0]
+            ps[2] = kv[1]
+            let cb = check_callback(m,e,get(e,n.children[4]),arguments[3],1,[kv[1]])?
+            if !rules.compatible(kv[1],cb.result) { return err(fail(e,get(e,n.children[4]),"E3004","maps.update callback result must match value type")) }
+            ps[3] = arguments[3].type_name
+            s.result = kv[1]
+        }
         s.parameters = ps
     }
     if module == "builtin:std.sets" {
@@ -402,11 +467,21 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
             if len(ts) != 1 { return err(fail(e,n,"E3004","heap operation requires List<T>")) }
             let element = ts[0]
             ps[0] = "List<"+element+">"
-            if method == "push" {
+            if method == "push" || method == "push_by_key" {
                 ps[1] = element
                 if !rules.compatible(element,arguments[1].type_name) { return err(fail(e,get(e,n.children[2]),"E3004","heap element type mismatch")) }
             }
-            if method == "pop" || method == "peek" { s.result = "Result<"+element+",string>" }
+            if method == "push_by_key" {
+                let cb = check_callback(m,e,get(e,n.children[3]),arguments[2],1,[element])?
+                if !alg.contains(["int","float","string"],cb.result) { return err(fail(e,get(e,n.children[3]),"E3004","key callback must return int/float/string")) }
+                ps[2] = arguments[2].type_name
+            }
+            if method == "pop_by_key" {
+                let cb = check_callback(m,e,get(e,n.children[2]),arguments[1],1,[element])?
+                if !alg.contains(["int","float","string"],cb.result) { return err(fail(e,get(e,n.children[2]),"E3004","key callback must return int/float/string")) }
+                ps[1] = arguments[1].type_name
+            }
+            if method == "pop" || method == "peek" || method == "pop_by_key" { s.result = "Result<"+element+",string>" }
         }
         s.parameters = ps
     }
@@ -441,6 +516,21 @@ fn standard(m mut Model, e Environment, n ast.Node, name string, arguments []Inf
         if method == "get" || method == "pop" || method == "remove_at" { s.result = "Result<"+element+",string>" }
         if method == "slice" { s.result = "Result<[]"+element+",string>" }
         if method == "snapshot" { s.result = "[]"+element }
+        if method == "sort_by_key" {
+            let cb = check_callback(m,e,get(e,n.children[2]),arguments[1],1,[element])?
+            if !alg.contains(["int","float","string"],cb.result) { return err(fail(e,get(e,n.children[2]),"E3004","key callback must return int/float/string")) }
+            ps[1] = arguments[1].type_name
+        }
+        if method == "sort_by" {
+            let cb = check_callback(m,e,get(e,n.children[2]),arguments[1],2,[element,element])?
+            if cb.result != "bool" { return err(fail(e,get(e,n.children[2]),"E3004","callback must return bool")) }
+            ps[1] = arguments[1].type_name
+        }
+        if method == "retain" {
+            let cb = check_callback(m,e,get(e,n.children[2]),arguments[1],1,[element])?
+            if cb.result != "bool" { return err(fail(e,get(e,n.children[2]),"E3004","callback must return bool")) }
+            ps[1] = arguments[1].type_name
+        }
         s.parameters = ps
         if method == "append" || method == "set" || method == "insert" {
             var index = 1

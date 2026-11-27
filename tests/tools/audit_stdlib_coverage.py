@@ -471,11 +471,7 @@ def audit_function(
     types_text = (Path(__file__).resolve().parents[2] / "selfhost/types.hua").read_text(encoding="utf-8")
     poly_supported_in_types = False
     if (fn.module == "task" and fn.name in {"cancel", "done", "state", "timeout", "all", "race"}) or (
-        fn.module == "alg" and not fn.callback
-    ) or (
-        fn.module == "list" and not fn.callback
-    ) or (
-        fn.module in {"maps", "sets", "deque", "heap", "random", "simd"} and not fn.callback
+        fn.module in {"alg", "list", "maps", "sets", "deque", "heap", "random", "simd"}
     ) or (fn.module == "json" and fn.name in {"encode", "from", "encode_pretty"}) or (
         fn.module == "test" and fn.name in {"equal", "not_equal"} and 'module == "builtin:std.test"' in types_text
     ):

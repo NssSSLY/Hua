@@ -100,6 +100,12 @@ fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
     if len(list_args)==1 { return ok("hn::List<"+cpp_type(e,n,list_args[0])?+">") }
     let deque_args=rules.arguments(t,"Deque")
     if len(deque_args)==1 { return ok("hn::OpaqueDeque<"+cpp_type(e,n,deque_args[0])?+">") }
+    let task_args=rules.arguments(t,"Task")
+    if len(task_args)==1 {
+        var payload="hn::Unit"
+        if task_args[0]!="void" { payload=cpp_type(e,n,task_args[0])? }
+        return ok("hn::Task<"+payload+">")
+    }
     let map_args=rules.arguments(t,"map")
     if len(map_args)==2 { return ok("hn::Map<"+cpp_type(e,n,map_args[0])?+","+cpp_type(e,n,map_args[1])?+">") }
     let result_args=rules.arguments(t,"Result")
@@ -420,6 +426,26 @@ fn bridge_mut_arg(name string) int {
 fn call(e Emitter, n lower.Node) Result<string> {
     return emit_call(e,n,false)
 }
+fn callback_helper(name string) string {
+    if strings.starts_with(name,"$std$alg$") {
+        let m=rules.cut(name,9,len(name))
+        if alg.contains(["map","fold","filter","any","all","find","find_index","sorted_by_key","sorted_by","min_by_key","max_by_key","partition","zip_with"],m) {
+            return "hn::alg_"+m
+        }
+    }
+    if name=="$std$list$sort_by_key" || name=="$std$list$sort_by" || name=="$std$list$retain" {
+        return "hn::list_"+rules.cut(name,10,len(name))
+    }
+    if name=="$std$heap$push_by_key" || name=="$std$heap$pop_by_key" {
+        return "hn::heap_"+rules.cut(name,10,len(name))
+    }
+    if name=="$std$maps$update" { return "hn::map_update" }
+    return ""
+}
+fn callback_arity(name string) int {
+    if name=="$std$alg$fold" || name=="$std$alg$sorted_by" || name=="$std$alg$zip_with" || name=="$std$list$sort_by" { return 2 }
+    return 1
+}
 fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
     let callee=node(e.core,n.children[0])
     if callee.kind!="Name" { return err(fail(callee,"native calls require a function declaration")) }
@@ -433,6 +459,78 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
     if direct { function=node(e.core,unwrap(e.functions[callee.text])) }
     else if strings.starts_with(callee.text,"$core$") { builtin=rules.cut(callee.text,6,len(callee.text)) }
     else { return err(fail(callee,"unsupported native callee "+callee.text)) }
+    let site=location(e,n)
+    if builtin=="task_group_begin" { return ok("hn::task_group_begin()") }
+    if builtin=="task_group_end" {
+        let h=expression(e,node(e.core,n.children[1]))?
+        if deferred {
+            return ok("auto deferred"+cpp_id(e,n.id)+"=({auto arg1="+h+";[arg1]() mutable {hn::task_group_end(arg1,"+site+");};});\nhn::Deferred guard"+cpp_id(e,n.id)+"(std::move(deferred"+cpp_id(e,n.id)+"));\n")
+        }
+        return ok("hn::task_group_end("+h+","+site+")")
+    }
+    if builtin=="task_await" {
+        let h=expression(e,node(e.core,n.children[1]))?
+        if n.type_name=="void" { return ok("({(void)hn::await_task("+h+","+site+");})") }
+        return ok("hn::from_value<"+cpp_type(e,n,n.type_name)?+">(hn::await_task("+h+","+site+"))")
+    }
+    if builtin=="task_start" {
+        let fn_node=node(e.core,n.children[1])
+        if fn_node.kind!="Name" || !has(e.functions,fn_node.text) { return err(fail(fn_node,"task_start requires a known function declaration")) }
+        let target_fn=node(e.core,unwrap(e.functions[fn_node.text]))
+        let t_args=rules.arguments(n.type_name,"Task")
+        let inner_t=t_args[0]
+        var caps=list.from_slice(empty)
+        var call_args=list.from_slice(empty)
+        for i in 2..len(n.children) {
+            let arg=node(e.core,n.children[i])
+            let aname="targ"+str(i-1)
+            let ptype=node(e.core,target_fn.children[i-2]).type_name
+            code+=cpp_type(e,arg,ptype)?+" "+aname+"=hn::task_input_any("+contextual_expression(e,arg,ptype)?+");\n"
+            list.append(caps,aname+"=std::move("+aname+")")?
+            list.append(call_args,aname)?
+        }
+        let fn_call=function_name(e,target_fn.id)+"("+strings.join(list.snapshot(call_args),",")+")"
+        var body_ret=""
+        if inner_t=="void" {
+            body_ret="auto depth=hn::enter<false,false>("+site+");"+fn_call+";hn::leave<false>(depth);return hua::Value{};"
+        } else {
+            body_ret="auto depth=hn::enter<false,false>("+site+");auto r="+fn_call+";hn::leave<false>(depth);return hn::to_value(r);"
+        }
+        return ok(code+cpp_type(e,n,n.type_name)?+"{hn::start_task(["+strings.join(list.snapshot(caps),",")+"]() mutable -> hua::Value {"+body_ret+"},"+quote(inner_t)+","+site+").value};})")
+    }
+    if strings.starts_with(builtin,"$std$task$") {
+        for i in 1..len(n.children) {
+            let arg=node(e.core,n.children[i])
+            let aname="arg"+str(i)
+            code+="auto "+aname+"="+expression(e,arg)?+";\n"
+            list.append(args,"hn::to_value("+aname+")")?
+        }
+        let invoke="hn::task_wait("+quote(builtin)+",{"+strings.join(list.snapshot(args),",")+"},"+site+")"
+        if n.type_name=="void" { return ok(code+"(void)"+invoke+";})") }
+        return ok(code+"hn::from_value<"+cpp_type(e,n,n.type_name)?+">("+invoke+");})")
+    }
+    let cb_helper=callback_helper(builtin)
+    if cb_helper!="" {
+        let cb_idx=len(n.children)-1
+        let fn_node=node(e.core,n.children[cb_idx])
+        if fn_node.kind!="Name" || !has(e.functions,fn_node.text) { return err(fail(fn_node,"callback requires a known Hua function")) }
+        let cb_fn=node(e.core,unwrap(e.functions[fn_node.text]))
+        for i in 1..cb_idx {
+            let arg=node(e.core,n.children[i])
+            let aname="arg"+str(i)
+            code+="auto "+aname+"="+expression(e,arg)?+";\n"
+            list.append(args,aname)?
+        }
+        let arity=callback_arity(builtin)
+        var lam=""
+        if arity==2 {
+            lam="[&](auto&& p0,auto&& p1){auto depth=hn::enter<false,false>("+site+");auto r="+function_name(e,cb_fn.id)+"(p0,p1);hn::leave<false>(depth);return r;}"
+        } else {
+            lam="[&](auto&& p0){auto depth=hn::enter<false,false>("+site+");auto r="+function_name(e,cb_fn.id)+"(p0);hn::leave<false>(depth);return r;}"
+        }
+        list.append(args,lam)?
+        return ok(code+cb_helper+"("+strings.join(list.snapshot(args),",")+","+site+");})")
+    }
     let bridge=bridged(builtin)
     let ext_call=direct && function.role=="external"
     if deferred && (!direct || ext_call) { return err(fail(n,"unsupported native deferred intrinsic")) }
@@ -953,7 +1051,7 @@ fn prepare(core lower.Core) Result<Program> {
     for unit in list.snapshot(units) {
         for id in unit.roots {
             let n=node(core,id)
-            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" && n.role!="external" { return err(fail(n,"unsupported native declaration "+n.role)) }
+            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" && n.role!="external" && n.role!="async-body" { return err(fail(n,"unsupported native declaration "+n.role)) }
             if n.kind=="Function" {
                 e.ids[id]=mangle(n.text)
                 e.functions[n.text]=id
@@ -1167,6 +1265,14 @@ fn implementation(p Program, unit Unit, scalar bool) Result<string> {
     return ok(strings.join(list.snapshot(output),""))
 }
 
+fn uses_tasks(core lower.Core) bool {
+    for n in list.snapshot(core.nodes) {
+        if n.role=="async-body" || n.text=="$core$task_start" || n.text=="$core$task_group_begin" || strings.starts_with(n.text,"$core$$std$task$") {
+            return true
+        }
+    }
+    return false
+}
 fn startup(p Program) Result<string> {
     let e=p.e
     var declarations=""
@@ -1200,9 +1306,11 @@ fn startup(p Program) Result<string> {
         else { result=invoke+";"+result }
         position="{"+quote(main.module)+","+str(main.start)+","+str(main.end)+","+str(main.line)+","+str(main.column)+"}"
     }
+    var tasks_flag="false"
+    if uses_tasks(p.e.core) { tasks_flag="true" }
     return ok("namespace hua_generated {\n"+declarations+"static const hn::SourceSpan entry_site"+position
         +";\nstatic hn::Value entry(){"+initialize+result+"}\n}\n"
-        +"int main(int argc,char** argv){return hn::run_main(argc,argv,hua_generated::entry_site,&hua_generated::entry);}\n")
+        +"int main(int argc,char** argv){return hn::run_main(argc,argv,hua_generated::entry_site,&hua_generated::entry,"+tasks_flag+");}\n")
 }
 
 # Keep the legacy one-file generator available for older SDKs and comparisons.

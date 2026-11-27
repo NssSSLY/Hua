@@ -40,6 +40,10 @@ using hua::SourceSpan;using hua::Value;
 struct Unit { bool operator==(const Unit&)const{return true;} };
 struct Nil {};
 struct TaskHandle { Value value; };
+template<class T> struct Task {
+    Value value;
+    operator TaskHandle() const { return {value}; }
+};
 
 // ---- execution state: budget, call depth and the call-site stack used for traces
 class NativeFiber;
@@ -794,6 +798,7 @@ template<class T,std::size_t N> struct TypeName<Fixed<T,N>>{
 };
 template<class T> struct TypeName<Slice<T>>{static std::string get(){return "[]"+TypeName<T>::get();}};
 template<class T> struct TypeName<List<T>>{static std::string get(){return "List<"+TypeName<T>::get()+">";}};
+template<class T> struct TypeName<Task<T>>{static std::string get(){return "Task<"+TypeName<T>::get()+">";}};
 template<class T> struct TypeName<OpaqueDeque<T>>{static std::string get(){return "Deque<"+TypeName<T>::get()+">";}};
 template<class T> struct TypeName<Opt<T>>{static std::string get(){return TypeName<T>::get()+"?";}};
 template<class Tag> struct TypeName<Opaque<Tag>>{static std::string get(){return Tag::name;}};
@@ -808,6 +813,9 @@ inline Value to_value(bool v){return Value(v);}
 inline Value to_value(const Str& v){return Value(v.text());}
 inline Value to_value(Unit){return Value{};}
 inline Value to_value(const TaskHandle& task) { return task.value; }
+template<class T> inline Value to_value(const Task<T>& task) { return task.value; }
+template<class T> inline constexpr bool tracks_native_edges<Task<T>> = false;
+template<class T> inline Task<T> capture_value(Task<T> t) { return t; }
 inline Value to_value(std::nullopt_t){return Value{};}
 inline Value to_value(EmptySlice){return Value(hua::SliceValue{hua::managed<std::vector<Value>>(),0,0,true,""});}
 inline Value to_value(const Rng& rng){return Value(hua::RngValue{rng.data,rng.writable});}
@@ -1021,6 +1029,7 @@ template<> struct From<Rng>{
     }
 };
 template<class Tag> struct From<Opaque<Tag>>{static Opaque<Tag> get(const Value& v){return {v};}};
+template<class T> struct From<Task<T>>{static Task<T> get(const Value& v){return {v};}};
 template<class T> struct From<OpaqueDeque<T>>{static OpaqueDeque<T> get(const Value& v){return {v};}};
 template<class T> struct From<Slice<T>>{static Slice<T> get(const Value& v){
     auto p=hua::cget_if<hua::SliceValue>(&v.data);if(!p)bad_unbox("slice");
@@ -1079,6 +1088,7 @@ template<class T> inline void sync_from_value(List<T>& target,const Value& boxed
     target.data->clear();
     target.data->reserve(p->data->values.size());
     for(const auto& x:p->data->values)target.data->push_back(from_value<T>(x));
+    ++target.data->revision;
 }
 template<class K,class V> inline void sync_from_value(Map<K,V>& target,const Value& boxed){
     auto* p=hua::cget_if<hua::MapValue>(&boxed.data);
@@ -1458,6 +1468,18 @@ Exact<Name, Rep> task_input(Exact<Name, Rep> value) { return value; }
 inline Str task_input(const Str& value) { return Str(value.text()); }
 inline Unit task_input(Unit value) { return value; }
 inline Opaque<BytesTag> task_input(const Opaque<BytesTag>& value) { return value; }
+template<class Tag> Opaque<Tag> task_input(const Opaque<Tag>& value) {
+    if constexpr (std::is_same_v<Tag, FileTag> || std::is_same_v<Tag, NativeHandleTag> ||
+                  std::is_same_v<Tag, ReaderTag> || std::is_same_v<Tag, WriterTag> ||
+                  std::is_same_v<Tag, HttpStreamTag> || std::is_same_v<Tag, ProcessChildTag>) {
+        hua::runtime_error({}, "live resource handle cannot cross Task boundary", "E4104");
+    }
+    return {hua::copy_value(value.v, true, 0, true)};
+}
+template<class T> T task_input_any(const T& value) {
+    if constexpr (requires { task_input(value); }) return task_input(value);
+    else return clone(value);
+}
 template<class T> Opt<T> task_input(const Opt<T>& value);
 template<class T, class E> Result<T,E> task_input(const Result<T,E>& value);
 template<class T> Slice<T> task_input(const Slice<T>& value);
@@ -1517,6 +1539,9 @@ TaskHandle start_task(TaskBody body, const char* type, const SourceSpan& span);
 Value await_task(const TaskHandle&, const SourceSpan&);
 Value task_wait(const char* name, std::vector<Value> args, const SourceSpan&);
 I task_group_begin();
+inline void task_group_end(I handle, const SourceSpan& site) {
+    (void)task_wait("task_group_end", {to_value(handle)}, site);
+}
 struct ExternalExportSpec {
     const char* name;
     const char* linked_name;

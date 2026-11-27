@@ -498,9 +498,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -524,9 +524,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -548,9 +548,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -572,9 +572,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -596,9 +596,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -620,9 +620,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -644,9 +644,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -668,9 +668,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -692,9 +692,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -716,9 +716,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -740,9 +740,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -764,9 +764,9 @@
           "since": 20,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -790,9 +790,9 @@
           "since": 20,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -3802,9 +3802,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -3826,9 +3826,9 @@
           "since": 14,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         }
       ]
@@ -5280,9 +5280,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -5304,9 +5304,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -5328,9 +5328,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         },
         {
@@ -5670,9 +5670,9 @@
           "since": 11,
           "backends": {
             "host": true,
-            "selfhost_check": false,
-            "selfhost_huab": false,
-            "native_release": "none"
+            "selfhost_check": true,
+            "selfhost_huab": true,
+            "native_release": "inline"
           }
         }
       ]
@@ -9476,7 +9476,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9494,7 +9494,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9512,7 +9512,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9534,7 +9534,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9556,7 +9556,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9578,7 +9578,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9602,7 +9602,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9626,7 +9626,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         },
         {
@@ -9650,7 +9650,7 @@
             "host": true,
             "selfhost_check": true,
             "selfhost_huab": true,
-            "native_release": "none"
+            "native_release": "inline"
           }
         }
       ]

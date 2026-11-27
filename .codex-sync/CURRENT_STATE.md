@@ -1,5 +1,13 @@
 # 当前状态
 
+## 2026-11-27 方向 A 完成：32 内建模块 / 422 内建函数 100% 四路径全通
+
+基于 `main@39c577d` 完成方向 A（尚未提交/推送 Git）：
+- **A1 `--release` 原生 `async/spawn/await/taskgroup` + `std.task`（9 项）**：`native_rt.hpp` 新增 `hn::Task<T>`、`Opaque<Tag>` `task_input`（活句柄 `E4104`）、`task_group_end`；`native_cpp.hua` 接入 `async-body`、`uses_tasks()` 自动启动纤程主循环及 9 项 `std.task` 挂起。
+- **A2 19 项高阶回调标准库**：`selfhost/types.hua` 新增 `check_callback` 与 19 项签名推导，`native_cpp.hua` 直调 `native_algorithms.hpp` 零装箱 C++20 模板。
+- **A3 `std.simd`（4 项）**：`selfhost/parser.hua` 放开 `import std.simd` 路径段。
+- **不动点与验收**：重装配 `huaBin/` 达成 `C2(16.54s) == C3(125.47s, 794,922,023 步)` 不动点（`58cc4035...`）；`tests/step5_direction_a_tests.py --sdk huaBin`（`7.44s` 全 4 路径）及 3 项契约 CTest 全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-27-direction-a-422-stdlib-100pct.md)
+
 ## 2026-11-27 第 5 步第二波完成：零依赖流式 GZIP（`std.compress`）、5D 非回调标准库清零与 `packages/python/`（HUAB 33）
 
 基于 `main@c72b40e` 完成第 5 步主体收官（第 4 步、`tests/` 清理与第 5 步第一/二波均在本地工作区，尚未提交/推送 Git）：

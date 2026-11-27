@@ -175,9 +175,12 @@ def build_manifest_from_repo(repo: Path, enable_step2: bool = True) -> dict[str,
             std_id = f"$std${mod}${fn.name}"
             in_existing_sh = (mod_full in cat_modules) and (fn.name in cat_exports.get(mod_full, set())) and (sig_key in existing_sigs)
 
-            if enable_step2 and (mod in STEP2_ENABLE_MODULES or (mod in STEP5D_NONCALLBACK_MODULES and not fn.callback)):
+            if enable_step2 and (mod in STEP2_ENABLE_MODULES or mod in STEP5D_NONCALLBACK_MODULES or mod == "task"):
                 sh_enabled = True
-                native_mode = "inline" if (mod, fn.name) in STD_NATIVE_INLINE else "bridged"
+                if mod == "task" or fn.callback or (mod, fn.name) in STD_NATIVE_INLINE:
+                    native_mode = "inline"
+                else:
+                    native_mode = "bridged"
             else:
                 sh_enabled = in_existing_sh
                 if (mod, fn.name) in STD_NATIVE_INLINE:

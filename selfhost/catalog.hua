@@ -4,7 +4,7 @@ pub fn core(name string) bool { return alg.contains(["print", "str", "int", "flo
 pub fn primitive(name string) bool { return alg.contains(["int","float","bool","string","byte","i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","usize","isize","void","Json","Bytes","Buffer","List","Result","Task","NativeHandle","map"],name) }
 pub fn module(name string) bool { return alg.contains(["std.alg", "std.buffer", "std.bytes", "std.compress", "std.crypto", "std.deque", "std.encoding", "std.error", "std.file", "std.fs", "std.gc", "std.heap", "std.http", "std.io", "std.json", "std.list", "std.log", "std.maps", "std.math", "std.os", "std.path", "std.process", "std.random", "std.regex", "std.sets", "std.simd", "std.stream", "std.strings", "std.task", "std.test", "std.time", "std.url"],name) }
 pub fn exports(module string) []string {
-    if module == "std.alg" { return ["unique", "chunk", "product", "sorted", "reverse", "contains", "index", "lower_bound", "upper_bound", "binary_search", "sum", "min", "max", "windows"] }
+    if module == "std.alg" { return ["unique", "chunk", "product", "sorted", "reverse", "contains", "index", "lower_bound", "upper_bound", "binary_search", "sum", "min", "max", "map", "fold", "filter", "any", "all", "find", "find_index", "sorted_by_key", "sorted_by", "min_by_key", "max_by_key", "partition", "zip_with", "windows"] }
     if module == "std.buffer" { return ["new", "len", "append", "write_u8", "write_u32_le", "write_i64_le", "write_text", "bytes", "text", "clear", "write_str", "write_int", "take_text", "reserve"] }
     if module == "std.bytes" { return ["from_ints", "from_text", "to_text", "to_ints", "len", "at", "slice", "concat", "u32_le", "i64_le", "read_u32_le", "read_i64_le", "crc32"] }
     if module == "std.compress" { return ["gzip_compress", "gzip_decompress", "gzip_reader", "gzip_writer"] }
@@ -15,13 +15,13 @@ pub fn exports(module string) []string {
     if module == "std.file" { return ["File", "IOFailure", "open", "read", "write", "seek", "tell", "flush", "close", "state", "close_error", "error", "transferred", "partial", "read_line", "read_all", "read_exact", "write_all"] }
     if module == "std.fs" { return ["stat", "rename", "replace", "temp_file", "walk", "copy_file", "copy_dir", "remove_all", "canonical", "read_text", "write_text", "append_text", "exists", "remove", "mkdir_all", "list_dir", "read_bytes", "write_bytes", "append_bytes"] }
     if module == "std.gc" { return ["collect", "live", "allocated", "collected"] }
-    if module == "std.heap" { return ["heapify", "push", "pop", "peek", "smallest", "largest"] }
+    if module == "std.heap" { return ["heapify", "push", "pop", "peek", "smallest", "largest", "push_by_key", "pop_by_key"] }
     if module == "std.http" { return ["Response", "StreamResponse", "get", "post", "request", "status", "header", "headers", "body", "text", "open_stream", "stream_status", "stream_header", "stream_headers", "stream_body", "stream_close"] }
     if module == "std.io" { return ["write_err", "read_line", "read_all", "write"] }
     if module == "std.json" { return ["Value", "decode", "encode", "kind", "get", "at", "len", "keys", "as_string", "as_int", "as_float", "as_bool", "is_null", "null", "from", "array", "object", "set", "remove", "append", "set_at", "encode_pretty", "decode_lines", "encode_lines"] }
-    if module == "std.list" { return ["from_slice", "len", "get", "set", "append", "extend", "pop", "snapshot", "clear", "reserve", "insert", "remove_at", "index_of", "contains", "reverse", "sort", "swap", "truncate", "slice", "dedup"] }
+    if module == "std.list" { return ["from_slice", "len", "get", "set", "append", "extend", "pop", "snapshot", "clear", "reserve", "insert", "remove_at", "index_of", "contains", "reverse", "sort", "swap", "truncate", "slice", "sort_by_key", "sort_by", "retain", "dedup"] }
     if module == "std.log" { return ["debug", "info", "warn", "error", "with_fields", "set_level"] }
-    if module == "std.maps" { return ["keys", "values", "entries", "get_or", "pop", "merge"] }
+    if module == "std.maps" { return ["keys", "values", "entries", "get_or", "pop", "merge", "update"] }
     if module == "std.math" { return ["floor", "ceil", "trunc", "round", "sin", "cos", "tan", "exp", "log", "log2", "log10", "hypot", "gcd", "lcm", "isqrt", "asin", "acos", "atan", "atan2", "cbrt", "fmod", "pi", "e", "tau", "popcount", "leading_zeros", "trailing_zeros", "rotate_left", "rotate_right", "checked_add", "checked_sub", "checked_mul", "checked_neg", "checked_abs", "checked_pow", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_neg", "wrapping_abs", "wrapping_pow", "saturating_add", "saturating_sub", "saturating_mul", "saturating_neg", "saturating_abs", "saturating_pow", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh"] }
     if module == "std.os" { return ["exit", "platform", "arch", "pid", "cpu_count", "getenv", "args", "cwd", "environ", "parse_args"] }
     if module == "std.path" { return ["join", "normalize", "basename", "dirname", "ext", "relative"] }

@@ -102,8 +102,9 @@ fn type_format(t string) int {
 fn load_format(text string) int {
     if strings.starts_with(text,"$core$$std$alg$") {
         let name=rules.cut(text,15,len(text))
-        if alg.contains(["windows"],name) { return 20 }
+        if alg.contains(["partition","zip_with","windows"],name) { return 20 }
         if alg.contains(["unique","chunk","product"],name) { return 19 }
+        if alg.contains(["map","fold","filter","any","all","find","find_index","sorted_by_key","sorted_by","min_by_key","max_by_key"],name) { return 11 }
         return 6
     }
     if strings.starts_with(text,"$core$$std$buffer$") {
@@ -146,11 +147,16 @@ fn load_format(text string) int {
     if strings.starts_with(text,"$core$$std$list$") {
         let name=rules.cut(text,16,len(text))
         if alg.contains(["dedup"],name) { return 20 }
+        if alg.contains(["sort_by_key","sort_by","retain"],name) { return 11 }
         if alg.contains(["insert","remove_at","index_of","contains","reverse","sort","swap","truncate","slice"],name) { return 10 }
         return 6
     }
     if strings.starts_with(text,"$core$$std$log$") { return 18 }
-    if strings.starts_with(text,"$core$$std$maps$") { return 10 }
+    if strings.starts_with(text,"$core$$std$maps$") {
+        let name=rules.cut(text,16,len(text))
+        if alg.contains(["update"],name) { return 11 }
+        return 10
+    }
     if strings.starts_with(text,"$core$$std$math$") {
         let name=rules.cut(text,16,len(text))
         if alg.contains(["checked_add","checked_sub","checked_mul","checked_neg","checked_abs","checked_pow","wrapping_add","wrapping_sub","wrapping_mul","wrapping_neg","wrapping_abs","wrapping_pow","saturating_add","saturating_sub","saturating_mul","saturating_neg","saturating_abs","saturating_pow","sinh","cosh","tanh","asinh","acosh","atanh"],name) { return 22 }
