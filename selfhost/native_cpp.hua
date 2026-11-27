@@ -13,13 +13,16 @@ struct Emitter { core lower.Core
     values map[string]string
     functions map[string]int
     records map[string]int
+    interfaces map[string]int
+    type_tags map[string]int
     fields map[string]int
     tags map[string]int
     files map[string]string
     globals map[string]bool
     value_types map[string]string
     ids map[int]string
-    positions map[int]string }
+    positions map[int]string
+    current_return string }
 struct RecordCode { definition string
     name string
     declarations string
@@ -116,6 +119,7 @@ fn cpp_type(e Emitter, n lower.Node, t string) Result<string> {
     }
     let name=record_name(t)
     if has(e.records,name) { return ok(record_type(e,unwrap(e.records[name]))) }
+    if has(e.interfaces,name) { return ok("hn::Interface<Tag_"+cpp_id(e,unwrap(e.interfaces[name]))+">") }
     return err(fail(n,"unsupported native type "+t))
 }
 fn type_text(core lower.Core, n lower.Node) string {
@@ -286,6 +290,7 @@ fn binding_name(n lower.Node) string {
     return n.text
 }
 fn variable(e Emitter, n lower.Node) Result<string> {
+    if n.text=="self" { return ok("v_self") }
     let key=binding_name(n)
     if !has(e.values,key) { return err(fail(n,"expected native variable "+n.text)) }
     return ok(unwrap(e.values[key]))
@@ -326,14 +331,22 @@ fn function_name(e Emitter, id int) string { return "fn_"+cpp_id(e,id) }
 fn signature(e Emitter, n lower.Node, definition bool) Result<string> {
     let result=return_type(e,n)?
     var parameters=""
+    let dot=strings.index(n.text,".")
+    if dot>0 && n.role!="enum-constructor" {
+        let owner=rules.cut(n.text,0,dot)
+        parameters=cpp_type(e,n,owner)?
+        if definition { parameters+=" v_self" }
+    }
     for i in 0..len(n.children)-1 {
         let part=node(e.core,n.children[i])
         if part.kind=="ReturnTypes" { continue }
-        if strings.ends_with(part.text," mut") && !shared_type(part.type_name) && !has(e.records,record_name(part.type_name)) {
-            return err(fail(part,"unsupported native mutable parameter "+part.type_name))
+        var ptype=part.type_name
+        if ptype=="" && len(part.children)>0 { ptype=type_text(e.core,node(e.core,part.children[0])) }
+        if strings.ends_with(part.text," mut") && !shared_type(ptype) && !has(e.records,record_name(ptype)) && !has(e.interfaces,record_name(ptype)) {
+            return err(fail(part,"unsupported native mutable parameter "+ptype))
         }
         if parameters!="" { parameters+="," }
-        parameters+=cpp_type(e,part,part.type_name)?
+        parameters+=cpp_type(e,part,ptype)?
         if definition { parameters+=" "+variable(e,part)? }
     }
     return ok(result+" "+function_name(e,n.id)+"("+parameters+")")
@@ -448,17 +461,42 @@ fn callback_arity(name string) int {
 }
 fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
     let callee=node(e.core,n.children[0])
-    if callee.kind!="Name" { return err(fail(callee,"native calls require a function declaration")) }
     var code="({\n"
     let empty []string=[]
     var args=list.from_slice(empty)
     var flags=list.from_slice(empty)
-    let direct=has(e.functions,callee.text)
+    var direct=false
+    var method_call=false
     var function=callee
     var builtin=""
-    if direct { function=node(e.core,unwrap(e.functions[callee.text])) }
-    else if strings.starts_with(callee.text,"$core$") { builtin=rules.cut(callee.text,6,len(callee.text)) }
-    else { return err(fail(callee,"unsupported native callee "+callee.text)) }
+    if callee.kind=="Member" && strings.starts_with(callee.type_name,"fn:") {
+        let mtarget=rules.cut(callee.type_name,3,len(callee.type_name))
+        if !has(e.functions,mtarget) { return err(fail(callee,"unsupported native method "+mtarget)) }
+        direct=true
+        method_call=true
+        function=node(e.core,unwrap(e.functions[mtarget]))
+        let recv_node=node(e.core,callee.children[0])
+        let rtype=cpp_type(e,recv_node,recv_node.type_name)?
+        let is_iface=has(e.interfaces,record_name(recv_node.type_name))
+        if has(e.core.mutating,mtarget) {
+            let borrowed=receiver(e,recv_node)?
+            code+=borrowed.code
+            if is_iface { code+=rtype+" recv0=hn::interface_alias<"+rtype+">("+borrowed.value+");\n" }
+            else { code+=rtype+" recv0=borrow_record("+borrowed.value+");\n" }
+        } else {
+            if is_iface { code+=rtype+" recv0=hn::readonly_interface("+expression(e,recv_node)?+");\n" }
+            else { code+=rtype+" recv0=capture_value("+expression(e,recv_node)?+");\n" }
+        }
+        if deferred { list.append(args,"recv0")? }
+        else { list.append(args,"std::move(recv0)")? }
+    } else if callee.kind!="Name" {
+        return err(fail(callee,"native calls require a function declaration"))
+    } else {
+        direct=has(e.functions,callee.text)
+        if direct { function=node(e.core,unwrap(e.functions[callee.text])) }
+        else if strings.starts_with(callee.text,"$core$") { builtin=rules.cut(callee.text,6,len(callee.text)) }
+        else { return err(fail(callee,"unsupported native callee "+callee.text)) }
+    }
     let site=location(e,n)
     if builtin=="task_group_begin" { return ok("hn::task_group_begin()") }
     if builtin=="task_group_end" {
@@ -541,8 +579,13 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
         let arg=node(e.core,n.children[i])
         let name="arg"+str(i)
         var value=""
-        if direct { value=contextual_expression(e,arg,node(e.core,function.children[i-1]).type_name)? }
-        else { value=expression(e,arg)? }
+        var ptype_raw=""
+        if direct {
+            let pnode=node(e.core,function.children[i-1])
+            ptype_raw=pnode.type_name
+            if ptype_raw=="" && len(pnode.children)>0 { ptype_raw=type_text(e.core,node(e.core,pnode.children[0])) }
+            value=contextual_expression(e,arg,ptype_raw)?
+        } else { value=expression(e,arg)? }
         if !direct && (builtin=="is_some" || builtin=="is_none" || builtin=="unwrap" || builtin=="unwrap_or") && i==1 {
             value=optional_operand(e,arg)?
         }
@@ -550,12 +593,19 @@ fn emit_call(e Emitter, n lower.Node, deferred bool) Result<string> {
             let param=node(e.core,function.children[i-1])
             if !strings.ends_with(param.text," mut") {
                 value="capture_value("+value+")"
-            } else if has(e.records,record_name(param.type_name)) {
+            } else if has(e.records,record_name(ptype_raw)) {
                 let borrowed=receiver(e,arg)?
                 code+=borrowed.code
                 value="borrow_record("+borrowed.value+")"
+            } else if has(e.interfaces,record_name(ptype_raw)) {
+                let borrowed=receiver(e,arg)?
+                code+=borrowed.code
+                let ptype=cpp_type(e,param,ptype_raw)?
+                let aname=record_name(arg.type_name)
+                if has(e.interfaces,aname) { value="hn::interface_alias<"+ptype+">("+borrowed.value+")" }
+                else if has(e.type_tags,aname) { value="hn::interface_borrow<"+ptype+">("+borrowed.value+","+str(unwrap(e.type_tags[aname]))+")" }
             }
-            code+=cpp_type(e,param,param.type_name)?+" "+name+"="+value+";\n"
+            code+=cpp_type(e,param,ptype_raw)?+" "+name+"="+value+";\n"
         } else {
             if arg.type_name=="void" { return err(fail(arg,"unsupported native argument void")) }
             code+="auto "+name+"="+value+";\n"
@@ -654,14 +704,23 @@ fn map_literal(e Emitter, n lower.Node) Result<string> {
     for i in 1..len(n.children) {
         let item=node(e.core,n.children[i])
         code+=("{"+key_type+" key="+expression(e,node(e.core,item.children[0]))?+";\n"
-             +value_type+" value="+expression(e,node(e.core,item.children[1]))?+";\n"
+             +value_type+" value="+contextual_expression(e,node(e.core,item.children[1]),parts[1])?+";\n"
              +"hn::put(map,std::move(key),std::move(value),"+location(e,item)+");}\n")
     }
     return ok(code+"map;})")
 }
 fn contextual_expression(e Emitter, n lower.Node, expected string) Result<string> {
-    if n.kind=="Array" { return array_literal(e,n,expected) }
-    return expression(e,n)
+    var code=""
+    if n.kind=="Array" { code=array_literal(e,n,expected)? }
+    else { code=expression(e,n)? }
+    let exp=record_name(expected)
+    let act=record_name(n.type_name)
+    if exp!="" && has(e.interfaces,exp) && exp!=act {
+        let to_type=cpp_type(e,n,expected)?
+        if has(e.interfaces,act) { return ok("hn::interface_convert<"+to_type+">("+code+",true)") }
+        if has(e.type_tags,act) { return ok("hn::interface_value<"+to_type+">("+code+","+str(unwrap(e.type_tags[act]))+",true)") }
+    }
+    return ok(code)
 }
 fn structure_literal(e Emitter, n lower.Node) Result<string> {
     let t=cpp_type(e,n,n.type_name)?
@@ -1000,6 +1059,7 @@ fn statement(e Emitter, n lower.Node) Result<string> {
     if k=="Return" {
         if len(n.children)==0 { return ok("return;\n") }
         if len(n.children)>1 { return ok("return "+pack(e,n.children)?+";\n") }
+        if e.current_return!="" { return ok("return "+contextual_expression(e,node(e.core,n.children[0]),e.current_return)?+";\n") }
         return ok("return "+expression(e,node(e.core,n.children[0]))?+";\n")
     }
     if k=="ExternalInit" {
@@ -1019,8 +1079,8 @@ fn unit_id(module string) string {
 }
 fn prepare(core lower.Core) Result<Program> {
     var e=Emitter{core:core,values:map[string]string{},functions:map[string]int{},
-        records:map[string]int{},fields:map[string]int{},tags:map[string]int{},files:map[string]string{},
-        globals:map[string]bool{},value_types:map[string]string{},ids:map[int]string{},positions:map[int]string{}}
+        records:map[string]int{},interfaces:map[string]int{},type_tags:map[string]int{},fields:map[string]int{},tags:map[string]int{},files:map[string]string{},
+        globals:map[string]bool{},value_types:map[string]string{},ids:map[int]string{},positions:map[int]string{},current_return:""}
     let empty []int=[]
     let no_units []Unit=[]
     var units=list.from_slice(no_units)
@@ -1051,14 +1111,19 @@ fn prepare(core lower.Core) Result<Program> {
     for unit in list.snapshot(units) {
         for id in unit.roots {
             let n=node(core,id)
-            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" && n.role!="external" && n.role!="async-body" { return err(fail(n,"unsupported native declaration "+n.role)) }
+            if n.role!="source" && n.role!="enum-constructor" && n.role!="enum-layout" && n.role!="interface-layout" && n.role!="abstract" && n.role!="external" && n.role!="async-body" { return err(fail(n,"unsupported native declaration "+n.role)) }
             if n.kind=="Function" {
                 e.ids[id]=mangle(n.text)
                 e.functions[n.text]=id
+            } else if n.kind=="Struct" && n.role=="interface-layout" {
+                let iname=rules.cut(n.text,0,len(n.text)-10)
+                e.interfaces[iname]=id
+                e.ids[id]=mangle(iname)
             } else if n.kind=="Struct" {
                 let owner=enum_decl(n)
                 if strings.contains(owner," ") { return err(fail(n,"unsupported native structure "+owner)) }
                 e.records[owner]=id
+                e.type_tags[owner]=len(e.type_tags)+1
                 e.ids[id]=mangle(owner)
                 var tag=0
                 for child in n.children {
@@ -1115,9 +1180,15 @@ struct Interface {
 }
 
 fn declaration_types(e Emitter, n lower.Node, types_used mut map[int]bool) {
+    let dot=strings.index(n.text,".")
+    if n.kind=="Function" && dot>0 && n.role!="enum-constructor" { used_types(e,rules.cut(n.text,0,dot),types_used) }
     for id in n.children {
         let child=node(e.core,id)
-        if child.kind=="Parameter" { used_types(e,child.type_name,types_used) }
+        if child.kind=="Parameter" {
+            var ptype=child.type_name
+            if ptype=="" && len(child.children)>0 { ptype=type_text(e.core,node(e.core,child.children[0])) }
+            used_types(e,ptype,types_used)
+        }
         if child.kind=="ReturnTypes" {
             for ty in child.children { used_types(e,type_text(e.core,node(e.core,ty)),types_used) }
         }
@@ -1137,8 +1208,23 @@ fn interface_for(p Program, units []Unit) Result<Interface> {
     for unit in units {
         for id in unit.roots {
             let n=node(e.core,id)
-            if n.kind=="Function" { out.functions[id]=true }
-            if n.kind=="Struct" { out.records[id]=true }
+            if n.kind=="Function" {
+                out.functions[id]=true
+                if n.role=="abstract" {
+                    let dot=strings.index(n.text,".")
+                    let iname=rules.cut(n.text,0,dot)
+                    let mname=rules.cut(n.text,dot+1,len(n.text))
+                    if has(e.core.relations,iname) {
+                        for sname, _ in unwrap(e.core.relations[iname]) {
+                            if has(e.records,sname) {
+                                out.records[unwrap(e.records[sname])]=true
+                                if has(e.functions,sname+"."+mname) { out.functions[unwrap(e.functions[sname+"."+mname])]=true }
+                            }
+                        }
+                    }
+                }
+            }
+            if n.kind=="Struct" && n.role!="interface-layout" { out.records[id]=true }
             if has(global_ids,n.text) { out.globals[id]=true }
         }
         for id in unit.first..unit.end {
@@ -1147,6 +1233,10 @@ fn interface_for(p Program, units []Unit) Result<Interface> {
             if n.kind=="Name" {
                 if has(e.functions,n.text) { out.functions[unwrap(e.functions[n.text])]=true }
                 if has(global_ids,n.text) { out.globals[unwrap(global_ids[n.text])]=true }
+            }
+            if n.kind=="Member" && strings.starts_with(n.type_name,"fn:") {
+                let mtarget=rules.cut(n.type_name,3,len(n.type_name))
+                if has(e.functions,mtarget) { out.functions[unwrap(e.functions[mtarget])]=true }
             }
             if n.kind=="TypeName" { used_types(e,n.text,out.records) }
         }
@@ -1190,9 +1280,17 @@ fn header(p Program, iface Interface, scalar bool) Result<string> {
         ordered_layout(p,id,active,done,ordering)?
         list.append(output,"struct "+record_type(e,id)+";\n")?
     }
+    var iface_ids=map[int]bool{}
+    for _, iid in e.interfaces { iface_ids[iid]=true }
+    let sorted_ifaces=sorted_ids(iface_ids)
+    for iid in sorted_ifaces { list.append(output,"struct Tag_"+cpp_id(e,iid)+" {};\n")? }
     for id in list.snapshot(ordering) { list.append(output,unwrap(p.layouts[id]).definition)? }
     list.append(output,"}\n")?
     for id in records { list.append(output,unwrap(p.layouts[id]).name)? }
+    for iid in sorted_ifaces {
+        let iname=rules.cut(node(e.core,iid).text,0,len(node(e.core,iid).text)-10)
+        list.append(output,"template<> struct hn::TypeName<hn::Interface<hua_generated::Tag_"+cpp_id(e,iid)+">>{static std::string get(){return "+quote(iname)+";}};\n")?
+    }
     list.append(output,"namespace hua_generated {\n")?
     for id in records { list.append(output,unwrap(p.layouts[id]).declarations)? }
     if !scalar {
@@ -1217,6 +1315,53 @@ fn header(p Program, iface Interface, scalar bool) Result<string> {
     return ok(strings.join(list.snapshot(output),""))
 }
 
+fn return_hua_type(e Emitter, n lower.Node) string {
+    for id in n.children {
+        let part=node(e.core,id)
+        if part.kind!="ReturnTypes" { continue }
+        if len(part.children)==1 { return type_text(e.core,node(e.core,part.children[0])) }
+    }
+    return ""
+}
+fn emit_abstract(e Emitter, n lower.Node) Result<string> {
+    let dot=strings.index(n.text,".")
+    let iname=rules.cut(n.text,0,dot)
+    let mname=rules.cut(n.text,dot+1,len(n.text))
+    let is_mut=has(e.core.mutating,n.text)
+    let rtype=return_type(e,n)?
+    let sp=location(e,n)
+    var pargs=""
+    for i in 0..len(n.children)-1 {
+        let part=node(e.core,n.children[i])
+        if part.kind=="ReturnTypes" { continue }
+        pargs+=",std::move("+variable(e,part)?+")"
+    }
+    var code=signature(e,n,true)?+"{\n"
+    code+="if(!v_self.object.data)hn::fail("+sp+",\"nil interface receiver\",\"E4001\");\n"
+    if is_mut { code+="if(!v_self.object.writable)hn::fail("+sp+",\"mutating method requires writable receiver\",\"E3003\");\n" }
+    code+="switch(v_self.object.tag){\n"
+    if has(e.core.relations,iname) {
+        var rids=map[int]bool{}
+        for sname, _ in unwrap(e.core.relations[iname]) {
+            if has(e.records,sname) { rids[unwrap(e.records[sname])]=true }
+        }
+        for rid in sorted_ids(rids) {
+            let sname=enum_decl(node(e.core,rid))
+            let fn_id=unwrap(e.functions[sname+"."+mname])
+            let rrec=record_type(e,rid)
+            code+="case "+str(unwrap(e.type_tags[sname]))+":{\n"
+            code+="auto& concrete=*static_cast<"+rrec+"*>(v_self.object.data);\n"
+            var recv_expr="capture_value(concrete)"
+            if is_mut { recv_expr="borrow_record(concrete)" }
+            let call_expr=function_name(e,fn_id)+"("+recv_expr+pargs+")"
+            if rtype=="void" { code+=call_expr+";return;}\n" }
+            else { code+="return "+call_expr+";}\n" }
+        }
+    }
+    code+="}\nhn::fail("+sp+",\"interface dispatch failed\",\"E4001\");\n"
+    if rtype!="void" { code+="return "+rtype+"{};\n" }
+    return ok(code+"}\n")
+}
 fn implementation(p Program, unit Unit, scalar bool) Result<string> {
     let e=p.e
     var output=list.from_slice(["namespace hua_generated {\n"])
@@ -1241,8 +1386,14 @@ fn implementation(p Program, unit Unit, scalar bool) Result<string> {
         let n=node(e.core,id)
         if n.kind=="Function" {
             if n.role=="external" { continue }
+            if n.role=="abstract" {
+                list.append(output,emit_abstract(e,n)?)?
+                continue
+            }
             let body=node(e.core,n.children[len(n.children)-1])
-            let lines=block_contents(e,body)
+            var fn_e=e
+            fn_e.current_return=return_hua_type(e,n)
+            let lines=block_contents(fn_e,body)
             if is_err(lines) {
                 list.append(problems,unwrap_err(lines))?
                 if list.len(problems)>=32 { break }
@@ -1252,7 +1403,7 @@ fn implementation(p Program, unit Unit, scalar bool) Result<string> {
             if strings.starts_with(return_type(e,n)?,"hn::Opt<") { tail="return std::nullopt;\n"+tail }
             list.append(output,signature(e,n,true)?+"{\n"+unwrap(lines)+tail)?
         } else if n.kind=="Struct" {
-            list.append(output,unwrap(p.layouts[id]).methods)?
+            if n.role!="interface-layout" { list.append(output,unwrap(p.layouts[id]).methods)? }
         } else {
             if has(e.globals,n.text) {
                 list.append(output,"std::optional<"+cpp_type(e,n,n.type_name)?+"> "+variable(e,n)?+";\n")?

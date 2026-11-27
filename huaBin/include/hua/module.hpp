@@ -8,7 +8,9 @@ namespace hua {
 class ModuleLoader {
 public:
     const Node& load(const std::filesystem::path& entry);
+    void set_overlay(const std::filesystem::path& path, std::string text);
     const Source* source(const std::string& id) const;
+    const std::filesystem::path* file_path(const std::string& id) const;
     std::shared_ptr<ExternalRegistry> externals() const { return external_; }
     std::vector<const Source*> sources() const;
     std::size_t module_count() const { return modules_.size(); }
@@ -38,6 +40,7 @@ private:
     std::unordered_map<std::string, PackageInfo> packages_;
     std::vector<std::unique_ptr<Module>> modules_;
     std::unordered_map<std::string, Module*> cache_;
+    std::unordered_map<std::string, std::string> overlays_;
     std::vector<Module*> ordered_, loading_;
     NodePtr linked_;
     std::size_t bytes_{};

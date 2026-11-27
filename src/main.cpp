@@ -7,6 +7,7 @@
 #include "hua/module.hpp"
 #include "hua/vm.hpp"
 #include "hua/archive.hpp"
+#include "hua/lsp.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -34,7 +35,8 @@ void usage(std::ostream& out) {
         << "       hua bytecode <file.hua|file.huab>\n"
         << "       hua build <file.hua> [-o file.huab]\n"
         << "       hua build --release <file.hua> [-o file.exe]\n"
-        << "       hua test <file.hua> [--filter text]\n";
+        << "       hua test <file.hua> [--filter text]\n"
+        << "       hua lsp\n";
 }
 int usage_error() { std::cerr<<"error[E0004]: invalid command arguments\n";usage(std::cerr);return 2; }
 // hua test (2026-10-24): runs each top-level @test function of a source file, in
@@ -87,6 +89,7 @@ int cli(const std::vector<std::string>& args, std::ostream& output = std::cout) 
     if (args.size() >= 4 && args[1] == "--release-sdk-inputs") return hua::release_inputs::command(args);
 #endif
     if(args.size()>=3&&args[1]=="test")return run_tests(args);
+    if (args.size() == 2 && args[1] == "lsp") return hua::run_lsp();
     if (args.size() == 2 && (args[1] == "version" || args[1] == "--version")) {
         output << "Hua 0.1.0-dev\nspec 0.1\nabi 1\nbytecode 6\n"; return 0;
     }

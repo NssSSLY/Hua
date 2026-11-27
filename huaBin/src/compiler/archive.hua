@@ -256,6 +256,7 @@ pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
         let s=structures[unwrap(structure_indices[name])]
         var raw=name
         if s.enumeration { raw+=" enum" }
+        if s.iface { raw+=" interface" }
         text(out,raw)?
         span(out,sites[s.site],ids)?
         boolean(out,s.published)?
@@ -278,12 +279,13 @@ pub fn encode(image bc.Image, model types.Model) Result<Artifact> {
         let f=functions[unwrap(function_indices[name])]
         var raw=name
         if f.nested { raw+=" nested" }
+        if f.abstract_fn { raw+=" abstract" }
         text(out,raw)?
         span(out,sites[f.site],ids)?
         boolean(out,f.published)?
         boolean(out,false)?
         boolean(out,f.external)?
-        boolean(out,false)?
+        boolean(out,f.mutating)?
         buffer.write_u32_le(out,len(f.parameters))?
         for p in f.parameters { text(out,p.name)?
             text(out,p.type_name)?

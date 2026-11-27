@@ -331,11 +331,26 @@ void ModuleLoader::load_manifest_graph(const SourceSpan& site) {
     std::vector<std::string> active;
     load_package_manifest("", root_, site, active);
 }
+void ModuleLoader::set_overlay(const std::filesystem::path& path, std::string text) {
+    std::error_code ec;
+    auto normalized = std::filesystem::weakly_canonical(path, ec);
+    overlays_[key(ec ? path : normalized)] = std::move(text);
+}
+const std::filesystem::path* ModuleLoader::file_path(const std::string& id) const {
+    for (const auto& m : modules_)
+        if (m->source && m->source->filename() == id) return &m->path;
+    return nullptr;
+}
 const Node& ModuleLoader::load(const std::filesystem::path& entry) {
     linked_.reset();modules_.clear();cache_.clear();ordered_.clear();loading_.clear();bytes_=0;
     has_manifest_=false;root_package_={};packages_.clear();
     std::error_code ec;auto path=std::filesystem::canonical(entry,ec);
-    if(ec)error({utf8(entry),0,0,1,1},"cannot read source file: "+utf8(entry),"E0001");
+    if(ec){
+        std::error_code wec;
+        auto weak=std::filesystem::weakly_canonical(entry,wec);
+        if(!wec && overlays_.contains(key(weak))) path=weak;
+        else error({utf8(entry),0,0,1,1},"cannot read source file: "+utf8(entry),"E0001");
+    }
     root_=path.parent_path();external_=std::make_shared<ExternalRegistry>(root_);
     const std::string entry_rel = utf8(path.filename());
     load_manifest_graph({entry_rel,0,0,1,1});
@@ -449,13 +464,21 @@ ModuleLoader::Module& ModuleLoader::visit(const std::filesystem::path& path,cons
         return *found->second;
     }
     if(modules_.size()>=128 || loading_.size()>=64)error(site,"module graph limit exceeded (128 files / 64 dependency levels)","E5005");
-    std::ifstream input(path,std::ios::binary|std::ios::ate);
-    if(!input)error(site,"cannot read source file: "+utf8(path),entry?"E0001":"E5001");
-    auto size=input.tellg();
-    if(size<0 || size>16*1024*1024)error(site,"source file is unreadable or exceeds 16 MiB",entry?"E0001":"E5005");
-    if(bytes_+static_cast<std::size_t>(size)>64*1024*1024)error(site,"module source graph exceeds 64 MiB","E5005");
-    bytes_+=static_cast<std::size_t>(size);std::string text(static_cast<std::size_t>(size),'\0');input.seekg(0);
-    if(!text.empty() && !input.read(text.data(),size))error(site,"failed to read complete source file",entry?"E0001":"E5001");
+    std::string text;
+    if(auto ov = overlays_.find(key(path)); ov != overlays_.end()) {
+        if(ov->second.size() > 16*1024*1024)error(site,"source file is unreadable or exceeds 16 MiB",entry?"E0001":"E5005");
+        if(bytes_+ov->second.size()>64*1024*1024)error(site,"module source graph exceeds 64 MiB","E5005");
+        bytes_+=ov->second.size();
+        text=ov->second;
+    } else {
+        std::ifstream input(path,std::ios::binary|std::ios::ate);
+        if(!input)error(site,"cannot read source file: "+utf8(path),entry?"E0001":"E5001");
+        auto size=input.tellg();
+        if(size<0 || size>16*1024*1024)error(site,"source file is unreadable or exceeds 16 MiB",entry?"E0001":"E5005");
+        if(bytes_+static_cast<std::size_t>(size)>64*1024*1024)error(site,"module source graph exceeds 64 MiB","E5005");
+        bytes_+=static_cast<std::size_t>(size);text.assign(static_cast<std::size_t>(size),'\0');input.seekg(0);
+        if(!text.empty() && !input.read(text.data(),size))error(site,"failed to read complete source file",entry?"E0001":"E5001");
+    }
     auto owned=std::make_unique<Module>();owned->path=path;owned->package=owner_package;owned->prefix=entry?"":"$"+std::to_string(modules_.size())+"$";
     if (!sdk_id.empty()) owned->prefix="$sdk$std$alg_integer$";
     bool native=path.extension()==".huam",wasm=path.extension()==".wasm";

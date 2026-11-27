@@ -86,6 +86,7 @@ fn metadata(image bc.Image, c Catalog, code bc.Code, parameters []bc.Parameter, 
     # The caller already holds this code's validated parameter metadata. Global
     # names remain in the immutable catalog instead of being recopied per code.
     for p in parameters { names[p.name] = true }
+    if strings.index(code.name,".")>0 { names["self"] = true }
     # 逻辑名称核验独立于可达栈；完整定值/可见性证明属于 C04，非数据流类型推断。
     for op in list.snapshot(code.instructions) {
         if op.op==2 { names[op.text] = true }
@@ -247,7 +248,7 @@ pub fn verify(image bc.Image) Result<Verification> {
         nodes[site.node] = true
         if site.node==-1 {
             if site.origin!=-1 || site.role!="initializer" || site.start!=0 || site.end!=0 || site.line!=1 || site.column!=1 || site.module!=image.entry { return err("E6002@1:1 C06 invalid initializer site") }
-        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor","external"],site.role) && site.role!="async-body" && site.role!="local-function" { return err("E6002@1:1 C06 invalid source origin") }
+        } else if site.origin<0 || site.origin>=32768 || !alg.contains(["source","enum-layout","enum-constructor","interface-layout","abstract","external"],site.role) && site.role!="async-body" && site.role!="local-function" { return err("E6002@1:1 C06 invalid source origin") }
     }
     var c = Catalog{globals:map[string]bool{},structures:map[string]bool{},functions:map[string]bool{},local_functions:map[string]bool{},lexical_names:map[string]bool{}}
     for st in list.snapshot(image.structures) {

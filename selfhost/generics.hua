@@ -1,0 +1,339 @@
+# B3: AST-level monomorphization for explicit user generics (struct/fn).
+import ast_pool as ast
+import std.list as list
+import std.strings as strings
+
+pub struct ModuleMeta {
+    id string
+    root ast.NodeId
+    imports map[string]string
+}
+
+struct Template {
+    unit_idx int
+    node_id ast.NodeId
+    base_name string
+    suffix string
+    params []string
+    kind string
+}
+
+struct State {
+    metas []ModuleMeta
+    unit_by_id map[string]int
+    templates map[string]Template
+    instances map[string]string
+    generated map[int]List<ast.NodeId>
+    count int
+}
+
+fn is_builtin_generic(name string) bool {
+    return name == "Result" || name == "List" || name == "Deque" || name == "Task" || name == "map"
+}
+
+fn scan_node(p ast.Pool, id ast.NodeId) bool {
+    let n = unwrap(ast.get(p,id))
+    let k = ast.kind(n.payload)
+    if k == "GenericParameters" || k == "Specialize" { return true }
+    if k == "GenericType" && !is_builtin_generic(ast.payload_text(n.payload)) { return true }
+    for c in n.children {
+        if scan_node(p,c) { return true }
+    }
+    return false
+}
+
+pub fn needs_specialize(metas []ModuleMeta, pools []ast.Pool) bool {
+    for i in 0..len(metas) {
+        if scan_node(pools[i],metas[i].root) { return true }
+    }
+    return false
+}
+
+fn fail_node(p ast.Pool, id ast.NodeId, msg string) string {
+    let n = unwrap(ast.get(p,id))
+    return "E3010@"+str(n.span.line)+":"+str(n.span.column)+" "+msg
+}
+
+fn type_key(p ast.Pool, id ast.NodeId) string {
+    let n = unwrap(ast.get(p,id))
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    if k == "TypeName" { return text }
+    if k == "OptionalType" { return type_key(p,n.children[0])+"?" }
+    if k == "MutableType" { return "mut "+type_key(p,n.children[0]) }
+    if k == "SliceType" { return "[]"+type_key(p,n.children[0]) }
+    if k == "ArrayType" { return "["+text+"]"+type_key(p,n.children[0]) }
+    if k == "GenericType" {
+        var out = text+"<"
+        for i in 0..len(n.children) {
+            if i > 0 { out += "," }
+            out += type_key(p,n.children[i])
+        }
+        return out+">"
+    }
+    return text
+}
+
+fn remap_type_name(caller ModuleMeta, dst_id string, text string) string {
+    let dot = strings.index(text,".")
+    if dot > 0 {
+        let alias = strings.slice(text,0,dot)
+        let member = strings.slice(text,dot+1,len(text))
+        if is_ok(alias) && is_ok(member) {
+            let a = unwrap(alias)
+            if has(caller.imports,a) && unwrap(caller.imports[a]) == dst_id {
+                return unwrap(member)
+            }
+        }
+    }
+    return text
+}
+
+fn clone_type_cross(src ast.Pool, id ast.NodeId, dst mut ast.Pool, sp ast.SourceSpan, caller ModuleMeta, dst_id string) Result<ast.NodeId> {
+    let n = ast.get(src,id)?
+    var empty []ast.NodeId = []
+    var ch = list.from_slice(empty)
+    for c in n.children {
+        list.append(ch,clone_type_cross(src,c,dst,sp,caller,dst_id)?)?
+    }
+    var payload = n.payload
+    if ast.kind(payload) == "TypeName" {
+        payload = ast.Payload.TypeName(remap_type_name(caller,dst_id,ast.payload_text(payload)))
+    }
+    return ast.add(dst,payload,sp,list.snapshot(ch))
+}
+
+fn clone_subst(dst mut ast.Pool, id ast.NodeId, arg_pool ast.Pool, caller ModuleMeta, dst_id string, pnames []string, arg_ids []ast.NodeId, arg_texts []string) Result<ast.NodeId> {
+    let n = ast.get(dst,id)?
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    for i in 0..len(pnames) {
+        if text == pnames[i] {
+            if k == "TypeName" {
+                return clone_type_cross(arg_pool,arg_ids[i],dst,n.span,caller,dst_id)
+            }
+            if k == "StructLiteral" {
+                var empty []ast.NodeId = []
+                var ch = list.from_slice(empty)
+                for c in n.children { list.append(ch,clone_subst(dst,c,arg_pool,caller,dst_id,pnames,arg_ids,arg_texts)?)? }
+                return ast.add(dst,ast.Payload.StructLiteral(remap_type_name(caller,dst_id,arg_texts[i])),n.span,list.snapshot(ch))
+            }
+            if k == "Name" {
+                return ast.add(dst,ast.Payload.Name(remap_type_name(caller,dst_id,arg_texts[i])),n.span,[])
+            }
+        }
+    }
+    var empty []ast.NodeId = []
+    var ch = list.from_slice(empty)
+    for c in n.children {
+        list.append(ch,clone_subst(dst,c,arg_pool,caller,dst_id,pnames,arg_ids,arg_texts)?)?
+    }
+    return ast.add(dst,n.payload,n.span,list.snapshot(ch))
+}
+
+fn dotted_name(p ast.Pool, id ast.NodeId) string {
+    let n = unwrap(ast.get(p,id))
+    let k = ast.kind(n.payload)
+    if k == "Name" { return ast.payload_text(n.payload) }
+    if k == "Member" {
+        let b = dotted_name(p,n.children[0])
+        if b != "" { return b+"."+ast.payload_text(n.payload) }
+    }
+    return ""
+}
+
+fn resolve_template(u ModuleMeta, name string) (string, string) {
+    let dot = strings.index(name,".")
+    if dot > 0 {
+        let alias = strings.slice(name,0,dot)
+        let member = strings.slice(name,dot+1,len(name))
+        if is_ok(alias) && is_ok(member) {
+            let a = unwrap(alias)
+            let m = unwrap(member)
+            if has(u.imports,a) {
+                return unwrap(u.imports[a])+"#"+m, a
+            }
+        }
+    }
+    return u.id+"#"+name, ""
+}
+
+fn instantiate(st mut State, pools mut []ast.Pool, caller_idx int, site ast.NodeId, tpl_key string, args []ast.NodeId) Result<string> {
+    if !has(st.templates,tpl_key) {
+        return err(fail_node(pools[caller_idx],site,"unknown user generic "+tpl_key))
+    }
+    let tpl = unwrap(st.templates[tpl_key])
+    if len(tpl.params) != len(args) {
+        return err(fail_node(pools[caller_idx],site,"generic type argument count mismatch"))
+    }
+    var empty_s []string = []
+    var arg_texts = list.from_slice(empty_s)
+    var inst_key = tpl_key+"<"
+    for a in args {
+        let tk = type_key(pools[caller_idx],a)
+        inst_key += tk+","
+        list.append(arg_texts,tk)?
+    }
+    inst_key += ">"
+    if has(st.instances,inst_key) {
+        return ok(unwrap(st.instances[inst_key]))
+    }
+    if st.count >= 128 {
+        return err(fail_node(pools[caller_idx],site,"generic instantiation limit exceeded (128)"))
+    }
+    let gen_name = "$generic"+str(st.count)+"$"+tpl.base_name
+    st.count += 1
+    st.instances[inst_key] = gen_name
+
+    let caller_pool = pools[caller_idx]
+    let tpl_node = ast.get(pools[tpl.unit_idx],tpl.node_id)?
+    let atexts = list.snapshot(arg_texts)
+    var empty_ids []ast.NodeId = []
+    var new_children = list.from_slice(empty_ids)
+    # Skip child 0 (GenericParameters)
+    let caller_meta = st.metas[caller_idx]
+    let dst_id = st.metas[tpl.unit_idx].id
+    for i in 1..len(tpl_node.children) {
+        list.append(new_children,clone_subst(pools[tpl.unit_idx],tpl_node.children[i],caller_pool,caller_meta,dst_id,tpl.params,args,atexts)?)?
+    }
+    var payload = ast.Payload.Struct(gen_name+tpl.suffix)
+    if tpl.kind == "Function" { payload = ast.Payload.Function(gen_name+tpl.suffix) }
+    let inst_id = ast.add(pools[tpl.unit_idx],payload,tpl_node.span,list.snapshot(new_children))?
+
+    specialize_node(st,pools,tpl.unit_idx,inst_id)?
+
+    var gl = unwrap(st.generated[tpl.unit_idx])
+    list.append(gl,inst_id)?
+    st.generated[tpl.unit_idx] = gl
+    return ok(gen_name)
+}
+
+fn specialize_node(st mut State, pools mut []ast.Pool, u_idx int, id ast.NodeId) Result<void> {
+    let n0 = ast.get(pools[u_idx],id)?
+    for c in n0.children {
+        specialize_node(st,pools,u_idx,c)?
+    }
+    let n = ast.get(pools[u_idx],id)?
+    let k = ast.kind(n.payload)
+    let text = ast.payload_text(n.payload)
+    let u = st.metas[u_idx]
+    if k == "GenericType" {
+        if is_builtin_generic(text) { return ok() }
+        let tpl_key, alias = resolve_template(u,text)
+        let gen_name = instantiate(st,pools,u_idx,id,tpl_key,n.children)?
+        var qualified = gen_name
+        if alias != "" { qualified = alias+"."+gen_name }
+        ast.replace(pools[u_idx],id,ast.Payload.TypeName(qualified),n.span,[])?
+        return ok()
+    }
+    if k == "Specialize" {
+        let callee = n.children[0]
+        let name = dotted_name(pools[u_idx],callee)
+        if name == "" { return err(fail_node(pools[u_idx],id,"specialization requires named target")) }
+        var empty []ast.NodeId = []
+        var args = list.from_slice(empty)
+        for i in 1..len(n.children) { list.append(args,n.children[i])? }
+        let tpl_key, alias = resolve_template(u,name)
+        let gen_name = instantiate(st,pools,u_idx,id,tpl_key,list.snapshot(args))?
+        if alias != "" {
+            let cnode = ast.get(pools[u_idx],callee)?
+            ast.replace(pools[u_idx],id,ast.Payload.Member(gen_name),n.span,[cnode.children[0]])?
+        } else {
+            ast.replace(pools[u_idx],id,ast.Payload.Name(gen_name),n.span,[])?
+        }
+        return ok()
+    }
+    if k == "StructLiteral" && len(n.children) > 0 {
+        let first = ast.get(pools[u_idx],n.children[0])?
+        let fk = ast.kind(first.payload)
+        if fk == "Name" || fk == "Member" {
+            let lit_name = dotted_name(pools[u_idx],n.children[0])
+            var empty []ast.NodeId = []
+            var rest = list.from_slice(empty)
+            for i in 1..len(n.children) { list.append(rest,n.children[i])? }
+            ast.replace(pools[u_idx],id,ast.Payload.StructLiteral(lit_name),n.span,list.snapshot(rest))?
+        }
+    }
+    return ok()
+}
+
+pub fn specialize_all(metas []ModuleMeta, pools mut []ast.Pool) Result<[]ast.NodeId> {
+    let n_units = len(metas)
+    var empty_roots []ast.NodeId = []
+    var out_roots = list.from_slice(empty_roots)
+    for i in 0..n_units { list.append(out_roots,metas[i].root)? }
+    var st = State{
+        metas:metas,
+        unit_by_id:map[string]int{},
+        templates:map[string]Template{},
+        instances:map[string]string{},
+        generated:map[int]List<ast.NodeId>{},
+        count:0
+    }
+    for i in 0..n_units {
+        st.unit_by_id[metas[i].id] = i
+        var empty []ast.NodeId = []
+        st.generated[i] = list.from_slice(empty)
+    }
+    # Pass 1: collect generic Struct / Function templates and strip them from roots.
+    for i in 0..n_units {
+        let root_id = metas[i].root
+        let root = ast.get(pools[i],root_id)?
+        var empty []ast.NodeId = []
+        var kept = list.from_slice(empty)
+        var changed = false
+        for cid in root.children {
+            let cn = ast.get(pools[i],cid)?
+            let ck = ast.kind(cn.payload)
+            if (ck == "Struct" || ck == "Function") && len(cn.children) > 0 {
+                let c0 = ast.get(pools[i],cn.children[0])?
+                if ast.kind(c0.payload) == "GenericParameters" {
+                    let raw = ast.payload_text(cn.payload)
+                    let sp = strings.index(raw," ")
+                    var bname = raw
+                    var sfx = ""
+                    if sp > 0 {
+                        bname = unwrap(strings.slice(raw,0,sp))
+                        sfx = unwrap(strings.slice(raw,sp,len(raw)))
+                    }
+                    var ep []string = []
+                    var pnames = list.from_slice(ep)
+                    for pid in c0.children {
+                        let pn = ast.get(pools[i],pid)?
+                        list.append(pnames,ast.payload_text(pn.payload))?
+                    }
+                    st.templates[metas[i].id+"#"+bname] = Template{
+                        unit_idx:i,
+                        node_id:cid,
+                        base_name:bname,
+                        suffix:sfx,
+                        params:list.snapshot(pnames),
+                        kind:ck
+                    }
+                    changed = true
+                    continue
+                }
+            }
+            list.append(kept,cid)?
+        }
+        if changed {
+            ast.replace(pools[i],root_id,root.payload,root.span,list.snapshot(kept))?
+        }
+    }
+    # Pass 2: specialize all remaining AST nodes in all units.
+    for i in 0..n_units {
+        specialize_node(st,pools,i,metas[i].root)?
+    }
+    # Pass 3: create a new Program root with generated concrete declarations appended (maintains post-order DAG).
+    for i in 0..n_units {
+        let gl = list.snapshot(unwrap(st.generated[i]))
+        if len(gl) == 0 { continue }
+        let root_id = metas[i].root
+        let root = ast.get(pools[i],root_id)?
+        var merged = list.from_slice(root.children)
+        for gid in gl { list.append(merged,gid)? }
+        let new_root = ast.add(pools[i],root.payload,root.span,list.snapshot(merged))?
+        list.set(out_roots,i,new_root)?
+    }
+    return ok(list.snapshot(out_roots))
+}

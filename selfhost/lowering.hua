@@ -35,6 +35,8 @@ pub struct ExternalModule { id string
 pub struct Core { nodes List<Node>
     initialization List<Initializer>
     external_modules []ExternalModule
+    mutating map[string]bool
+    relations map[string]map[string]bool
     entry string
     work int }
 struct State { model types.Model
@@ -136,6 +138,9 @@ fn lowered(s mut State, u modules.Unit, id ast.NodeId, depth int, role string) R
             for i in 1..len(call.children) { list.append(args,lowered(s,u,call.children[i],depth+1,role)?)? }
             return add(s,u,n,"Call","",t,false,list.snapshot(args),role)
         }
+    }
+    if k == "Name" && text == "self" && ref != "" {
+        return add(s,u,n,"Name","self",runtime_type(s,t),w,[],role)
     }
     if k=="Name" && len(s.recursive_async)>0 && has(s.recursive_async,ref) {
         return err(fail(u,n,"E3008","local async self reference requires a direct call"))
@@ -303,7 +308,7 @@ pub fn verify(c Core) Result<void> {
     var depths = map[int]int{}
     for i in 0..list.len(c.nodes) {
         let n = unwrap(list.get(c.nodes,i))
-        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || (n.role!="local-function" || n.kind!="Function") && !alg.contains(["source","enum-layout","enum-constructor","async-body","external"],n.role) { return err("E8203@1:1 invalid C05 node") }
+        if n.id != i || n.origin < 0 || n.start<0 || n.end<n.start || n.line<1 || n.column<1 || !shape(n.kind,len(n.children)) || (n.role!="local-function" || n.kind!="Function") && !alg.contains(["source","enum-layout","enum-constructor","interface-layout","abstract","async-body","external"],n.role) { return err("E8203@1:1 invalid C05 node") }
         var depth = 1
         for child in n.children {
             if child<0 || child>=i { return err("E8203@1:1 invalid C05 child/order") }
@@ -376,7 +381,7 @@ pub fn lower(model types.Model) Result<Core> {
     var inits []Initializer = []
     let entry = unwrap(list.get(model.graph.units,0)).id
     let empty_ext []ExternalModule = []
-    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),external_modules:empty_ext,entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[],recursive_async:map[string]bool{}}
+    var s = State{model:model,core:Core{nodes:list.from_slice(empty),initialization:list.from_slice(inits),external_modules:empty_ext,mutating:map[string]bool{},relations:map[string]map[string]bool{},entry:entry,work:0},type_cache:map[string]string{},prefixes:map[string]string{},module_ids:[],recursive_async:map[string]bool{}}
     var names []string = []
     var ids = list.from_slice(names)
     for u in list.snapshot(model.graph.units) {
@@ -440,6 +445,14 @@ pub fn lower(model types.Model) Result<Core> {
                 let k = ast.kind(n.payload)
                 if k == "Import" { continue }
                 if k == "Enum" { for value in enumeration(s,u,n)? { list.append(roots,value)? } }
+                else if k == "Interface" {
+                    let idecl = declaration(s,u,n)
+                    let iname = runtime_name(s,idecl)
+                    list.append(roots,add(s,u,n,"Struct",iname+" interface","struct:"+iname,false,[],"interface-layout")?)?
+                    for mid in n.children {
+                        list.append(roots,lowered(s,u,mid,1,"abstract")?)?
+                    }
+                }
                 else if k == "Function" && strings.contains(ast.payload_text(n.payload)," async") {
                     let f = unwrap(model.functions[declaration(s,u,n)])
                     list.append(roots,lowered(s,u,id,1,"async-body")?)?
@@ -449,6 +462,16 @@ pub fn lower(model types.Model) Result<Core> {
             }
             list.append(s.core.initialization,Initializer{module:u.id,roots:list.snapshot(roots)})?
         }
+    }
+    for mname, flag in model.mutating {
+        if flag { s.core.mutating[runtime_name(s,mname)] = true }
+    }
+    for iname, set in model.relations {
+        var rset = map[string]bool{}
+        for sname, okv in set {
+            if okv { rset[runtime_name(s,sname)] = true }
+        }
+        s.core.relations[runtime_name(s,iname)] = rset
     }
     s.core.external_modules = list.snapshot(ext_list)
     verify(s.core)?

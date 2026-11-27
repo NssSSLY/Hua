@@ -1,5 +1,9 @@
 # Hua自举性能项目记忆索引
 
+## 方向 B1/B2/B3：`selfhost/` 固有方法、`interface` 与显式用户泛型全四路径（2026-11-27）
+
+在不升级 HUAB 格式（保持 `HUAB format 33`）前提下，于 `selfhost/` 完整补齐 B1 固有方法（隐式 `self` + 传递 `mutating` 不动点）、B2 结构化 `interface`（含 `--release` `hn::Interface<Tag>` 动态派发、`mut` 借用与 `clone`）及 B3 显式用户泛型（`pending_gt` `>>` 拆合 + 新增 `selfhost/generics.hua` AST 单态化）。重装配 `huaBin/` 达成 16 模块 `G1 == G2`（`d9dafe29...`）与 `C2(19.94s) == C3(158.69s, 848,906,965 步)` 逐字节不动点（`669d061e...`）；`selfhost_methods_interface_generics_tests.py`（`10.51s`）、`step5_direction_a_tests.py`（`7.56s`）及 3 项契约 CTest 全过。[验收记录](runs/2026-11-27-selfhost-methods-interface-generics.md)
+
 ## 方向 A 收官：32 内建模块 / 422 内建函数 100% 四路径全通（2026-11-27）
 
 完成 A1（`--release` 原生 `async/spawn/await/taskgroup` + 9 项 `std.task` 纤程挂起）、A2（19 项高阶回调标准库，自举类型检查 + `--release` 零装箱 C++20 模板直连）与 A3（`std.simd` 4 项自举解析放开）。重装配 `huaBin/` 达成 `C2(16.54s) == C3(125.47s, 794,922,023 步)` 不动点（`58cc4035...`）；`step5_direction_a_tests.py --sdk huaBin`（`7.44s` 全 4 路径）及 3 项契约 CTest 全过。[验收记录](runs/2026-11-27-direction-a-422-stdlib-100pct.md)

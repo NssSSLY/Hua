@@ -23,6 +23,7 @@ pub struct Function { target string
     parameters []Parameter
     result string
     asynchronous bool
+    published bool
     writable bool }
 pub struct TaskFieldCheck { payload string
     message string }
@@ -36,6 +37,11 @@ pub struct Model { graph modules.Graph
     collecting_task_fields bool
     functions map[string]Function
     variants map[string]Function
+    mutating map[string]bool
+    self_targets map[string]string
+    interfaces map[string]bool
+    abstracts map[string]bool
+    relations map[string]map[string]bool
     facts map[string]Info
     capabilities map[string]flow.Fact
     work int
@@ -170,6 +176,7 @@ fn require(m mut Model, e Environment, expected string, actual Info, n ast.Node)
         }
     }
     if actual.type_name == "void" && expected != "void" { return err(fail(e,n,"E3004","void has no usable value")) }
+    if has(m.relations,expected) && has(unwrap(m.relations[expected]),actual.type_name) { return ok() }
     if !rules.compatible(expected,actual.type_name) { return err(fail(e,n,"E3004","expected "+expected+", got "+actual.type_name)) }
     return ok()
 }
@@ -202,7 +209,7 @@ fn signature(m mut Model, e Environment, n ast.Node, target string) Result<Funct
         }
     }
     if asynchronous && result != "void" && !task_payload(m,result) { return err(fail(e,n,"E8201","async result is outside the supported data profile")) }
-    return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,asynchronous:asynchronous,writable:true})
+    return ok(Function{target:target,module:e.unit.id,node:n.id.index,parameters:list.snapshot(parameters),result:result,asynchronous:asynchronous,published:false,writable:true})
 }
 # 有限单调迭代；能力推断引用 C03 的词法身份。
 fn capability(m mut Model, e Environment, id ast.NodeId, values map[string]bool) Result<bool> {
@@ -258,6 +265,102 @@ fn capscan(m mut Model, e Environment, id ast.NodeId, values mut map[string]bool
     for child in n.children { capscan(m,e,child,values,returns)? }
     return ok()
 }
+fn method_owner(target string) string {
+    let hash = strings.index(target,"#")
+    if hash < 0 { return "" }
+    let local_part = rules.cut(target,hash+1,len(target))
+    let dot = strings.index(local_part,".")
+    if dot <= 0 { return "" }
+    return rules.cut(target,0,hash+1+dot)
+}
+fn root_is_self(e Environment, id ast.NodeId) bool {
+    let n = get(e,id)
+    let k = ast.kind(n.payload)
+    if k == "Name" { return ast.payload_text(n.payload) == "self" }
+    if k == "Member" || k == "Index" { return root_is_self(e,n.children[0]) }
+    return false
+}
+fn mutates_self(m Model, e Environment, id ast.NodeId, owner string) bool {
+    let n = get(e,id)
+    let k = ast.kind(n.payload)
+    if k == "Function" { return false }
+    if k == "Assignment" || k == "Update" {
+        if root_is_self(e,n.children[0]) { return true }
+    }
+    if k == "Call" && len(n.children) > 0 {
+        let callee = get(e,n.children[0])
+        if ast.kind(callee.payload) == "Member" && root_is_self(e,callee.children[0]) {
+            let mkey = owner+"."+ast.payload_text(callee.payload)
+            if unwrap_or(m.mutating[mkey],false) { return true }
+        }
+        let ct = target(m,e,callee)
+        if has(m.functions,ct) {
+            let cf = unwrap(m.functions[ct])
+            for i in 0..len(cf.parameters) {
+                if i+1 < len(n.children) && cf.parameters[i].writable && root_is_self(e,n.children[i+1]) { return true }
+            }
+        }
+    }
+    for child in n.children {
+        if mutates_self(m,e,child,owner) { return true }
+    }
+    return false
+}
+fn fn_sig_equal(a Function, b Function) bool {
+    if a.result != b.result || len(a.parameters) != len(b.parameters) { return false }
+    for i in 0..len(a.parameters) {
+        if a.parameters[i].type_name != b.parameters[i].type_name || a.parameters[i].writable != b.parameters[i].writable { return false }
+    }
+    return true
+}
+fn build_interface_relations(m mut Model) {
+    for iname, _ in m.interfaces {
+        var conforms = map[string]bool{}
+        for sname, sinfo in m.symbols {
+            if sname == iname { continue }
+            if !strings.starts_with(sinfo.type_name,"struct:") && !strings.starts_with(sinfo.type_name,"enum:") && !has(m.interfaces,sname) { continue }
+            var valid = true
+            for mname, proto in m.functions {
+                if !strings.starts_with(mname,iname+".") { continue }
+                let suffix = rules.cut(mname,len(iname),len(mname))
+                let concrete = sname+suffix
+                if !has(m.functions,concrete) { valid = false
+                    break }
+                let impl_fn = unwrap(m.functions[concrete])
+                let exp_mut = unwrap_or(m.mutating[mname],false)
+                let act_mut = unwrap_or(m.mutating[concrete],false)
+                if !fn_sig_equal(proto,impl_fn) || (!exp_mut && act_mut) || (proto.module != impl_fn.module && !impl_fn.published) {
+                    valid = false
+                    break
+                }
+            }
+            if valid { conforms[sname] = true }
+        }
+        m.relations[iname] = conforms
+    }
+}
+fn infer_mutating(m mut Model, units map[string]modules.Unit) {
+    for name, f in m.functions {
+        let u = unwrap(units[f.module])
+        let n = unwrap(ast.get(u.tree.pool,ast.NodeId{pool:u.tree.pool.identity,index:f.node}))
+        if strings.contains(ast.payload_text(n.payload)," mutreceiver") { m.mutating[name] = true }
+    }
+    var changed = true
+    while changed {
+        changed = false
+        for name, f in m.functions {
+            let owner = method_owner(name)
+            if owner == "" || unwrap_or(m.mutating[name],false) { continue }
+            let u = unwrap(units[f.module])
+            let e = environment(u,map[string]Info{})
+            let n = unwrap(ast.get(u.tree.pool,ast.NodeId{pool:u.tree.pool.identity,index:f.node}))
+            if mutates_self(m,e,n.children[1],owner) {
+                m.mutating[name] = true
+                changed = true
+            }
+        }
+    }
+}
 fn infer(m mut Model, units map[string]modules.Unit) Result<void> {
     var changed = true
     while changed {
@@ -269,6 +372,7 @@ fn infer(m mut Model, units map[string]modules.Unit) Result<void> {
             let u = unwrap(units[f.module])
             let e = environment(u,map[string]Info{})
             var values = map[string]bool{}
+            if has(m.self_targets,name) { values[unwrap(m.self_targets[name])] = unwrap_or(m.mutating[name],false) }
             for p in f.parameters { values[p.target] = p.writable }
             var empty []bool = []
             var results = list.from_slice(empty)
@@ -764,8 +868,14 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
         let args = list.snapshot(arguments)
         if strings.starts_with(callee.type_name,"builtin:std.") { return standard(m,e,n,callee.type_name,args) }
         if strings.starts_with(callee.type_name,"builtin:core:") { return core(m,e,n,callee.type_name,args) }
-        var f = Function{target:"",module:"",node:0,parameters:[],result:"",asynchronous:false,writable:false}
-        if strings.starts_with(callee.type_name,"fn:") { f = unwrap(m.functions[rules.cut(callee.type_name,3,len(callee.type_name))]) }
+        var f = Function{target:"",module:"",node:0,parameters:[],result:"",asynchronous:false,published:false,writable:false}
+        if strings.starts_with(callee.type_name,"fn:") {
+            let fname = rules.cut(callee.type_name,3,len(callee.type_name))
+            if has(m.abstracts,fname) && ast.kind(get(e,n.children[0]).payload) != "Member" {
+                return err(fail(e,n,"E3004","interface method requires a receiver"))
+            }
+            f = unwrap(m.functions[fname])
+        }
         else if strings.starts_with(callee.type_name,"variant:") { f = unwrap(m.variants[rules.cut(callee.type_name,8,len(callee.type_name))]) }
         else { return err(fail(e,n,"E3004","value is not callable")) }
         if len(args) != len(f.parameters) { return err(fail(e,n,"E3005","function argument count mismatch")) }
@@ -790,7 +900,15 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
             if value.type_name == "void" { return err(fail(e,get(e,child),"E3004","void container/pack item")) }
             if k == "Array" {
                 if type == "" { type = value.type_name }
-                else { require(m,e,type,value,get(e,child))? }
+                else if type != "$mixed$" && is_err(require(m,e,type,value,get(e,child))) {
+                    var common = false
+                    for iface, impls in m.relations {
+                        if has(impls,type) && has(impls,value.type_name) { common = true
+                            break }
+                    }
+                    if common { type = "$mixed$" }
+                    else { require(m,e,type,value,get(e,child))? }
+                }
             } else {
                 if len(rules.arguments(value.type_name,"multi")) > 0 { return err(fail(e,n,"E3006","nested pack")) }
                 list.append(types,value.type_name)?
@@ -810,6 +928,7 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
     }
     if k == "StructLiteral" {
         let typ = target(m,e,n)
+        if has(m.interfaces,typ) { return err(fail(e,n,"E3004","interface cannot be constructed directly")) }
         var seen = map[string]bool{}
         for child in n.children { let field = get(e,child)
             let name = ast.payload_text(field.payload)
@@ -826,12 +945,21 @@ fn expression_body(m mut Model, e mut Environment, n ast.Node) Result<Info> {
         let base = expression(m,e,n.children[0])?
         if text == "len" && (base.type_name == "string" || strings.starts_with(base.type_name,"[") || strings.starts_with(base.type_name,"map<")) { return ok(info("int",false)) }
         let name = base.type_name+"#"+text
-        if !has(m.fields,name) { return err(fail(e,n,"E3004","unknown struct member")) }
-        var out = info(unwrap(m.fields[name]),base.writable && !base.readonly_children)
-        out.readonly_children = base.readonly_children || !base.writable
-        let path = "$field$"+projection(m,e,n)
-        if base.writable && has(e.values,path) { out = unwrap(e.values[path]) }
-        return ok(out)
+        if has(m.fields,name) {
+            var out = info(unwrap(m.fields[name]),base.writable && !base.readonly_children)
+            out.readonly_children = base.readonly_children || !base.writable
+            let path = "$field$"+projection(m,e,n)
+            if base.writable && has(e.values,path) { out = unwrap(e.values[path]) }
+            return ok(out)
+        }
+        let method = base.type_name+"."+text
+        if has(m.functions,method) {
+            let mf = unwrap(m.functions[method])
+            if mf.module != e.unit.id && !mf.published { return err(fail(e,n,"E5003","method "+text+" is not public")) }
+            if unwrap_or(m.mutating[method],false) && !base.writable { return err(fail(e,n,"E3003","mutating method requires a mutable receiver")) }
+            return ok(info("fn:"+method,false))
+        }
+        return err(fail(e,n,"E3004","unknown struct member"))
     }
     if k == "Index" || k == "Slice" {
         let base = expression(m,e,n.children[0])?
@@ -1086,7 +1214,7 @@ fn statement(m mut Model, e mut Environment, id ast.NodeId) Result<void> {
         }
         return ok()
     }
-    if k == "Import" || k == "Struct" || k == "Enum" || k == "Break" || k == "Continue" { return ok() }
+    if k == "Import" || k == "Struct" || k == "Enum" || k == "Interface" || k == "Break" || k == "Continue" { return ok() }
     if k == "Block" || k == "Program" { for child in n.children { statement(m,e,child)? }
         return ok() }
     if k == "Let" || k == "Var" || k == "Const" {
@@ -1307,14 +1435,14 @@ pub fn analyze(entry string) Result<Model> {
     for u in list.snapshot(graph.units) { units[u.id] = u }
     let pending []TaskFieldCheck=[]
     let symbols=list.snapshot(graph.symbols)
-    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},task_fields:map[string][]string{},task_field_checks:list.from_slice(pending),collecting_task_fields:true,functions:map[string]Function{},variants:map[string]Function{},facts:map[string]Info{},capabilities:map[string]flow.Fact{},work:0,capability_passes:0}
+    var m = Model{graph:graph,refs:map[string]string{},declarations:map[string]string{},symbols:map[string]Info{},fields:map[string]string{},task_fields:map[string][]string{},task_field_checks:list.from_slice(pending),collecting_task_fields:true,functions:map[string]Function{},variants:map[string]Function{},mutating:map[string]bool{},self_targets:map[string]string{},interfaces:map[string]bool{},abstracts:map[string]bool{},relations:map[string]map[string]bool{},facts:map[string]Info{},capabilities:map[string]flow.Fact{},work:0,capability_passes:0}
     for ref in list.snapshot(graph.references) { m.refs[key(ref.module,ref.node)] = ref.target }
     for symbol in symbols { m.declarations[key(symbol.module,symbol.node)] = symbol.target }
     for symbol in symbols {
         if symbol.kind=="Struct" || symbol.kind=="Enum" { m.task_fields[symbol.target]=[] }
     }
     for symbol in symbols {
-        if symbol.scope != 0 || !alg.contains(["Struct","Enum","Variant"],symbol.kind) { continue }
+        if symbol.scope != 0 || !alg.contains(["Struct","Enum","Interface","Variant"],symbol.kind) { continue }
         let e = environment(unwrap(units[symbol.module]),map[string]Info{})
         let n = unwrap(ast.get(e.unit.tree.pool,ast.NodeId{pool:e.unit.tree.pool.identity,index:symbol.node}))
         if symbol.kind == "Struct" {
@@ -1335,11 +1463,15 @@ pub fn analyze(entry string) Result<Model> {
             for child in n.children { list.append(ps,Parameter{target:"",type_name:typename(m,e,child)?,writable:false})? }
             let dot = strings.index(symbol.name,".")
             let owner=symbol.module+"#"+rules.cut(symbol.name,0,dot)
-            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:owner,asynchronous:false,writable:true}
+            m.variants[symbol.target] = Function{target:symbol.target,module:symbol.module,node:symbol.node,parameters:list.snapshot(ps),result:owner,asynchronous:false,published:symbol.published,writable:true}
             var fields=list.from_slice(unwrap(m.task_fields[owner]))
             for p in list.snapshot(ps) { list.append(fields,p.type_name)? }
             m.task_fields[owner]=list.snapshot(fields)
         } else if symbol.kind == "Enum" { m.symbols[symbol.target] = info("enum:"+symbol.target,false) }
+        else if symbol.kind == "Interface" {
+            m.interfaces[symbol.target] = true
+            m.symbols[symbol.target] = info("struct:"+symbol.target,false)
+        }
     }
     # A Task annotation can reference a type whose fields appear later.
     m.collecting_task_fields=false
@@ -1352,15 +1484,30 @@ pub fn analyze(entry string) Result<Model> {
         let e=environment(unwrap(units[symbol.module]),map[string]Info{})
         let n=get(e,ast.NodeId{pool:e.unit.tree.pool.identity,index:symbol.node})
         var f=signature(m,e,n,symbol.target)?
+        f.published=symbol.published
         if symbol.scope!=0 { f.writable=false }
         if symbol.target==unwrap(list.get(graph.units,0)).id+"#main" && len(f.parameters)>0 { return err(fail(e,n,"E3005","main must take no parameters")) }
         m.functions[symbol.target]=f
+        if strings.contains(ast.payload_text(n.payload)," abstract") {
+            m.abstracts[symbol.target] = true
+            for p in f.parameters { m.symbols[p.target] = info(p.type_name,p.writable) }
+        }
+        if method_owner(symbol.target) != "" && !has(m.abstracts,symbol.target) {
+            let sig_id = n.children[0].index
+            let skey = key(symbol.module,sig_id)
+            if has(m.declarations,skey) { m.self_targets[symbol.target] = unwrap(m.declarations[skey]) }
+        }
     }
+    infer_mutating(m,units)
+    build_interface_relations(m)
     infer(m,units)?
     var flow_functions=map[string]flow.Function{}
     for name, f in m.functions {
         var empty []flow.Parameter=[]
         var parameters=list.from_slice(empty)
+        if has(m.self_targets,name) {
+            list.append(parameters,flow.Parameter{target:unwrap(m.self_targets[name]),type_name:method_owner(name),writable:unwrap_or(m.mutating[name],false)})?
+        }
         for p in f.parameters { list.append(parameters,flow.Parameter{target:p.target,type_name:p.type_name,writable:p.writable})? }
         flow_functions[name]=flow.Function{target:f.target,module:f.module,node:f.node,parameters:list.snapshot(parameters),result:f.result,asynchronous:f.asynchronous}
     }
@@ -1403,10 +1550,17 @@ pub fn analyze(entry string) Result<Model> {
             let n = unwrap(ast.get(u.tree.pool,child))
             if ast.kind(n.payload) != "Function" { continue }
             let name = unwrap(m.declarations[key(name,n.id.index)])
+            if has(m.abstracts,name) { continue }
             let f = unwrap(m.functions[name])
             var e = environment(u,clone(globals))
             e.function = true
             e.result = f.result
+            if has(m.self_targets,name) {
+                let sv = info(method_owner(name),unwrap_or(m.mutating[name],false))
+                let st = unwrap(m.self_targets[name])
+                e.values[st] = sv
+                m.symbols[st] = sv
+            }
             for p in f.parameters { let value = info(p.type_name,p.writable)
                 e.values[p.target] = value
                 m.symbols[p.target] = value }

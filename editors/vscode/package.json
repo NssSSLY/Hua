@@ -1,8 +1,8 @@
 {
   "name": "hua-language",
   "displayName": "Hua Language",
-  "description": "Hua syntax, snippets, compiler checks and local execution",
-  "version": "0.1.0",
+  "description": "Hua syntax, semantic highlighting, live multi-error LSP diagnostics, go-to-definition, stdlib/member completion, hover, outline and local execution",
+  "version": "0.3.1",
   "publisher": "NssSSLY",
   "license": "Apache-2.0",
   "engines": {
@@ -65,6 +65,10 @@
       {
         "command": "hua.build",
         "title": "Hua: Build Current File to HUAB"
+      },
+      {
+        "command": "hua.restartLsp",
+        "title": "Hua: Restart Language Server"
       }
     ],
     "configuration": {
@@ -75,6 +79,16 @@
           "default": "hua",
           "scope": "machine-overridable",
           "description": "Hua executable path. Supports ${workspaceFolder}; defaults to PATH."
+        },
+        "hua.enableLsp": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the built-in Hua Language Server (hua lsp) for semantic highlighting, live diagnostics, hover, and outline."
+        },
+        "hua.lspTrace": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log LSP JSON-RPC traffic to the Hua output panel for debugging."
         },
         "hua.checkOnSave": {
           "type": "boolean",

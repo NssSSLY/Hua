@@ -33,7 +33,7 @@ pub enum Payload {
     Parameters, Call, Block, If, While, Return, ExpressionStatement, Program,
     IntegerLiteral(string), FloatLiteral(string), Let(string), Var(string), Const(string),
     TypeName(string), ReturnTypes, Break, Continue,
-    String(string), Nil, Struct(string), Field(string), Import(string), For, Update(string), Index, Slice, Member(string), Array, StructLiteral(string), FieldInit(string), Range(string), Omitted, SliceType, ArrayType(string), GenericType(string), OptionalType, MutableType, MapLiteral, MapEntry, Pack, BindingList, MultiBinding(string), MultiAssignment, Propagate, Defer, Enum(string), Variant(string), Match, MatchArm
+    String(string), Nil, Struct(string), Field(string), Import(string), For, Update(string), Index, Slice, Member(string), Array, StructLiteral(string), FieldInit(string), Range(string), Omitted, SliceType, ArrayType(string), GenericType(string), OptionalType, MutableType, MapLiteral, MapEntry, Pack, BindingList, MultiBinding(string), MultiAssignment, Propagate, Defer, Enum(string), Variant(string), Match, MatchArm, Interface(string), GenericParameters, Specialize
 }
 pub struct Node {
     id NodeId
@@ -118,6 +118,9 @@ pub fn kind(payload Payload) string {
         Float(x)=>{return "Float"}
         Binding(x)=>{return "Binding"}
         Parameters=>{return "Parameters"}
+        Interface(x)=>{return "Interface"}
+        GenericParameters=>{return "GenericParameters"}
+        Specialize=>{return "Specialize"}
     }
 }
 pub fn payload_text(payload Payload) string {
@@ -152,6 +155,7 @@ pub fn payload_text(payload Payload) string {
         Integer(x)=>{return str(x)}
         Float(x)=>{return str(x)}
         Binding(x)=>{return x}
+        Interface(x)=>{return x}
         _=>{return ""}
     }
 }
@@ -182,7 +186,7 @@ fn shape(payload Payload, arity int) bool {
         Var(x)=>{return x != "" && (arity == 1 || arity == 2)}
         Field(x)=>{return x != "" && arity == 1}
         StructLiteral(x)=>{return x != ""}
-        Function(name)=>{return name != "" && arity == 2}
+        Function(name)=>{return name != "" && (arity == 2 || arity == 3)}
         ReturnTypes=>{return arity >= 1}
         For=>{return arity == 3 || arity == 4}
         GenericType(x)=>{return x != "" && arity >= 1}
@@ -208,6 +212,9 @@ fn shape(payload Payload, arity int) bool {
         Slice=>{return arity == 3}
         Omitted=>{return arity == 0}
         ArrayType(x)=>{return x != "" && arity == 1}
+        Interface(x)=>{return x != ""}
+        GenericParameters=>{return arity >= 1}
+        Specialize=>{return arity >= 2}
         MapEntry=>{return arity == 2}
         Pack=>{return arity >= 2}
         MultiBinding(x)=>{return (x == "let" || x == "var") && arity == 2}

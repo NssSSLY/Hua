@@ -6,11 +6,15 @@ class Parser {
 public:
     explicit Parser(std::vector<Token> tokens);
     NodePtr parse();
+    // Error-recovering parse for IDE/LSP: collects multiple syntax diagnostics while returning a partial AST.
+    NodePtr parse_tolerant(std::vector<Diagnostic>& errors);
 private:
     std::vector<Token> tokens_;
     std::size_t pos_{}, depth_{};
     bool in_header_{};
     int function_depth_{}, loop_depth_{}, unsafe_depth_{}, block_depth_{};
+    std::vector<Diagnostic>* recovery_errors_{};
+    void synchronize(bool top_level);
     const Token& peek(std::size_t ahead = 0) const;
     bool at(TokenKind kind) const;
     Token take();

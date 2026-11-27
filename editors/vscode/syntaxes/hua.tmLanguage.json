@@ -18,7 +18,11 @@
     },
     {
       "name": "keyword.control.hua",
-      "match": "\\b(let|var|const|fn|return|struct|interface|pub|if|else|match|enum|for|while|break|continue|in|import|as|async|await|spawn|taskgroup|parallel|simd|defer|unsafe|extern)\\b"
+      "match": "\\b(let|var|const|fn|return|struct|interface|pub|mut|if|else|match|enum|for|while|break|continue|in|by|import|as|async|await|spawn|taskgroup|parallel|simd|defer|unsafe|extern)\\b"
+    },
+    {
+      "name": "storage.modifier.attribute.hua",
+      "match": "@[A-Za-z_][A-Za-z_0-9]*"
     },
     {
       "name": "constant.language.hua",
@@ -26,11 +30,15 @@
     },
     {
       "name": "storage.type.hua",
-      "match": "\\b(int|float|bool|string|void|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|List|Map|Result|Task|Bytes|Buffer|Json)\\b"
+      "match": "\\b(int|float|bool|string|byte|void|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|usize|isize|List|Map|map|Result|Task|Bytes|Buffer|Json|Deque|NativeHandle)\\b"
     },
     {
       "name": "constant.numeric.hua",
       "match": "\\b(0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*(\\.[0-9_]+)?([eE][+-]?[0-9_]+)?)\\b"
+    },
+    {
+      "name": "entity.name.type.hua",
+      "match": "\\b[A-Z][A-Za-z_0-9]*\\b"
     },
     {
       "name": "entity.name.function.hua",

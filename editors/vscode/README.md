@@ -1,12 +1,12 @@
-# Hua VS Code 基础插件
+# Hua VS Code 插件
 
-支持 .hua 语法高亮（# 注释与嵌套块注释）、括号/注释切换、片段、保存后检查和 Hua: Check/Run/Build Current File 命令。
+支持 `.hua` 语法高亮（`#` 行注释与 `#* ... *#` 嵌套块注释）、内置 LSP 语言服务器（`hua lsp`）驱动的语义着色、多错误容错实时诊断、跳转定义（同文件与跨模块）、成员与全部 32 模块 / 422 项标准库智能补全、悬停类型/签名提示（Hover）、文件大纲（Outline）、代码片段，以及 `Hua: Check/Run/Build Current File`、`Hua: Restart Language Server` 命令。
 
-安装 tests/build/hua-language-0.1.0.vsix；设置 hua.compilerPath 为已安装的 hua.exe，或先将安装 bin 加入 PATH 并重启 VS Code。程序参数在 hua.runArguments 配置。
+安装 `tests/build/hua-language-0.3.0.vsix`；设置 `hua.compilerPath` 为已安装的 `hua.exe`，或先将安装 `bin` 加入 `PATH` 并重启 VS Code。程序参数在 `hua.runArguments` 配置，LSP 开关与协议日志可在 `hua.enableLsp` / `hua.lspTrace` 调整。
 
-检查使用已保存源码，诊断定位包含导入模块，UTF-8 字节列转换为编辑器 UTF-16 列。修改后清除旧检查，保存后重查。运行在 VS Code 任务终端，stdin 可交互；参数以进程参数传递。未信任项目只提供声明式编辑功能。
+LSP 模式在可信工作区中直接读取编辑器内存态缓冲区（无需先保存即可实时检查语法、类型、能力与跨模块导入错误），支持一次报告多处语法错误并保留其余部分的着色与补全。当 LSP 关闭或编译器不可用时，自动回退到保存后 `hua check` 检查；未信任工作区只提供声明式编辑与基础语法高亮。
 
-这是基础插件，没有 LSP、补全类型推断、跳转/重命名、格式化或断点调试。未发布 Marketplace；当前验证包含模拟 API 和真实 VS Code CLI 隔离安装，不等同于交互界面验收。
+当前已覆盖实时多错诊断、语义高亮、跳转定义、成员/标准库补全、Hover 与大纲；重命名重构、格式化与断点调试将在后续阶段补充。未发布 Marketplace。
 
 
 ## 运行你写的第一个程序

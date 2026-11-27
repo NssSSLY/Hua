@@ -1,5 +1,13 @@
 # 当前状态
 
+## 2026-11-27 方向 B1/B2/B3 完成：`selfhost/` 补齐固有方法、`interface` 与显式用户泛型
+
+基于 `main@269e76c` 完成方向 B1/B2/B3（尚未提交/推送 Git）：
+- **B1 固有方法**：`selfhost/{parser,modules,types,lowering,bytecode,bytecode_verify,archive,native_cpp}.hua` 支持 `struct`/`enum` 上 `fn Type.method(...)`、隐式 `self`、传递 `mutating` 不动点推断、`E3003`/`E5003` 及 `--release` `v_self` 传参（排除 `enum-constructor`）。
+- **B2 结构化 `interface`**：`selfhost/` 支持 `interface Name { [mut] fn m(...) ... }`、结构满足检查、`I{}` 构造与直接调用拒绝（`E3004`）、HUAB 接口结构与抽象原型、`native_cpp.hua` `hn::Interface<Tag>` + `switch(v_self.object.tag)` 动态派发、`mut` 借用与 `clone`。
+- **B3 显式用户泛型**：`selfhost/parser.hua` 支持 `struct/fn <T, U>`（`E2006`）、`pending_gt` `>>` 嵌套拆合及后缀特化；新增 `selfhost/generics.hua` 在 `modules.hua` `collect()` 前执行 AST 级单态化（上限 128、`E3010`、跨模块嵌套泛型别名前缀重映射、无泛型零克隆快路径与新后序根节点）。
+- **不动点与验收**：重装配 `huaBin/` 达成 16 模块 `G1 == G2`（`d9dafe29...`）与 `C2(19.94s) == C3(158.69s, 848,906,965 步)` HUAB 逐字节不动点（`669d061e...`，`6,506,831` 字节）；`tests/selfhost_methods_interface_generics_tests.py --sdk huaBin`（B1/B2/B3 四路径 + 6 项负例，`10.51s`）、`tests/step5_direction_a_tests.py --sdk huaBin`（`7.56s`）及 3 项契约 CTest 全过。[验收记录](knowledge/bootstrap-performance/runs/2026-11-27-selfhost-methods-interface-generics.md)
+
 ## 2026-11-27 方向 A 完成：32 内建模块 / 422 内建函数 100% 四路径全通
 
 基于 `main@39c577d` 完成方向 A（尚未提交/推送 Git）：

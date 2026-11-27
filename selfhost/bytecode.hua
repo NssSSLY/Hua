@@ -38,12 +38,15 @@ pub struct Structure { name string
     site int
     published bool
     enumeration bool
+    iface bool
     fields []Field }
 pub struct Function { name string
     site int
     published bool
     nested bool
     external bool
+    abstract_fn bool
+    mutating bool
     writable bool
     parameters []Parameter
     returns []string
@@ -512,7 +515,7 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
                 let field = get(c,child)
                 list.append(fields,Field{name:field.text,type_name:type_text(c,field.children[0]),site:site(s,field)?})?
             }
-            list.append(s.image.structures,Structure{name:name(n),site:site(s,n)?,published:unwrap_or(s.published[n.module+":"+str(n.origin)],false),enumeration:strings.ends_with(n.text," enum"),fields:list.snapshot(fields)})?
+            list.append(s.image.structures,Structure{name:name(n),site:site(s,n)?,published:unwrap_or(s.published[n.module+":"+str(n.origin)],false),enumeration:strings.ends_with(n.text," enum"),iface:strings.ends_with(n.text," interface"),fields:list.snapshot(fields)})?
         }
     }
     for init in list.snapshot(c.initialization) { for id in init.roots {
@@ -546,13 +549,18 @@ fn generate_verified(c lower.Core, model types.Model) Result<Image> {
             if p.kind=="ReturnTypes" { for t in p.children { list.append(returns,type_text(c,t))? } }
         }
         if n.role=="external" {
-            list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:true,nested:false,external:true,writable:false,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+            list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:true,nested:false,external:true,abstract_fn:false,mutating:false,writable:false,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+            continue
+        }
+        if n.role=="abstract" {
+            emit(s,n,27,"abstract interface prototype cannot be called directly","E4002",0,false,nil_scalar(),[],[])?
+            list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:unwrap_or(s.published[n.module+":"+str(n.origin)],false),nested:false,external:false,abstract_fn:true,mutating:has(c.mutating,name(n)),writable:false,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
             continue
         }
         block(s,n.children[len(n.children)-1],false)?
         constant(s,n,nil_scalar())?
         simple(s,n,22,"")?
-        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),nested:n.role=="local-function",external:false,writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
+        list.append(s.image.functions,Function{name:name(n),site:site(s,n)?,published:n.role!="async-body" && unwrap_or(s.published[n.module+":"+str(n.origin)],false),nested:n.role=="local-function",external:false,abstract_fn:false,mutating:has(c.mutating,name(n)),writable:n.writable,parameters:list.snapshot(params),returns:list.snapshot(returns),code:s.code})?
     }
     var exts = list.from_slice(empty_ext)
     for em in c.external_modules {

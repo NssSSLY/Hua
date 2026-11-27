@@ -1,6 +1,7 @@
 # C03-N1：本地模块与词法名称分析；不执行初始化、不进行类型/能力检查。
 import parser as parser
 import ast_pool as ast
+import generics as generics
 import catalog as catalog
 import std.list as list
 import std.fs as fs
@@ -122,14 +123,17 @@ fn collect(g mut Graph, u Unit) Result<void> {
         check_work(g,u.id,n)?
         let k = ast.kind(n.payload)
         let name = declared(ast.payload_text(n.payload))
-        if alg.contains(["Function","Struct","Enum","Let","Var","Const"],k) {
+        if alg.contains(["Function","Struct","Enum","Interface","Let","Var","Const"],k) {
             if strings.starts_with(name,"__") { return err(error(u.id,n,"E8201","internal declaration name")) }
-            if k == "Struct" && alg.contains(["Json","Bytes","Buffer","List","Task","NativeHandle"],name) { return err(error(u.id,n,"E3002","reserved standard type")) }
-            let published = strings.ends_with(ast.payload_text(n.payload)," pub")
+            if (k == "Struct" || k == "Interface") && alg.contains(["Json","Bytes","Buffer","List","Task","NativeHandle"],name) { return err(error(u.id,n,"E3002","reserved standard type")) }
+            let published = strings.contains(ast.payload_text(n.payload)," pub")
             add_global(g,u,n,name,k,published)?
             if k == "Enum" { for variant in n.children {
                 let v = ast.get(u.tree.pool,variant)?
                 add_global(g,u,v,name+"."+ast.payload_text(v.payload),"Variant",published)? } }
+            if k == "Interface" { for method in n.children {
+                let m = ast.get(u.tree.pool,method)?
+                add_global(g,u,m,declared(ast.payload_text(m.payload)),"Function",published)? } }
         } else if k == "MultiBinding" {
             let names = ast.get(u.tree.pool,n.children[0])?
             for id in names.children { let p = ast.get(u.tree.pool,id)?
@@ -851,8 +855,8 @@ fn reference(g mut Graph, e Environment, n ast.Node, name string, type_name bool
                     let symbol = global(g,edge.target,member)
                     if is_none(symbol) || !unwrap(symbol).published { return err(error(u,n,"E5003","module has no public export "+member)) }
                     let item = unwrap(symbol)
-                    if type_name && item.kind != "Struct" && item.kind != "Enum" { return err(error(u,n,"E5003","export is not a type")) }
-                    if !type_name && (item.kind == "Struct" || item.kind == "Enum") { return err(error(u,n,"E5003","export type requires named-field initializer")) }
+                    if type_name && item.kind != "Struct" && item.kind != "Enum" && item.kind != "Interface" { return err(error(u,n,"E5003","export is not a type")) }
+                    if !type_name && (item.kind == "Struct" || item.kind == "Enum" || item.kind == "Interface") { return err(error(u,n,"E5003","export type requires named-field initializer")) }
                     target = item.target
                 }
                 break
@@ -865,7 +869,7 @@ fn reference(g mut Graph, e Environment, n ast.Node, name string, type_name bool
         if is_some(symbol) {
             let item = unwrap(symbol)
             if type_name {
-                if item.kind == "Struct" || item.kind == "Enum" { target = item.target }
+                if item.kind == "Struct" || item.kind == "Enum" || item.kind == "Interface" { target = item.target }
             } else if has(e.visible,name) { target = item.target }
         }
     }
@@ -929,8 +933,27 @@ fn walk(g mut Graph, e mut Environment, id ast.NodeId, top bool) Result<void> {
     else if k == "Block" { enter_scope(e)?
         for child in n.children { walk(g,e,child,false)? }
         list.pop(e.scopes)? }
+    else if k == "Interface" {
+        for method in n.children {
+            let m = ast.get(e.pool,method)?
+            let sig = ast.get(e.pool,m.children[0])?
+            for child in sig.children {
+                let p = ast.get(e.pool,child)?
+                for typ in p.children { walk(g,e,typ,false)? }
+            }
+        }
+    }
     else if k == "Function" {
-        if !top { define(g,e,n,declared(text),"Function")? }
+        let decl_name = declared(text)
+        if !top { define(g,e,n,decl_name,"Function")? }
+        let dot = strings.index(decl_name,".")
+        if dot > 0 {
+            let owner_name = unwrap(strings.slice(decl_name,0,dot))
+            let owner_sym = global(g,u,owner_name)
+            if is_none(owner_sym) || (unwrap(owner_sym).kind != "Struct" && unwrap(owner_sym).kind != "Enum") {
+                return err(error(u,n,"E3004","method owner "+owner_name+" is not a struct or enum"))
+            }
+        }
         let signature = ast.get(e.pool,n.children[0])?
         # Types are resolved before value parameters enter scope.
         for child in signature.children {
@@ -938,6 +961,7 @@ fn walk(g mut Graph, e mut Environment, id ast.NodeId, top bool) Result<void> {
             for typ in p.children { walk(g,e,typ,false)? }
         }
         enter_scope(e)?
+        if dot > 0 { define(g,e,signature,"self","Parameter")? }
         for child in signature.children {
             let p = ast.get(e.pool,child)?
             if ast.kind(p.payload) == "Parameter" { define(g,e,p,declared(ast.payload_text(p.payload)),"Parameter")? }
@@ -1019,6 +1043,30 @@ fn analyze_impl(entry string, limits Limits) Result<Graph> {
     var entry_logical = ""
     if g.has_manifest { entry_logical = entry_name }
     visit(g,normalized,site,entry_name,"",entry_logical,"")?
+    var empty_gm []generics.ModuleMeta = []
+    var g_metas = list.from_slice(empty_gm)
+    var empty_gp []ast.Pool = []
+    var g_pools = list.from_slice(empty_gp)
+    for u in list.snapshot(g.units) {
+        var imps = map[string]string{}
+        for edge in list.snapshot(g.edges) {
+            if edge.source == u.id && !strings.starts_with(edge.target,"std.") { imps[edge.namespace] = edge.target }
+        }
+        list.append(g_metas,generics.ModuleMeta{id:u.id,root:u.tree.root,imports:imps})?
+        list.append(g_pools,u.tree.pool)?
+    }
+    let meta_slice = list.snapshot(g_metas)
+    let pool_slice = list.snapshot(g_pools)
+    if generics.needs_specialize(meta_slice,pool_slice) {
+        var mut_pools = clone(pool_slice)
+        let new_roots = generics.specialize_all(meta_slice,mut_pools)?
+        for i in 0..len(mut_pools) {
+            var u = list.get(g.units,i)?
+            u.tree.pool = mut_pools[i]
+            u.tree.root = new_roots[i]
+            list.set(g.units,i,u)?
+        }
+    }
     for u in list.snapshot(g.units) { collect(g,u)? }
     for id in list.snapshot(g.order) {
         let index = unit_index(g,id)
@@ -1029,7 +1077,7 @@ fn analyze_impl(entry string, limits Limits) Result<Graph> {
         for edge in list.snapshot(g.edges) { if edge.source == u.id { list.append(imports,edge)? } }
         var e = Environment{unit:u.id,pool:u.tree.pool,imports:list.snapshot(imports),scopes:list.from_slice(scope),locals:map[string]Symbol{},visible:map[string]bool{},next_scope:1,depth:0}
         for symbol in list.snapshot(g.symbols) {
-            if symbol.module == id && symbol.scope == 0 && alg.contains(["Function","Struct","Enum","Variant"],symbol.kind) { e.visible[symbol.name] = true }
+            if symbol.module == id && symbol.scope == 0 && alg.contains(["Function","Struct","Enum","Interface","Variant"],symbol.kind) { e.visible[symbol.name] = true }
         }
         let program = ast.get(u.tree.pool,u.tree.root)?
         for child in program.children {

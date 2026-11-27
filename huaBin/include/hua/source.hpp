@@ -33,6 +33,7 @@ class Diagnostic final : public std::runtime_error {
 public:
     Diagnostic(std::string code, SourceSpan span, std::string message, std::string help = {});
     const std::string& code() const { return code_; }
+    const std::string& help() const { return help_; }
     const SourceSpan& span() const { return span_; }
     std::string render(const Source& source) const;
     Diagnostic located(const SourceSpan&) const;

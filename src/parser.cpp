@@ -87,6 +87,41 @@ NodePtr Parser::parse() {
     root->span.end_offset = peek().span.end_offset;
     return root;
 }
+void Parser::synchronize(bool top_level) {
+    auto is_top_sync = [](K k) {
+        return k == K::Fn || k == K::Pub || k == K::Struct || k == K::Enum || k == K::Interface ||
+               k == K::Import || k == K::Let || k == K::Var || k == K::Const || k == K::Async ||
+               k == K::Unsafe || k == K::At;
+    };
+    std::size_t start_pos = pos_;
+    while (!at(K::End)) {
+        if (!top_level && at(K::RBrace)) return;
+        if (at(K::Newline)) {
+            newlines();
+            if (!top_level || at(K::End) || is_top_sync(peek().kind)) return;
+            continue;
+        }
+        if (top_level && pos_ > start_pos && is_top_sync(peek().kind)) return;
+        take();
+    }
+}
+NodePtr Parser::parse_tolerant(std::vector<Diagnostic>& errors) {
+    Restore rec(recovery_errors_, &errors);
+    auto root = make(N::Program, peek());
+    newlines();
+    while (!at(K::End)) {
+        const std::size_t before = pos_;
+        try {
+            root->add(statement());
+        } catch (const Diagnostic& err) {
+            if (errors.size() < 32) errors.push_back(err);
+            if (pos_ == before && !at(K::End)) take();
+            synchronize(true);
+        }
+    }
+    root->span.end_offset = peek().span.end_offset;
+    return root;
+}
 NodePtr Parser::statement() {
     Depth depth(depth_, peek().span);
     NodePtr node;
@@ -291,6 +326,25 @@ NodePtr Parser::block() {
     auto node = make(N::Block, expect(K::LBrace, "expected { to start block"));
     Restore scope(block_depth_, block_depth_ + 1);
     newlines();
+    if (recovery_errors_) {
+        while (!at(K::RBrace) && !at(K::End)) {
+            const std::size_t before = pos_;
+            try {
+                node->add(statement());
+            } catch (const Diagnostic& err) {
+                if (recovery_errors_->size() < 32) recovery_errors_->push_back(err);
+                if (pos_ == before && !at(K::RBrace) && !at(K::End)) take();
+                synchronize(false);
+            }
+        }
+        if (at(K::RBrace)) {
+            take();
+        } else if (recovery_errors_->size() < 32) {
+            recovery_errors_->emplace_back("E2001", peek().span, "expected } to close block");
+        }
+        finish(*node);
+        return node;
+    }
     while (!at(K::RBrace) && !at(K::End)) node->add(statement());
     expect(K::RBrace, "expected } to close block"); finish(*node); return node;
 }
